@@ -1,0 +1,5 @@
+ALTER TABLE archive.usage_request ADD COLUMN request_digest char(64) NOT NULL;
+COMMENT ON COLUMN archive.usage_request.request_digest IS '普通或候选阅读输入的规范摘要，防止相同操作号切换来源';
+CREATE FUNCTION archive.guard_usage_identity() RETURNS trigger LANGUAGE plpgsql AS $$
+ BEGIN IF ROW(NEW.id,NEW.user_id,NEW.session_id,NEW.auth_version,NEW.record_id,NEW.record_revision_id,NEW.pdf_version_id,NEW.object_id,NEW.grant_id,NEW.source_policy_id,NEW.review_context_id,NEW.review_context_type,NEW.source_version,NEW.action,NEW.expires_at,NEW.request_digest) IS DISTINCT FROM ROW(OLD.id,OLD.user_id,OLD.session_id,OLD.auth_version,OLD.record_id,OLD.record_revision_id,OLD.pdf_version_id,OLD.object_id,OLD.grant_id,OLD.source_policy_id,OLD.review_context_id,OLD.review_context_type,OLD.source_version,OLD.action,OLD.expires_at,OLD.request_digest) THEN RAISE EXCEPTION 'immutable archive usage binding'; END IF;RETURN NEW;END;$$;
+CREATE TRIGGER usage_binding_immutable BEFORE UPDATE ON archive.usage_request FOR EACH ROW EXECUTE FUNCTION archive.guard_usage_identity();

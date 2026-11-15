@@ -1,0 +1,4 @@
+【客户端根目录】
+技术栈：Python 3.13 + PySide6（Qt 桌面界面）+ requests（调服务端 API）。
+虚拟环境在 client/.venv（依赖已装好）。入口文件是 app/main.py。
+注意：客户端不直连数据库！所有数据操作都走服务端 HTTP 接口。

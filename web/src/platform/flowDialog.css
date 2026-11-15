@@ -1,0 +1,119 @@
+.flow-dialog.form-dialog {
+  width: min(var(--flow-dialog-width, 720px), calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  padding: 0;
+  overflow: hidden;
+}
+.flow-dialog.form-dialog.flow-dialog-compact {
+  --flow-dialog-width: 560px;
+}
+.flow-dialog-shell {
+  display: flex;
+  flex-direction: column;
+  max-height: calc(100dvh - 34px);
+}
+.flow-dialog-header,
+.flow-dialog-footer {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 12px;
+  padding: 16px 24px;
+}
+
+.flow-dialog-header {
+  border-bottom: 1px solid var(--line);
+}
+.flow-dialog-header > h2,
+.flow-dialog-title {
+  flex: 1;
+  min-width: 0;
+}
+.flow-dialog-header .icon-button {
+  flex-shrink: 0;
+}
+.flow-dialog-header h2 {
+  overflow-wrap: anywhere;
+  margin: 0;
+  font-size: 18px;
+}
+.flow-dialog-icon {
+  display: grid;
+  flex-shrink: 0;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.flow-dialog-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  padding: 20px 24px;
+  min-height: 0;
+  overflow-y: auto;
+}
+.flow-dialog-body h3 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.flow-dialog-section {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.flow-dialog-section h3,
+.flow-dialog-section p,
+.flow-dialog-section label,
+.flow-dialog-overview p:not(.borrow-progress-note) {
+  margin: 0;
+}
+.flow-dialog-section p {
+  overflow-wrap: anywhere;
+}
+.flow-dialog-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+}
+.flow-dialog .flow-dialog-body .flow-dialog-section .flow-inline-field {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+}
+.flow-inline-field input,
+.flow-inline-field select {
+  min-width: 0;
+}
+.flow-dialog-body > p.form-error {
+  margin: 0;
+}
+.flow-dialog-overview {
+  padding: 14px 16px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.flow-dialog-footer {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  border-top: 1px solid var(--line);
+}
+.flow-dialog-section + .flow-dialog-section {
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+}
+@media (max-width: 520px) {
+  .flow-dialog-fields {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .flow-dialog-header,
+  .flow-dialog-body,
+  .flow-dialog-footer {
+    padding-right: 16px;
+    padding-left: 16px;
+  }
+}

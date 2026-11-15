@@ -1,0 +1,731 @@
+/* 桌面应用统一视觉规范：品牌青色、清晰的文本对比和一致的组件密度。 */
+:root {
+  --brand: #087f88;
+  --brand-hover: #05646d;
+  --brand-soft: #e8f5f5;
+  --ink: #21313d;
+  --text-secondary: #60717e;
+  --muted: #60717e;
+  --canvas: #f3f5f8;
+  --surface: #fff;
+  --surface-muted: #f7f9fb;
+  --line: #e3e9ef;
+  --green: var(--brand);
+  --shadow: 0 2px 8px #20314304;
+  color: var(--ink);
+  background: var(--canvas);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* 基础控件由共享样式承载，各业务页仅保留其专有布局。 */
+input,
+select,
+textarea {
+  min-width: 0;
+  border-color: #d7e0e7;
+  border-radius: 7px;
+  color: var(--ink);
+  font-size: 13px;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+input:where(
+  :not([type="checkbox"]):not([type="radio"]):not([type="range"]):not(
+      [type="file"]
+    )
+),
+select {
+  height: 40px;
+  min-height: 40px;
+  padding: 8px 12px;
+}
+input::placeholder,
+textarea::placeholder {
+  color: #8b98a4;
+}
+input:focus,
+select:focus,
+textarea:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px #087f8812;
+}
+input[type="checkbox"],
+input[type="radio"] {
+  width: 16px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  margin: 0;
+  flex: 0 0 16px;
+  accent-color: var(--brand);
+}
+label {
+  color: #41525f;
+  font-weight: 500;
+}
+/* 标签上置可避免名称长短改变输入起点；复选框和无标签搜索不参与普通字段布局。 */
+:is(.platform-shell, dialog, [role="dialog"])
+  label:has(
+    > input:not([type="checkbox"], [type="radio"], [type="hidden"]),
+    > select,
+    > textarea,
+    > .inline-search
+  ):not(.search-field, .list-filter-field) {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 8px;
+}
+:is(.platform-shell, dialog, [role="dialog"])
+  label
+  > :is(
+    input:not([type="checkbox"], [type="radio"]),
+    select,
+    textarea,
+    .inline-search
+  ) {
+  width: 100%;
+  min-width: 0;
+}
+:is(.platform-shell, dialog, [role="dialog"]) label > small {
+  font-weight: 400;
+  line-height: 1.6;
+}
+textarea {
+  line-height: 1.6;
+  padding: 10px 12px;
+  resize: vertical;
+}
+/* 表单网格统一行距；每个字段内部的标签间距不再兼任相邻行间距。 */
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  align-items: start;
+  gap: 20px 24px;
+}
+.form-grid > label:has(input, select, textarea) {
+  margin: 0;
+}
+.inline-search input {
+  min-width: 0;
+  flex: 1;
+}
+.primary,
+.secondary {
+  min-height: 36px;
+  padding: 8px 14px;
+  font-size: 13px;
+  border-radius: 7px;
+  font-weight: 500;
+}
+.primary {
+  background: var(--brand);
+  border-color: var(--brand);
+  color: white;
+  box-shadow: 0 2px 4px #087f8812;
+}
+.primary:hover {
+  background: var(--brand-hover);
+  border-color: var(--brand-hover);
+}
+.secondary {
+  color: #41525f;
+  border-color: #d7e0e7;
+  background: white;
+}
+.secondary:hover {
+  border-color: #aec7ce;
+  background: var(--surface-muted);
+}
+.text-button {
+  color: var(--brand);
+  border-radius: 6px;
+}
+.text-button:hover {
+  background: var(--brand-soft);
+}
+button:focus-visible,
+a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+}
+button:disabled {
+  opacity: 0.48;
+}
+.panel {
+  background: white;
+  border-color: var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.platform-page-content > .panel {
+  overflow-x: auto;
+}
+.platform-shell h1 {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.3px;
+  color: var(--ink);
+}
+.platform-shell .eyebrow {
+  margin-bottom: 6px;
+  color: var(--brand);
+  font-size: 11px;
+  letter-spacing: 1.5px;
+}
+.platform-shell h2 {
+  font-weight: 600;
+}
+.platform-shell .panel h2 {
+  font-size: 16px;
+}
+.platform-shell .panel h3 {
+  font-size: 14px;
+}
+.platform-shell .page-heading,
+.platform-shell .welcome {
+  margin-bottom: 24px;
+}
+.platform-shell .page-heading p,
+.platform-shell .welcome p {
+  color: var(--text-secondary);
+  margin-top: 5px;
+  font-size: 13px;
+}
+
+/* 搜索并入同一条顶栏，业务内容获得更多垂直空间。 */
+.platform-shell {
+  /* 兼容电脑分屏窗口，保留桌面布局，不引入手机端导航。 */
+  min-width: 960px;
+  min-height: 100vh;
+  --page-gutter: clamp(24px, 2.4vw, 44px);
+  background: var(--canvas);
+}
+.platform-shell .topbar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  grid-template-columns: auto minmax(260px, 520px) auto;
+  justify-content: space-between;
+  align-items: center;
+  min-height: 76px;
+  padding: 12px var(--page-gutter);
+  gap: 24px;
+  background: white;
+  box-shadow: 0 1px 4px #172d3d03;
+}
+.platform-shell .company-logo {
+  width: 120px;
+}
+.platform-shell .brand-title {
+  padding-left: 16px;
+}
+.platform-shell .brand strong {
+  font-size: 17px;
+  letter-spacing: 0.5px;
+}
+.platform-shell .brand small {
+  font-size: 10px;
+  margin-top: 1px;
+  color: #82919b;
+  letter-spacing: 2px;
+}
+.platform-shell .portal-search {
+  margin: 0;
+  width: 100%;
+  gap: 6px;
+}
+.platform-shell .portal-search input,
+.platform-shell .portal-search select {
+  background: var(--surface-muted);
+  font-size: 12px;
+  border-color: var(--line);
+}
+.platform-shell .portal-search select {
+  flex-basis: 102px;
+  width: 102px;
+}
+.platform-shell .portal-search button {
+  min-width: 58px;
+}
+.platform-shell .account-actions {
+  gap: 10px;
+}
+.workspace-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid #d3e8e8;
+  border-radius: 7px;
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.workspace-back:hover {
+  border-color: var(--brand);
+}
+.workspace-back:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.portal-account-link {
+  font-size: 12px;
+  color: #536573;
+  padding: 7px 8px;
+}
+.portal-account-link:hover,
+.portal-account-link.active {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.platform-shell .profile-button {
+  padding: 2px 6px;
+  font-size: 12px;
+  color: #41525f;
+}
+.platform-shell .avatar {
+  width: 30px;
+  height: 30px;
+  background: var(--brand-soft);
+  border-color: #d3e8e8;
+  color: var(--brand);
+}
+.platform-shell .page-container {
+  padding-top: 28px;
+  padding-bottom: 28px;
+}
+.platform-shell .page-footer {
+  padding: 16px 0 22px;
+  font-size: 11px;
+  color: #8996a1;
+}
+
+/* 侧栏只提供模块导航，选中态用窄色条表示，不堆叠大色块。 */
+.platform-shell .management-layout {
+  grid-template-columns: 208px minmax(0, 1fr);
+  gap: 24px;
+}
+.management-sidebar {
+  top: 100px;
+  padding: 16px 10px;
+  max-height: calc(100vh - 124px);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+}
+.management-sidebar-heading {
+  padding: 4px 12px 16px;
+  gap: 9px;
+}
+.management-sidebar-heading h2 {
+  font-size: 16px;
+  color: var(--ink);
+}
+.management-nav-group h3 {
+  font-size: 11px;
+  color: #8796a1;
+  padding-left: 12px;
+}
+.management-nav-group a {
+  position: relative;
+  min-height: 40px;
+  padding: 9px 12px;
+  margin: 2px 0;
+  font-size: 13px;
+  color: #516471;
+  border-radius: 7px;
+}
+.management-nav-group a.active {
+  color: var(--brand);
+  background: var(--brand-soft);
+  font-weight: 600;
+}
+.management-nav-group a.active::before {
+  position: absolute;
+  content: "";
+  left: 0;
+  top: 11px;
+  bottom: 11px;
+  width: 3px;
+  border-radius: 3px;
+  background: var(--brand);
+}
+
+/* 工作台使用紧凑的应用入口和对齐的信息卡片，不用渐变大按钮填满空白。 */
+.platform-shell .welcome {
+  align-items: center;
+  padding: 4px 0;
+}
+.platform-shell .welcome h1 {
+  font-size: 26px;
+}
+.platform-shell .date-panel {
+  background: white;
+  border-color: var(--line);
+  padding: 9px 12px;
+  color: var(--text-secondary);
+  border-radius: 8px;
+}
+.portal-applications {
+  max-width: none;
+  /* 应用入口限制宽度，避免少量卡片在宽屏上被拉长。 */
+  grid-template-columns: repeat(auto-fit, minmax(240px, 280px));
+  gap: 12px;
+  margin-bottom: 20px;
+}
+.portal-applications .application-card {
+  grid-template-columns: 36px minmax(0, 1fr) 16px;
+  gap: 10px;
+  min-height: 72px;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: white;
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
+}
+.portal-applications .application-card:hover {
+  transform: none;
+  border-color: #a8cdd0;
+  box-shadow: 0 5px 18px #20314308;
+}
+.portal-applications .application-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.portal-applications .tone-1 .application-icon {
+  color: #456d9e;
+  background: #edf2fa;
+}
+.portal-applications .tone-2 .application-icon {
+  color: #656383;
+  background: #f1eff8;
+}
+.portal-applications .application-card h2 {
+  font-size: 15px;
+  margin-bottom: 3px;
+  color: var(--ink);
+}
+.portal-applications .application-card p {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.application-trailing {
+  color: #879aa7;
+}
+.portal-home-grid {
+  grid-template-columns: minmax(280px, 1fr) minmax(360px, 1.35fr) minmax(
+      240px,
+      0.85fr
+    );
+  gap: 20px;
+  align-items: stretch;
+}
+.portal-home-grid > .portal-panel {
+  min-height: 210px;
+}
+.portal-panel {
+  padding: 22px;
+}
+.portal-heading {
+  gap: 12px;
+  margin-bottom: 18px;
+}
+.portal-heading h2 {
+  font-size: 15px;
+  color: var(--ink);
+}
+.portal-heading h1 {
+  font-size: 24px;
+}
+.portal-filters,
+.portal-tabs {
+  gap: 6px;
+}
+.portal-filters .selected,
+.portal-tabs .selected {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.portal-filters button {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+.portal-empty {
+  padding: 38px 14px;
+  color: #7b8c98;
+  font-size: 13px;
+}
+/* 分类使用轻量标签，实际业务操作继续使用主按钮，避免两类入口混淆。 */
+.platform-shell .module-tabs {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 18px;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+}
+.platform-shell .module-tabs > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 40px;
+  padding: 9px 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  box-shadow: none;
+  font-size: 13px;
+  line-height: 20px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.platform-shell .module-tabs > button:hover:not(:disabled) {
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.platform-shell .module-tabs > button:is(.active, .selected) {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+  background: transparent;
+}
+.platform-shell .module-tabs.panel-tabs {
+  padding: 0 20px;
+  margin-bottom: 0;
+}
+/* 无标签的查询表单也保留面板内边距，与表头和分页使用同一对齐线。 */
+.platform-shell .list-toolbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 0;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
+}
+.platform-shell .list-toolbar input {
+  width: min(320px, 100%);
+}
+/* 表格、标签页和弹窗沿用同一尺寸，数据多时在内容区滚动。 */
+.section-tabs {
+  padding: 0 20px;
+}
+.section-tabs button {
+  min-height: 40px;
+  padding: 10px 2px;
+  font-size: 13px;
+}
+.section-tabs button.active::after {
+  background: var(--brand);
+}
+.toolbar {
+  gap: 10px;
+  padding: 14px 20px;
+}
+.toolbar > label {
+  margin: 0;
+}
+/* 日期与查询条件横排后保留可读宽度，空间不足时整组换行。 */
+.platform-shell .audit-toolbar > .list-filter-field {
+  min-width: min(220px, 100%);
+}
+.search-field svg {
+  top: 10px;
+}
+table {
+  font-size: 13px;
+}
+th {
+  font-size: 12px;
+  padding: 12px 20px;
+  font-weight: 600;
+  color: #60717e;
+  background: var(--surface-muted);
+}
+td {
+  padding: 15px 20px;
+  color: #415562;
+}
+td strong {
+  color: var(--ink);
+  font-weight: 500;
+}
+td small {
+  font-size: 11px;
+  color: #7b8b97;
+  margin-top: 4px;
+}
+tbody tr:hover {
+  background: #f8fbfc;
+}
+.pagination {
+  padding: 16px 24px;
+  font-size: 12px;
+}
+/* 搜索字段整组换行，字段名与输入控件始终并排。 */
+.platform-shell .list-filter-field {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  margin: 0;
+  white-space: nowrap;
+}
+.platform-shell .list-filter-field > :is(input, select) {
+  width: auto;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+/* 刷新与统计分居列表底部两侧，窄屏允许整组换行。 */
+.list-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+  padding: 16px 20px;
+  border-top: 1px solid var(--line);
+  font-size: 13px;
+}
+.list-footer > .list-refresh {
+  flex-shrink: 0;
+}
+.list-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+  margin-inline-start: auto;
+}
+.list-pagination > div,
+.list-pagination > form {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.list-total {
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+@media (max-width: 520px) {
+  .list-footer {
+    padding-inline: 12px;
+  }
+}
+.status-badge {
+  font-size: 11px;
+  color: #23724b;
+  background: #eef8f1;
+}
+html,
+.management-sidebar,
+.drive-sidebar,
+.table-scroll {
+  scrollbar-width: thin;
+  scrollbar-color: #cbd5de transparent;
+}
+.form-dialog {
+  border-color: var(--line);
+  padding: 28px;
+  border-radius: 12px;
+  max-height: calc(100vh - 64px);
+  color: var(--ink);
+  box-shadow: 0 24px 80px #172d3d24;
+}
+.form-dialog::backdrop {
+  background: #142a3a5c;
+  backdrop-filter: blur(2px);
+}
+.dialog-heading h2 {
+  font-size: 18px;
+}
+.dialog-actions {
+  margin-top: 24px;
+  padding-top: 18px;
+}
+.role-card {
+  padding: 20px;
+  border-color: var(--line);
+}
+.role-card h2 {
+  font-size: 15px;
+}
+.info-note,
+.field-note {
+  color: var(--text-secondary);
+}
+
+/* 登录页保持公司白色标识和大标题，表单采用与工作区一致的品牌色。 */
+.login-story {
+  background: radial-gradient(ellipse at 10% 90%, #145b65 0, #113e48 64%);
+}
+.login-form-inner input {
+  min-height: 46px;
+  background: #fcfdfe;
+}
+.login-form-inner .primary {
+  min-height: 46px;
+}
+.login-form-inner h2 {
+  color: var(--ink);
+}
+.login-form-inner .eyebrow {
+  color: var(--brand);
+}
+
+@media (max-width: 1360px) {
+  .platform-shell .topbar {
+    gap: 16px;
+    grid-template-columns: auto minmax(220px, 1fr) auto;
+  }
+  .platform-shell .company-logo {
+    width: 104px;
+  }
+  .platform-shell .brand strong {
+    font-size: 15px;
+  }
+  .platform-shell .account-actions {
+    gap: 5px;
+  }
+  .platform-shell .management-layout {
+    grid-template-columns: 184px minmax(0, 1fr);
+    gap: 18px;
+  }
+  .portal-home-grid {
+    grid-template-columns: minmax(260px, 1fr) minmax(340px, 1.3fr);
+  }
+  .portal-home-side {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none;
+    scroll-behavior: auto;
+  }
+}

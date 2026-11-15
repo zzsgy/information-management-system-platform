@@ -1,0 +1,5 @@
+【这是总工程根目录】
+项目名称：企业档案管理系统（ArchiveSystem）
+架构：C/S 模式。server/ 是服务端（FastAPI），client/ 是桌面客户端（PySide6）。
+客户端不直连数据库，全部通过服务端 REST API 访问数据。
+最终交付物：服务端安装程序 + 客户端安装程序（installer/ 目录下输出）。

@@ -1,0 +1,31 @@
+# 默认仅监听本机；内网部署时显式设置 IMS_HOST=0.0.0.0，并使用网关 TLS。
+server:
+  address: ${IMS_HOST:127.0.0.1}
+  port: ${IMS_PORT:8000} # 与原桌面客户端默认端口保持一致。
+  error:
+    include-message: never # 不向客户端返回内部异常或数据库连接信息。
+spring:
+  application:
+    name: ims-archive
+  datasource:
+    url: ${IMS_DB_URL:jdbc:postgresql://localhost:5432/ims_archive} # 正式环境只支持 PostgreSQL。
+    username: ${IMS_DB_USER:ims_archive} # 数据库账号由部署者建立，权限限本库。
+    password: ${IMS_DB_PASSWORD:} # 不在代码或模板中保存真实口令。
+    hikari:
+      maximum-pool-size: ${IMS_DB_POOL_SIZE:15} # 连接数可按实际并发测试调整。
+      connection-timeout: 10000 # 毫秒，数据库不可用时及时失败。
+  flyway:
+    enabled: true # 迁移失败阻止启动，禁止带着不完整表结构继续运行。
+  servlet:
+    multipart:
+      max-file-size: ${IMS_MAX_FILE_SIZE:100MB} # 单个附件的传输上限。
+      max-request-size: ${IMS_MAX_REQUEST_SIZE:105MB} # 为 multipart 元数据预留空间。
+ims:
+  storage-root: ${IMS_STORAGE_ROOT:./runtime/attachments} # 附件与程序分离，可挂载本地盘或 NAS。
+  backup-root: ${IMS_BACKUP_ROOT:./runtime/backups} # 备份目录同时保存数据库、附件和校验清单。
+  pg-bin: ${IMS_PG_BIN:} # PostgreSQL 工具目录；留空时从 PATH 查找。
+  backup-timeout-seconds: ${IMS_BACKUP_TIMEOUT_SECONDS:240} # 完整备份任务上限；调高时同步客户端超时。
+  auth:
+    session-hours: ${IMS_SESSION_HOURS:12} # 会话有效小时数；账号禁用及改密即时撤销。
+  bootstrap:
+    admin-password: ${IMS_BOOTSTRAP_ADMIN_PASSWORD:} # 首次初始化专用，无默认密码。

@@ -1,0 +1,80 @@
+/* 独立原型的色彩、字体与间距，不影响正式档案界面的样式。 */
+:root {
+  font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  color: #243431;
+  background: #f5f7f7;
+  font-synthesis: none;
+  --p-ink: #243431; /* 标题和主要内容。 */
+  --p-muted: #7f8d8a; /* 次要信息，深色背景另行设置。 */
+  --p-line: #e9eeec; /* 面板和列表细分隔线。 */
+  --p-teal: #237a69; /* 平台主色，同时用于主要操作。 */
+  --p-preview-height: 36px; /* 与固定导航的顶部偏移同步。 */
+}
+* { box-sizing: border-box; }
+body { margin: 0; min-width: 320px; }
+button, input { font: inherit; }
+button, a, input { -webkit-tap-highlight-color: transparent; }
+button { cursor: pointer; }
+button { color: inherit; }
+a { color: inherit; text-decoration: none; }
+button:focus-visible, a:focus-visible, input:focus-visible { outline: 3px solid #75b5a6; outline-offset: 4px; }
+button { touch-action: manipulation; }
+h1, h2, h3, p { margin: 0; }
+.p-icon { flex: 0 0 auto; vertical-align: middle; }
+.p-text-button, .p-icon-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border: 0; background: transparent; padding: 0; }
+.p-text-button { font-size: 12px; color: #74857f; line-height: 1.6; white-space: nowrap; }
+.p-text-button:hover { color: var(--p-teal); }
+.p-icon-button { width: 34px; height: 34px; border-radius: 7px; color: #71817c; }
+.p-icon-button:hover { background: #edf3f0; color: var(--p-teal); }
+/* 预览工具条明确区分示例与正式系统，并允许直接切换两张设计稿。 */
+.p-preview-bar { position: sticky; top: 0; z-index: 50; height: var(--p-preview-height); display: flex; align-items: center; justify-content: space-between; padding: 0 22px; background: #eaf0ed; border-bottom: 1px solid #dfe8e3; color: #536b62; font-size: 11px; }
+.p-preview-bar > div { display: flex; align-items: center; gap: 14px; }
+.p-preview-badge { font-size: 9px; letter-spacing: 1.5px; font-weight: 700; }
+.p-preview-description { color: #6a7f74; }
+/* 身份选择仅属于设计预览工具条，不放入正式产品的用户操作区域。 */
+.p-preview-identity { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; font-size: 10px; }
+.p-preview-identity select { min-height: 26px; padding: 3px 7px; border: 1px solid #ccdbd2; border-radius: 5px; background: #f9fcfa; color: #38654f; font: inherit; }
+.p-preview-identity select:focus-visible { outline: 2px solid #75b5a6; outline-offset: 2px; }
+.p-preview-switch { height: 100%; }
+.p-preview-switch button { display: flex; align-items: center; gap: 6px; height: 100%; border: 0; padding: 0 5px; background: none; color: #687c72; font-size: 11px; border-bottom: 2px solid transparent; }
+.p-preview-switch button.active { color: #276b57; border-bottom-color: #39836a; font-weight: 600; }
+/* 平台标识使用本地矢量式几何元素，保留深浅底色的一致识别。 */
+.p-brand-mark, .p-mini-mark { width: 34px; height: 34px; flex: 0 0 auto; display: grid; grid-template-columns: 1fr 1fr; gap: 4px; transform: rotate(-2deg); }
+.p-brand-mark i, .p-mini-mark i { background: #62b9a3; border-radius: 4px; }
+.p-brand-mark i:nth-child(2), .p-mini-mark i:nth-child(2) { background: #b8dace; border-radius: 4px 11px 4px 4px; }
+.p-brand-mark i:nth-child(3), .p-mini-mark i:nth-child(3) { background: #367765; }
+.p-brand-mark i:nth-child(4), .p-mini-mark i:nth-child(4) { background: #85c1ac; }
+/* 登录页只保留系统标识、账号、密码与登录操作，桌面和手机共用单栏布局。 */
+.p-preview-shell.is-login { --p-preview-height: 0px; }
+.p-login-minimal { display: grid; place-items: center; min-height: 100vh; min-height: 100svh; padding: 48px 24px; background: #fafcf9; }
+.p-login-panel { width: min(100%, 380px); transform: translateY(-24px); }
+.p-minimal-brand { display: flex; justify-content: center; align-items: center; gap: 15px; margin-bottom: 43px; }
+.p-minimal-brand .p-brand-mark { width: 39px; height: 39px; gap: 4px; }
+.p-minimal-brand h1 { color: #294233; font-size: 27px; font-weight: 600; letter-spacing: 2px; line-height: 1.4; }
+.p-minimal-brand > div > span { display: block; color: #85998b; font-size: 8px; letter-spacing: 1px; margin-top: 6px; }
+.p-minimal-form { display: flex; flex-direction: column; }
+.p-minimal-form > label { font-size: 13px; color: #526557; font-weight: 500; }
+.p-minimal-form > label:not(:first-child) { margin-top: 23px; }
+.p-form-input { height: 51px; display: flex; gap: 12px; align-items: center; padding: 0 14px; margin-top: 10px; border: 1px solid #dbe4dc; border-radius: 7px; color: #8b9d8e; background: #fff; transition: border-color .2s, box-shadow .2s; }
+.p-form-input:focus-within { border-color: #6d9f85; box-shadow: 0 0 0 3px #e8f1e8; }
+.p-form-input input { width: 100%; min-width: 0; height: 100%; outline: 0; border: 0; background: transparent; color: var(--p-ink); font-size: 13px; }
+.p-form-input input:focus-visible { outline: none; }
+.p-form-input input::placeholder { color: #99a69b; }
+.p-form-input .p-icon-button { margin-right: -7px; flex-shrink: 0; }
+.p-login-submit { width: 100%; display: flex; justify-content: center; align-items: center; gap: 14px; height: 50px; border: 1px solid #236d50; border-radius: 7px; background: #287859; color: #fff; margin-top: 31px; box-shadow: 0 4px 10px #24644412; font-weight: 600; font-size: 14px; transition: background .2s; }
+.p-login-submit:hover { background: #1e6549; }
+@media (max-width: 480px) { .p-login-minimal { padding: 32px 28px; }.p-login-panel { transform: translateY(-18px); }.p-minimal-brand { margin-bottom: 38px; gap: 12px; }.p-minimal-brand h1 { font-size: 25px; }.p-minimal-brand > div > span { font-size: 7px; }.p-minimal-brand .p-brand-mark { width: 35px; height: 35px; } }
+@media (max-height: 500px) { .p-login-panel { transform: none; }.p-login-minimal { padding-block: 28px; }.p-minimal-brand { margin-bottom: 26px; } }
+/* 原型提示对话框保持真实业务边界；键盘焦点由浏览器原生 dialog 管理。 */
+.p-preview-dialog { width: min(440px, calc(100% - 36px)); margin: auto; padding: 35px; border: 1px solid #dfe8da; border-radius: 16px; background: #fcfdf9; box-shadow: 0 22px 90px #152b2540; color: #3e533c; }.p-preview-dialog::backdrop { background: #172e285e; backdrop-filter: blur(3px); }.p-dialog-close { position: absolute; top: 12px; right: 12px; }.p-dialog-icon { display: flex; align-items: center; justify-content: center; width: 56px; height: 56px; border-radius: 14px; color: #719956; background: #edf3e5; margin-bottom: 23px; }.p-dialog-kicker { font-size: 10px; letter-spacing: 1px; color: #96a785; }.p-preview-dialog h2 { font-size: 22px; font-weight: 600; margin: 10px 0 15px; }.p-preview-dialog #preview-dialog-detail { font-size: 13px; line-height: 1.9; color: #86987a; }.p-dialog-back { display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; border: 1px solid #477f45; border-radius: 7px; background: #4b7c44; color: #fff; font-size: 12px; padding: 13px; margin-top: 28px; }
+/* 手机预览工具条收起次要说明，保留页面切换入口。 */
+@media (max-width: 760px) {
+  .p-preview-bar { padding: 0 14px; }
+  .p-preview-badge, .p-preview-detail, .p-preview-description { display: none; }
+  .p-preview-bar > div { gap: 10px; }
+  .p-preview-switch button, .p-preview-description { font-size: 10px; }
+}
+/* 尊重减少动画设置，页面内容不依赖动画显示。 */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}

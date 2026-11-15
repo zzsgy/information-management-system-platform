@@ -1,0 +1,230 @@
+/* 首页采用随视口展开的版心；左右边距保持适量，不增加新内容填充空白。 */
+.p-workspace {
+  --p-page-gutter: clamp(24px, 3.2vw, 80px); /* 宽屏两侧边距最多 80 像素，与顶栏统一。 */
+  --p-layout-gap: 22px; /* 系统入口与内容面板之间共用的间距。 */
+  min-height: calc(100vh - var(--p-preview-height));
+  color: #2e453b;
+  background: linear-gradient(180deg, #dcebe2 78px, #e8f1eb 245px, #f4f7f5 440px); /* 顶部问候区稍加深，向内容区自然过渡。 */
+  font-size: 14px;
+}
+.p-main-area { width: 100%; }
+.p-topbar { height: 78px; background: #ffffffed; border-bottom: 1px solid #e0e9e3; }
+.p-topbar-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; width: 100%; height: 100%; padding: 0 var(--p-page-gutter); }
+.p-platform-brand { display: inline-flex; align-items: center; gap: 13px; flex-shrink: 0; }
+.p-platform-brand .p-brand-mark { width: 34px; height: 34px; }
+.p-platform-brand strong { display: block; font-size: 19px; font-weight: 650; letter-spacing: .6px; white-space: nowrap; }
+.p-platform-brand small { display: block; font-size: 10px; color: #83988b; letter-spacing: 2px; margin-top: 5px; }
+.p-topbar-actions { display: flex; align-items: center; gap: 15px; }
+.p-search { display: flex; align-items: center; gap: 10px; width: clamp(240px, 18vw, 380px); height: 38px; border: 1px solid #e5ece7; border-radius: 8px; padding: 0 12px; color: #8b9d92; background: #f5f8f6; }
+.p-search input { width: 100%; min-width: 0; outline: none; border: 0; background: none; color: #4b6958; font-size: 12px; }
+.p-search input::placeholder { color: #899b8f; }
+.p-search:focus-within { border-color: #8bb39b; box-shadow: 0 0 0 3px #edf5ee; }
+.p-search > span { border: 1px solid #dde6df; border-radius: 4px; font-size: 11px; line-height: 20px; padding: 0 6px; }
+/* 意见反馈使用无底色的图标文字按钮，保留点击范围和浅色悬停反馈。 */
+.p-feedback-button { display: inline-flex; align-items: center; justify-content: center; flex-shrink: 0; gap: 8px; min-height: 38px; padding: 0 15px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: #5f7c6d; font-size: 13px; font-weight: 500; white-space: nowrap; transition: background .2s; }
+.p-feedback-button:hover { background: #edf3f0; color: #276e51; }
+.p-topbar-separator { width: 1px; height: 24px; background: #e8eee9; }
+.p-notification-button { position: relative; }
+.p-notification-button > i { position: absolute; width: 5px; height: 5px; top: 6px; right: 8px; background: #b99265; border: 1px solid #fff; border-radius: 50%; }
+.p-top-avatar { display: inline-flex; align-items: center; justify-content: center; width: 34px; height: 34px; flex-shrink: 0; border: 1px solid #dce7dc; border-radius: 50%; background: #eaf0e6; color: #6b805f; font-size: 13px; }
+.p-dashboard { width: 100%; padding: 30px var(--p-page-gutter) 22px; }
+/* 问候、日期和系统入口共享左对齐线，让首页在大屏上仍有清晰的阅读起点。 */
+.p-greeting-row { display: flex; justify-content: space-between; align-items: center; gap: 24px; margin-bottom: 27px; }
+.p-greeting-kicker { display: flex; align-items: center; gap: 8px; color: #637f6b; font-size: 11px; letter-spacing: .6px; margin-bottom: 10px; }
+.p-greeting-kicker > .p-icon { color: #ac9b65; }
+.p-greeting-row h1 { font-size: 29px; line-height: 1.4; font-weight: 600; letter-spacing: .8px; color: #294737; }
+.p-greeting-period { color: #83a183; }
+.p-greeting-row p { color: #627f6e; font-size: 13px; line-height: 1.7; margin-top: 9px; }
+.p-date-card { display: flex; align-items: center; gap: 13px; padding: 13px 17px; border: 1px solid #cfdfd0; border-radius: 12px; background: #f3f8efcc; }
+.p-calendar-icon { display: inline-flex; align-items: center; justify-content: center; color: #82966f; width: 40px; height: 40px; border-radius: 10px; background: #eaf1e3; }
+.p-date-card > div > span { display: block; color: #657f5e; font-size: 13px; }
+.p-date-card small { display: block; color: #768c6d; font-size: 11px; margin-top: 6px; }
+/* 系统入口靠左排列，每块最多 320 像素宽；增加管理卡片后自动换行，仍保留右侧空白。 */
+.p-application-grid { display: flex; flex-wrap: wrap; justify-content: flex-start; gap: var(--p-layout-gap); }
+.p-application-card { position: relative; isolation: isolate; overflow: hidden; flex: 0 1 320px; min-width: 0; display: grid; grid-template-columns: 42px minmax(0, 1fr) auto; grid-template-rows: auto auto; align-items: center; gap: 8px 12px; min-height: 110px; padding: 20px; border: 1px solid #d5e5d8; border-radius: 12px; background: #f8fcf6; box-shadow: 0 3px 9px #2c503005; }
+.p-application-card.blue { border-color: #dbe4ef; background: #f6f9fe; }
+.p-application-card.slate { border-color: #e0e6e2; background: #f7f9f7; }
+.p-app-top { display: contents; }
+.p-app-icon { display: flex; align-items: center; justify-content: center; grid-column: 1; grid-row: 1 / 3; width: 42px; height: 44px; border: 1px solid #cbe2ce; border-radius: 12px; background: #e4f1e2; color: #548d5e; box-shadow: inset 0 1px 0 #fff8; }
+.p-app-icon .p-icon { width: 28px; height: 28px; }
+.p-app-icon.blue { border-color: #d5e2f6; background: #e8f0fc; color: #638dbe; }
+.p-app-icon.slate { border-color: #dce5dd; background: #edf2ed; color: #8a9d8d; }
+.p-category-tag { grid-column: 3; grid-row: 1; justify-self: end; align-self: center; font-size: 10px; line-height: 1.6; padding: 2px 7px; background: #fff9; border: 1px solid #dce9db; border-radius: 4px; color: #7b9474; white-space: nowrap; }
+.blue .p-category-tag { border-color: #e0e8f2; color: #8095b0; }
+.p-category-tag.planned { border-color: #e2e8e0; color: #8b9c87; background: #edf2e9; }
+.p-application-card h3 { grid-column: 2; grid-row: 1; min-width: 0; margin: 0; font-size: 18px; font-weight: 600; letter-spacing: .5px; line-height: 1.5; color: #3a5942; }
+.p-application-card.blue h3 { color: #3d5a78; }
+.p-application-card.slate h3 { color: #84967e; }
+.p-app-enter { grid-column: 2 / 4; grid-row: 2; display: flex; justify-content: space-between; align-items: center; gap: 10px; width: 100%; padding: 0; border: 0; background: transparent; color: #659060; font-size: 12px; text-align: left; }
+.blue .p-app-enter { color: #7897bb; }
+.slate .p-app-enter { color: #95a58b; }
+.p-app-planned > span { display: flex; align-items: center; gap: 6px; }
+.p-arrow-circle { display: inline-flex; align-items: center; justify-content: center; width: 25px; height: 25px; border-radius: 50%; background: #e9f2e4; transition: transform .2s; flex-shrink: 0; }
+.blue .p-arrow-circle { background: #e8effa; }
+.p-app-enter:hover .p-arrow-circle { transform: translateX(3px); }
+.p-card-orbit { position: absolute; pointer-events: none; z-index: -1; width: 120px; height: 120px; top: -45px; right: -50px; border: 1px solid #e5eedf; border-radius: 50%; box-shadow: 0 0 0 22px #edf5e777, 0 0 0 23px #e5eedf77; opacity: .65; }
+.blue .p-card-orbit { border-color: #e8edf7; box-shadow: 0 0 0 22px #edf2fa77, 0 0 0 23px #e5ebf577; }
+.slate .p-card-orbit { opacity: .2; }
+/* 管理卡片使用低饱和紫色，与两个业务入口区分但保持同样的体积。 */
+.p-application-card.violet { border-color: #e3dff0; background: #f9f7fc; }
+.p-app-icon.violet { border-color: #ded7ee; background: #eeebf8; color: #8775a8; }
+.violet .p-category-tag { border-color: #e7e0f0; color: #9584ae; }
+.p-application-card.violet h3 { color: #685781; }
+.violet .p-app-enter { color: #8d77aa; }
+.violet .p-arrow-circle { background: #eeebf6; }
+.violet .p-card-orbit { border-color: #eee7f4; box-shadow: 0 0 0 22px #f1ecf877, 0 0 0 23px #eee7f477; }
+.p-search-empty { display: flex; justify-content: center; align-items: center; flex-wrap: wrap; gap: 12px; padding: 35px; border: 1px dashed #cbdcc8; border-radius: 12px; background: #f8fcf6; color: #829a7b; }
+/* 常规桌面保留左侧待办，右侧依次展示公告和常用网站。 */
+.p-content-columns { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, .85fr); grid-template-areas: "tasks notices" "tasks websites"; gap: var(--p-layout-gap); margin-top: 24px; align-items: stretch; }
+.p-tasks-panel { grid-area: tasks; }
+.p-notices-panel { grid-area: notices; }
+.p-websites-panel { grid-area: websites; }
+.p-panel { display: flex; flex-direction: column; min-width: 0; border: 1px solid #dfe8e0; border-radius: 13px; background: #fff; overflow: hidden; box-shadow: 0 3px 10px #344d3203; }
+.p-panel-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 67px; padding: 20px 24px; flex-shrink: 0; }
+.p-panel-heading h2 { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; letter-spacing: .4px; }
+.p-panel-heading .p-text-button { color: #7b8f76; font-size: 11px; }
+.p-heading-count { font-size: 11px; line-height: 1.5; padding: 1px 7px; border-radius: 4px; color: #6c9166; background: #eef5e8; font-weight: 500; }
+.p-task-tabs { display: flex; gap: 24px; align-items: center; border-bottom: 1px solid #edf2e9; padding: 0 24px; }
+.p-task-tabs button { display: inline-flex; align-items: center; gap: 6px; padding: 0 0 14px; border: 0; border-bottom: 2px solid transparent; background: none; font-size: 12px; color: #91a187; }
+.p-task-tabs button > span { font-size: 10px; color: #9cac91; }
+.p-task-tabs button.active { color: #4d8244; border-color: #6c9e58; font-weight: 600; }
+.p-task-tabs button.active > span { color: #6d955a; }
+.p-task-note { margin-left: auto; color: #a0ae94; font-size: 10px; align-self: flex-start; }
+.p-task-list { display: grid; grid-auto-rows: minmax(90px, 1fr); flex: 1; padding: 0 24px; }
+.p-task-row { display: flex; align-items: center; gap: 14px; width: 100%; padding: 21px 0; border: 0; border-bottom: 1px solid #edf2e9; background: transparent; text-align: left; }
+.p-task-row:last-child { border-bottom: 0; }
+.p-row-icon { display: inline-flex; justify-content: center; align-items: center; width: 40px; height: 42px; border-radius: 10px; color: #7395bf; background: #eff5fd; flex-shrink: 0; }
+.p-row-icon.jade { color: #83a973; background: #f0f7e9; }
+.p-row-icon.amber { color: #b3a66e; background: #faf7e9; }
+.p-task-info { flex: 1; min-width: 0; }
+.p-task-title { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 14px; line-height: 1.6; color: #506846; }
+.p-task-row:hover .p-task-title { color: #447839; }
+.p-urgent { font-size: 9px; line-height: 1.5; color: #ba9c76; background: #fbf3e8; border-radius: 4px; padding: 2px 5px; white-space: nowrap; }
+.p-task-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; margin-top: 8px; font-size: 11px; line-height: 1.6; color: #96a48a; }
+.p-task-meta b { color: #8a9d7c; font-weight: 400; }
+.p-task-meta i { width: 2px; height: 2px; border-radius: 50%; background: #b0bda3; }
+.p-task-department { margin-left: -5px; }
+.p-task-right { display: flex; flex-direction: column; align-items: flex-end; gap: 9px; flex-shrink: 0; }
+.p-task-state { font-size: 10px; color: #a8945d; background: #faf6e9; border-radius: 4px; line-height: 1.5; padding: 3px 7px; }
+.p-task-state.handling { color: #7b99b6; background: #eff6fb; }
+.p-task-right small { font-size: 10px; color: #9ead92; }
+.p-task-row > .p-icon { color: #bcc9ad; margin-left: 4px; }
+.p-panel-bottom { display: flex; align-items: center; justify-content: center; gap: 7px; padding: 13px 15px; color: #95a982; font-size: 10px; background: #fafcf7; border-top: 1px solid #edf2e7; }
+/* 网站列表只呈现名称及外链图标，不加载远程图片，也不在界面暴露完整地址。 */
+.p-websites-panel > .p-panel-heading > .p-icon { color: #91a393; }
+.p-website-list { list-style: none; margin: 0; padding: 0 24px 20px; }
+.p-website-list li + li { border-top: 1px solid #edf2e8; }
+.p-website-link { display: flex; align-items: center; gap: 13px; min-height: 83px; padding: 14px 12px; border-radius: 9px; font-size: 14px; font-weight: 500; color: #4d6e58; transition: background .2s; }
+.p-website-link:hover { background: #f0f6f1; color: #246c4e; }
+.p-website-link > .p-icon { margin-left: auto; color: #8ba38e; }
+.p-website-mark { display: grid; place-items: center; flex-shrink: 0; width: 38px; height: 38px; border: 1px solid #d7e7dc; border-radius: 10px; background: #ebf4ed; color: #508367; font-size: 16px; }
+.p-new-dot { width: 5px; height: 5px; border-radius: 50%; background: #bfa86e; margin-left: -2px; }
+.p-notice-list { padding: 0 24px 8px; flex: 1; }
+.p-notice { display: flex; flex-direction: column; justify-content: center; width: 100%; padding: 12px 0; border: 0; border-bottom: 1px solid #edf2e8; background: transparent; text-align: left; }
+.p-notice:last-child { border-bottom: 0; }
+.p-notice-title { color: #718259; font-size: 13px; line-height: 1.8; }
+.p-notice-title small { display: inline; color: #819d62; background: #f0f6e8; font-size: 9px; padding: 2px 5px; border-radius: 3px; margin-right: 7px; white-space: nowrap; }
+.p-notice:hover .p-notice-title { color: #5f873e; }
+/* 公告来源信息使用标签与文字分层；时间含年月日和时分，空间不足时自然换行。 */
+.p-notice-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 9px 10px; color: #84937e; font-size: 11px; line-height: 1.6; margin-top: 11px; }
+.p-notice-category { padding: 2px 7px; border: 1px solid #e2ebdd; border-radius: 4px; background: #f4f8ef; color: #7c936b; font-size: 10px; white-space: nowrap; }
+.p-notice-publisher, .p-notice-meta time { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.p-notice-publisher > .p-icon, .p-notice-meta time > .p-icon { color: #9baa91; }
+.p-notice-department { padding-left: 10px; border-left: 1px solid #e1e8dc; overflow-wrap: anywhere; }
+.p-notice-meta time { margin-left: auto; color: #91a086; font-size: 10px; font-variant-numeric: tabular-nums; }
+.p-dashboard-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #9ead8c; padding-top: 26px; font-size: 10px; }
+.p-dashboard-footer > span:first-child { display: flex; align-items: center; gap: 8px; }
+.p-footer-mark { display: inline-block; width: 7px; height: 7px; border: 1px solid #a9b894; transform: rotate(45deg); }
+#applications, #tasks, #notices, #workspace-top { scroll-margin-top: 58px; }
+/* 超宽屏将已有三个内容模块并排，利用横向空间，保持各列阅读长度适中。 */
+@media (min-width: 1800px) {
+  .p-content-columns { grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) minmax(0, .9fr); grid-template-areas: "tasks notices websites"; }
+  .p-notice-list { display: grid; grid-template-rows: repeat(3, minmax(0, 1fr)); padding-bottom: 4px; }
+  .p-notice { padding-block: 22px; }
+  .p-notice-title { font-size: 14px; }
+  .p-notice-meta { margin-top: 14px; font-size: 11px; }
+}
+/* 小型桌面和横屏平板保持两列；减少字号仅作用于次要文字。 */
+@media (max-width: 1200px) {
+  .p-workspace { --p-layout-gap: 18px; }
+  .p-topbar-inner { gap: 16px; }
+  .p-topbar-actions { gap: 10px; }
+  .p-search { width: clamp(160px, 20vw, 240px); }
+  .p-application-card { padding: 19px; grid-template-columns: 42px minmax(0, 1fr) auto; column-gap: 12px; }
+  .p-app-icon { width: 42px; height: 44px; }
+  .p-application-card h3 { font-size: 17px; }
+  .p-content-columns { grid-template-columns: minmax(0, 1.15fr) minmax(0, .85fr); }
+  .p-task-department { display: none; }
+  .p-panel-heading { padding-inline: 20px; }
+  .p-task-list, .p-task-tabs, .p-notice-list, .p-website-list { padding-inline: 20px; }
+  .p-task-title { font-size: 13px; }
+  .p-task-row { gap: 11px; }
+  .p-task-row > .p-icon { display: none; }
+  .p-task-note { display: none; }
+}
+/* 平板竖屏与手机恢复自然的单列顺序，不以横向滚动换取版面宽度。 */
+@media (max-width: 960px) {
+  .p-content-columns { grid-template-columns: minmax(0, 1fr); grid-template-areas: "tasks" "notices" "websites"; }
+  .p-topbar-actions .p-help-top { display: none; }
+  .p-task-list { grid-auto-rows: minmax(82px, auto); }
+  .p-task-row { padding-block: 19px; }
+  .p-task-department { display: inline; }
+  .p-application-card { grid-template-columns: 40px minmax(0, 1fr); gap: 7px 11px; }
+  .p-app-top .p-category-tag { display: none; }
+  .p-app-enter { grid-column: 2; font-size: 11px; }
+  .p-app-planned > span { font-size: 10px; }
+}
+@media (max-width: 760px) {
+  .p-workspace { --p-page-gutter: 18px; --p-layout-gap: 16px; }
+  .p-topbar { height: auto; }
+  .p-topbar-inner { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 13px 10px; padding-block: 16px 14px; }
+  .p-platform-brand { grid-column: 1; grid-row: 1; gap: 10px; }
+  .p-platform-brand .p-brand-mark { width: 30px; height: 30px; gap: 3px; }
+  .p-platform-brand strong { font-size: 16px; }
+  .p-platform-brand small { font-size: 8px; margin-top: 4px; }
+  .p-topbar-actions { display: contents; }
+  .p-topbar-separator, .p-topbar-actions .p-help-top, .p-search > span { display: none; }
+  .p-search { grid-column: 1; grid-row: 2; width: 100%; height: 38px; }
+  .p-feedback-button { grid-column: 2 / 4; grid-row: 2; height: 38px; gap: 6px; padding-inline: 10px; font-size: 12px; }
+  .p-notification-button { grid-column: 2; grid-row: 1; }
+  .p-top-avatar { grid-column: 3; grid-row: 1; width: 30px; height: 30px; }
+  .p-dashboard { padding-top: 24px; }
+  .p-greeting-row { margin-bottom: 23px; }
+  .p-greeting-kicker { font-size: 10px; }
+  .p-greeting-row h1 { font-size: 26px; }
+  .p-greeting-row p { font-size: 11px; }
+  .p-date-card { display: none; }
+  .p-application-grid { gap: 12px; }
+  .p-application-card { grid-template-columns: 40px minmax(0, 1fr) auto; gap: 7px 13px; padding: 17px; min-height: 105px; }
+  .p-app-icon { width: 40px; height: 42px; border-radius: 10px; }
+  .p-app-icon .p-icon { width: 25px; height: 25px; }
+  .p-app-top .p-category-tag { display: block; font-size: 9px; padding-inline: 5px; }
+  .p-application-card h3 { font-size: 17px; }
+  .p-app-enter { grid-column: 2 / 4; font-size: 11px; }
+  .p-app-planned > span { font-size: 11px; }
+  .p-content-columns { margin-top: 20px; }
+  .p-panel-heading { min-height: 61px; padding: 19px 17px; }
+  .p-panel-heading h2 { font-size: 16px; }
+  .p-panel-heading .p-text-button { font-size: 10px; }
+  .p-task-list, .p-task-tabs, .p-notice-list, .p-website-list { padding-inline: 17px; }
+  .p-task-list { grid-auto-rows: minmax(82px, auto); }
+  .p-task-tabs { gap: 24px; }
+  .p-task-tabs button { font-size: 11px; }
+  .p-task-row { padding-block: 17px; gap: 10px; }
+  .p-row-icon { width: 34px; height: 38px; border-radius: 8px; }
+  .p-task-title { font-size: 12px; gap: 5px; }
+  .p-urgent { font-size: 8px; padding: 1px 4px; }
+  .p-task-meta { font-size: 10px; gap: 5px; margin-top: 6px; }
+  .p-task-department { display: none; }
+  .p-task-state { font-size: 9px; padding-inline: 5px; }
+  .p-task-right { gap: 7px; }
+  .p-task-right small { font-size: 9px; }
+  .p-panel-bottom { font-size: 9px; padding-inline: 10px; }
+  .p-notice-title { font-size: 12px; }
+  .p-notice-meta { font-size: 10px; }
+  .p-notice-meta time { flex-basis: 100%; margin-left: 0; }
+  .p-website-link { font-size: 13px; min-height: 73px; }
+  .p-notice { padding-block: 15px; }
+  .p-dashboard-footer { font-size: 9px; }
+  .p-dashboard-footer > span:last-child { display: none; }
+}

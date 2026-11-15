@@ -1,0 +1,4 @@
+【服务端根目录】
+技术栈：Python 3.13 + FastAPI + SQLAlchemy 2.0 + Alembic + PostgreSQL。
+虚拟环境在 server/.venv（依赖已装好）。入口文件是 app/main.py。
+启动命令见 run_server.bat（后续创建）。

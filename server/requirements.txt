@@ -1,0 +1,13 @@
+# 服务端依赖（企业档案管理系统）
+# 安装方式：在 server/.venv 激活后执行 pip install -r requirements.txt
+fastapi
+uvicorn[standard]
+sqlalchemy
+psycopg[binary]
+alembic
+pydantic-settings
+python-dotenv
+python-multipart
+passlib          # 使用 pbkdf2_sha256（纯 Python，无需 bcrypt 二进制）
+pyjwt
+PyInstaller     # 打包为单文件 exe 用（可选，打包阶段安装）

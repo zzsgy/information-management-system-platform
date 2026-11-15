@@ -1,0 +1,1541 @@
+<script setup lang="ts">
+import { computed, inject, nextTick, ref, useTemplateRef, watch } from "vue";
+import { api, profile, type Page } from "./api";
+import { portalTime } from "./portal";
+import Icon from "../preview/PlatformIcon.vue";
+import EmptyState from "./EmptyState.vue";
+import MeetingPermissionSettings from "./MeetingPermissionSettings.vue";
+import MeetingEditor from "./MeetingEditor.vue";
+import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
+import MeetingMaterialForm from "./MeetingMaterialForm.vue";
+import MeetingMinutes from "./MeetingMinutes.vue";
+import MeetingLiveNotes from "./MeetingLiveNotes.vue";
+import {
+  materialLabels,
+  reportMarkup,
+  type MaterialKind,
+  meetingStates,
+  type MeetingDetail,
+  type MeetingItem,
+  type MeetingOptions,
+  type MeetingRoom,
+  type MeetingSummary,
+} from "./meeting";
+
+const props = defineProps<{ route: string }>();
+const inform = inject<(message: string) => void>("inform")!;
+const options = ref<MeetingOptions>();
+const results = ref<Page<MeetingSummary>>();
+const detail = ref<MeetingDetail>();
+const item = ref<MeetingItem>();
+const rooms = ref<MeetingRoom[]>([]);
+const error = ref(""),
+  loading = ref(false),
+  busy = ref(false);
+const editor = ref(false),
+  cancelling = ref(false);
+const page = ref(1),
+  reason = ref(""),
+  replyReason = ref("");
+const decline = ref(false),
+  returning = ref(false),
+  returnReason = ref("");
+const report = ref(""),
+  topics = ref(""),
+  feedback = ref("");
+const roomName = ref(""),
+  enabled = ref(true),
+  roomId = ref("");
+const detailRevision = ref(0);
+const detailDialog = ref<HTMLDialogElement>();
+watch(detailDialog, (dialog) => dialog?.showModal(), { flush: "post" });
+
+const declineInput = ref<HTMLTextAreaElement>();
+const cancelInput = ref<HTMLTextAreaElement>();
+
+async function openDecline() {
+  decline.value = !decline.value;
+  if (decline.value) {
+    await nextTick();
+    declineInput.value?.focus();
+  }
+}
+
+async function openCancellation() {
+  cancelling.value = !cancelling.value;
+  if (cancelling.value) {
+    await nextTick();
+    cancelInput.value?.focus();
+  }
+}
+
+const liveNotes =
+  useTemplateRef<InstanceType<typeof MeetingLiveNotes>>("liveNotes");
+
+async function closeDetail() {
+  if (busy.value) return;
+  busy.value = true;
+  try {
+    if (!liveNotes.value || (await liveNotes.value.flush()))
+      location.hash = "#/meetings";
+  } finally {
+    busy.value = false;
+  }
+}
+const params = computed(
+  () => new URLSearchParams(props.route.split("?")[1] ?? ""),
+);
+const meetingId = computed(() => params.value.get("id") ?? "");
+const itemId = computed(() => params.value.get("item") ?? "");
+/** 配置页只由管理中心进入，会议室接口仍按现有管理权限鉴权。 */
+const configuring = computed(() => props.route === "meeting-config");
+const roomDialog = ref<HTMLDialogElement>();
+const roomEditing = ref(false);
+watch(roomDialog, (dialog) => dialog?.showModal(), { flush: "post" });
+
+function closeRoom() {
+  if (!busy.value) roomEditing.value = false;
+}
+const materialForms =
+  useTemplateRef<InstanceType<typeof MeetingMaterialForm>[]>("materialForms");
+const materialOrder: MaterialKind[] = ["REPORT", "TOPICS", "COORDINATION"];
+const formKinds = computed(() =>
+  materialOrder.filter((kind) => detail.value?.materialTypes?.includes(kind)),
+);
+const own = computed(() =>
+  detail.value?.attendees.find((a) => a.userId === profile.value?.user.id),
+);
+
+/** 汇总只在发起人详情中显示，数据沿用详情接口已有的查看权限。 */
+const summaryTypes = computed<MaterialKind[]>(() =>
+  detail.value?.shareAll === true ||
+  detail.value?.organizerId === profile.value?.user.id
+    ? (detail.value?.materialTypes ?? []).filter((kind) => kind !== "REPORT")
+    : [],
+);
+const submissions = computed(
+  () =>
+    detail.value?.attendees.flatMap((person) => person.materials ?? []) ?? [],
+);
+
+async function refresh() {
+  if (itemId.value) {
+    item.value = await api<MeetingItem>("/meetings/items/" + itemId.value);
+  } else if (meetingId.value) {
+    const record = await api<MeetingDetail>("/meetings/" + meetingId.value);
+    detail.value = record;
+    report.value = own.value?.report ?? "";
+    topics.value = own.value?.topics ?? "";
+    replyReason.value = own.value?.declineReason ?? "";
+    if (detailRevision.value === 0) {
+      const kind = params.value.get("material");
+      if (formKinds.value.some((entry) => entry === kind)) {
+        await nextTick();
+        document
+          .getElementById("meeting-material-" + kind)
+          ?.scrollIntoView({ block: "start" });
+      }
+    }
+    detailRevision.value++;
+  } else if (configuring.value) {
+    rooms.value = (
+      await api<{ items: MeetingRoom[] }>("/admin/meetings/rooms")
+    ).items;
+  } else {
+    results.value = await api<Page<MeetingSummary>>(
+      "/meetings?page=" + page.value,
+    );
+  }
+}
+
+/** 同一会议页承接工作台和消息跳转。换路由时清除上一个业务对象的表单。 */
+watch(
+  [() => props.route, page],
+  async (_, __, onCleanup) => {
+    let current = true;
+    onCleanup(() => {
+      current = false;
+    });
+    error.value = reason.value = feedback.value = returnReason.value = "";
+    editor.value = cancelling.value = decline.value = returning.value = false;
+    detail.value = undefined;
+    item.value = undefined;
+    loading.value = true;
+    try {
+      options.value ??= await api<MeetingOptions>("/meetings/options");
+      if (!current) return;
+      if (meetingId.value && !results.value) {
+        results.value = await api<Page<MeetingSummary>>(
+          "/meetings?page=" + page.value,
+        );
+      }
+      if (current) await refresh();
+    } catch (e) {
+      if (current) error.value = (e as Error).message;
+    } finally {
+      if (current) loading.value = false;
+    }
+  },
+  { immediate: true },
+);
+
+/** 提交成功后回到会议列表，跨路由成功提示复用平台通知。 */
+function finishMeetingAction(message: string) {
+  editor.value = false;
+  location.hash = "#/meetings";
+  inform(message);
+}
+
+/** 会议写入成功即离开办理页，会议室配置在本页刷新。 */
+async function act(
+  path: string,
+  body: object,
+  success: string,
+  method = "POST",
+) {
+  if (busy.value) return;
+  busy.value = true;
+  error.value = "";
+  try {
+    await api(path, { method, body: JSON.stringify(body) });
+    if (configuring.value) {
+      roomEditing.value = false;
+      inform(success);
+      await refresh();
+    } else {
+      finishMeetingAction(success);
+    }
+    return true;
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
+
+async function saved() {
+  const message = meetingId.value ? "会议安排已保存" : "会议已发布";
+  finishMeetingAction(message);
+  // 新建本来就在列表路由，关闭弹窗后需要主动刷新。
+  if (!meetingId.value) {
+    try {
+      await refresh();
+    } catch (e) {
+      error.value = (e as Error).message;
+    }
+  }
+}
+/** 回复和填写内容通过同一个事务提交，接口失败时保留弹窗里的输入。 */
+async function acceptMeeting(id: string) {
+  if (busy.value) return;
+  let materials;
+  try {
+    materials =
+      materialForms.value?.map((form) => form.collect()).filter(Boolean) ?? [];
+  } catch (e) {
+    error.value = (e as Error).message;
+    await nextTick();
+    document
+      .getElementById("meeting-detail-error")
+      ?.scrollIntoView({ block: "nearest" });
+    return;
+  }
+  const saved = await act(
+    "/meetings/" + id + "/reply",
+    { decision: "ACCEPTED", ...(materials.length ? { materials } : {}) },
+    materials.length ? "会前材料已提交，已回复参加" : "已回复参加",
+  );
+  if (!saved)
+    document
+      .getElementById("meeting-detail-error")
+      ?.scrollIntoView({ block: "nearest" });
+}
+/** 开始后留在详情查看材料，结束后在同一弹窗填写纪要。 */
+async function changeMeetingPhase(action: "start" | "end") {
+  if (busy.value || !detail.value) return;
+  const id = detail.value.id;
+  const message =
+    action === "start" ? "会议已开始" : "会议已结束，请填写会议纪要";
+  busy.value = true;
+  error.value = "";
+  try {
+    if (action === "end" && liveNotes.value && !(await liveNotes.value.flush()))
+      return;
+    await api("/meetings/" + id + "/" + action, { method: "POST" });
+    inform(message);
+    await refresh();
+    const entry = results.value?.items.find((row) => row.id === id);
+    if (entry && detail.value?.id === id) entry.state = detail.value.state;
+    if (action === "end") {
+      await nextTick();
+      document
+        .getElementById("meeting-minutes-editor")
+        ?.scrollIntoView({ block: "start" });
+    }
+  } catch (e) {
+    error.value = (e as Error).message;
+    await nextTick();
+    document
+      .getElementById("meeting-detail-error")
+      ?.scrollIntoView({ block: "nearest" });
+  } finally {
+    busy.value = false;
+  }
+}
+
+function minutesSaved(published: boolean) {
+  finishMeetingAction(
+    published
+      ? detail.value?.trackFollowUp
+        ? "纪要已发布"
+        : "纪要已发布，会议已办结"
+      : "纪要草稿已保存",
+  );
+}
+function chooseRoom(room?: MeetingRoom) {
+  error.value = "";
+  roomEditing.value = true;
+  roomId.value = room?.id ?? "";
+  roomName.value = room?.name ?? "";
+  enabled.value = room?.enabled ?? true;
+}
+async function saveRoom() {
+  await act(
+    "/admin/meetings/rooms" + (roomId.value ? "/" + roomId.value : ""),
+    { name: roomName.value, enabled: enabled.value },
+    "会议室配置已保存",
+    roomId.value ? "PUT" : "POST",
+  );
+}
+/** 列表日期与时段统一用北京时间，跨天会议显示结束日期。 */
+const calendarDay = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  month: "long",
+  day: "numeric",
+});
+const clock = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai",
+  hour: "2-digit",
+  minute: "2-digit",
+  hourCycle: "h23",
+});
+function dateLabel(value: string) {
+  return calendarDay.format(new Date(value));
+}
+function timeRange(start: string, end: string) {
+  const endDate =
+    dateLabel(start) === dateLabel(end) ? "" : dateLabel(end) + " ";
+  return (
+    clock.format(new Date(start)) +
+    " – " +
+    endDate +
+    clock.format(new Date(end))
+  );
+}
+
+function missingMaterials(
+  types: MaterialKind[],
+  submitted: { kind: MaterialKind }[],
+) {
+  return types
+    .filter((kind) => !submitted.some((entry) => entry.kind === kind))
+    .map((kind) => materialLabels[kind])
+    .join("、");
+}
+function replyLabel(reply?: string) {
+  return reply === "ACCEPTED"
+    ? "参加"
+    : reply === "DECLINED"
+      ? "不能参加"
+      : "未回复";
+}
+</script>
+
+<template>
+  <div
+    class="platform-page-content meeting-page"
+    :class="{ 'room-management': configuring }"
+  >
+    <header class="meeting-actions meeting-spread">
+      <div class="meeting-page-title">
+        <span v-if="!configuring" class="flow-dialog-icon" aria-hidden="true"
+          ><Icon name="calendar" :size="23"
+        /></span>
+        <h1>{{ configuring ? "会议配置" : "会议预约" }}</h1>
+      </div>
+      <div class="meeting-actions">
+        <a v-if="itemId" class="secondary" href="#/meetings">会议列表</a>
+        <button
+          v-if="configuring && options?.canManageRooms"
+          class="primary room-action"
+          @click="chooseRoom()"
+        >
+          <Icon name="plus" :size="16" />新增会议室
+        </button>
+        <button
+          v-if="
+            options?.canCreate &&
+            !editor &&
+            !meetingId &&
+            !itemId &&
+            !configuring
+          "
+          class="primary"
+          @click="editor = true"
+        >
+          <Icon name="plus" :size="16" />发起会议
+        </button>
+      </div>
+    </header>
+    <p
+      v-if="error && !detail && !roomEditing"
+      class="form-error meeting-text"
+      role="alert"
+    >
+      {{ error }}
+    </p>
+    <MeetingEditor
+      v-if="editor && options"
+      :key="detail?.id ?? 'new'"
+      :detail="detail"
+      :options="options"
+      @saved="saved"
+      @cancel="editor = false"
+    />
+
+    <p v-if="loading" role="status">加载中</p>
+
+    <section v-else-if="configuring" class="room-panel" aria-label="会议室列表">
+      <header class="room-panel-head">
+        <span class="flow-dialog-icon" aria-hidden="true"
+          ><Icon name="calendar" :size="20"
+        /></span>
+        <div>
+          <h2>会议室列表</h2>
+          <p>已启用的会议室会显示在预约下拉选项中。</p>
+        </div>
+      </header>
+      <table v-if="rooms.length" class="room-table">
+        <thead>
+          <tr>
+            <th scope="col">会议室名称</th>
+            <th scope="col">状态</th>
+            <th scope="col">操作</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="room in rooms" :key="room.id">
+            <td>{{ room.name }}</td>
+            <td>
+              <span class="room-state" :class="{ enabled: room.enabled }">{{
+                room.enabled ? "已启用" : "已停用"
+              }}</span>
+            </td>
+            <td>
+              <button
+                type="button"
+                class="secondary"
+                :aria-label="'编辑 ' + room.name"
+                @click="chooseRoom(room)"
+              >
+                编辑
+              </button>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+      <EmptyState
+        v-else
+        icon="calendar"
+        title="暂无会议室"
+        hint="新增会议室后即可维护预约地点。"
+      />
+      <footer v-if="rooms.length" class="room-panel-footer">
+        共 {{ rooms.length }} 间会议室
+      </footer>
+    </section>
+
+    <template v-else-if="item">
+      <section class="room-panel task-panel meeting-section">
+        <h2><Icon name="task" :size="20" /> 会后待办</h2>
+        <p class="meeting-text">{{ item.content }}</p>
+        <p>
+          责任人 {{ item.assigneeName }} · 截止 {{ portalTime(item.dueAt) }} ·
+          {{ item.overdue ? "逾期" : meetingStates[item.state] }}
+        </p>
+        <ul v-if="item.history.length" class="meeting-history">
+          <li v-for="(entry, index) in item.history" :key="index">
+            <strong
+              >{{ entry.actorName }} · {{ meetingStates[entry.state] }}</strong
+            >
+            <small>{{ portalTime(entry.at) }}</small>
+            <p v-if="entry.text" class="meeting-text">{{ entry.text }}</p>
+          </li>
+        </ul>
+        <form
+          v-if="item.canSubmit"
+          class="meeting-section"
+          @submit.prevent="
+            act(
+              '/meetings/items/' + item.id + '/feedback',
+              { feedback },
+              '反馈已提交',
+            )
+          "
+        >
+          <label
+            >落实情况<textarea
+              v-model="feedback"
+              required
+              maxlength="8000"
+              rows="4"
+            />
+          </label>
+          <button class="primary" :disabled="busy">提交反馈</button>
+        </form>
+        <div v-if="item.canReview" class="meeting-actions">
+          <button
+            class="primary"
+            :disabled="busy"
+            @click="
+              act(
+                '/meetings/items/' + item.id + '/review',
+                { decision: 'CONFIRMED' },
+                '事项已确认',
+              )
+            "
+          >
+            确认完成
+          </button>
+          <button
+            class="secondary"
+            :disabled="busy"
+            @click="returning = !returning"
+          >
+            退回补充
+          </button>
+        </div>
+        <form
+          v-if="item.canReview && returning"
+          class="meeting-section"
+          @submit.prevent="
+            act(
+              '/meetings/items/' + item.id + '/review',
+              { decision: 'RETURNED', reason: returnReason },
+              '已退回责任人',
+            )
+          "
+        >
+          <label
+            >退回原因<textarea
+              v-model="returnReason"
+              required
+              maxlength="1000"
+              rows="3"
+            />
+          </label>
+          <button class="primary" :disabled="busy">确认退回</button>
+        </form>
+      </section>
+    </template>
+
+    <section
+      v-else-if="!itemId && !configuring && results"
+      class="room-panel booking-list"
+      aria-label="我的会议"
+    >
+      <header class="room-panel-head booking-list-head">
+        <h2>我的会议</h2>
+        <span v-if="results.total" class="booking-count"
+          >共 {{ results.total }} 场</span
+        >
+      </header>
+      <p
+        v-if="options?.canCreate && !options.rooms.length"
+        class="booking-list-note"
+      >
+        可选择其他地点，并在会议说明中填写具体位置。
+      </p>
+      <a
+        v-for="meeting in results.items"
+        :key="meeting.id"
+        class="booking-row"
+        :href="'#/meetings?id=' + meeting.id"
+      >
+        <span class="booking-date"
+          ><Icon name="calendar" :size="17" />{{
+            dateLabel(meeting.startsAt)
+          }}</span
+        >
+        <div class="booking-copy">
+          <div class="booking-title">
+            <strong>{{ meeting.subject }}</strong>
+            <span v-if="meeting.kind === 'WEEKLY'" class="booking-badge"
+              >周会</span
+            >
+            <span v-if="meeting.urgent" class="booking-badge urgent">紧急</span>
+          </div>
+          <div class="booking-meta">
+            <span
+              ><Icon name="clock" :size="15" />{{
+                timeRange(meeting.startsAt, meeting.endsAt)
+              }}</span
+            >
+            <span>{{ meeting.roomName }}</span>
+          </div>
+        </div>
+        <span class="booking-badge" :data-state="meeting.state">{{
+          meetingStates[meeting.state]
+        }}</span>
+        <Icon
+          class="booking-chevron"
+          name="chevron"
+          :size="16"
+          aria-hidden="true"
+        />
+      </a>
+      <EmptyState
+        v-if="!results.items.length"
+        icon="calendar"
+        title="暂无会议"
+        hint="你发起和受邀的会议会显示在这里。"
+      />
+      <nav
+        v-if="results.total"
+        class="meeting-actions booking-list-footer"
+        aria-label="会议列表分页"
+      >
+        <button
+          class="secondary"
+          @click="refresh().catch((e) => (error = e.message))"
+        >
+          刷新
+        </button>
+        <span>第 {{ page }} 页</span>
+        <button class="secondary" :disabled="page <= 1" @click="page--">
+          上一页
+        </button>
+        <button class="secondary" :disabled="!results.hasNext" @click="page++">
+          下一页
+        </button>
+      </nav>
+    </section>
+    <MeetingPermissionSettings
+      v-if="configuring && options?.canManageRooms && !loading"
+      :departments="options.departments"
+    />
+
+    <dialog
+      v-if="roomEditing"
+      ref="roomDialog"
+      class="form-dialog flow-dialog flow-dialog-compact"
+      aria-labelledby="meeting-room-title"
+      @cancel.prevent="closeRoom"
+    >
+      <form class="flow-dialog-shell" @submit.prevent="saveRoom">
+        <header class="flow-dialog-header">
+          <span class="flow-dialog-icon" aria-hidden="true"
+            ><Icon name="calendar" :size="20"
+          /></span>
+          <h2 id="meeting-room-title">
+            {{ roomId ? "编辑会议室" : "新增会议室" }}
+          </h2>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="关闭会议室弹窗"
+            :disabled="busy"
+            @click="closeRoom"
+          >
+            ×
+          </button>
+        </header>
+        <div class="flow-dialog-body">
+          <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+          <label
+            >会议室名称<input
+              v-model="roomName"
+              required
+              maxlength="100"
+              autofocus
+          /></label>
+          <label class="room-status-check"
+            ><input v-model="enabled" type="checkbox" />启用此会议室</label
+          >
+        </div>
+        <footer class="flow-dialog-footer">
+          <button
+            type="button"
+            class="secondary"
+            :disabled="busy"
+            @click="closeRoom"
+          >
+            取消
+          </button>
+          <button class="primary" :disabled="busy || !roomName.trim()">
+            保存
+          </button>
+        </footer>
+      </form>
+    </dialog>
+
+    <dialog
+      v-if="detail"
+      ref="detailDialog"
+      class="form-dialog flow-dialog meeting-detail"
+      :class="{
+        'material-table-dialog':
+          summaryTypes.length ||
+          detail.minutes?.materialTables?.length ||
+          (detail.canSubmitMaterials &&
+            formKinds.some((kind) => kind !== 'REPORT')),
+      }"
+      aria-labelledby="meeting-detail-title"
+      @cancel.prevent="closeDetail"
+    >
+      <div class="flow-dialog-shell">
+        <header class="flow-dialog-header">
+          <span class="flow-dialog-icon" aria-hidden="true"
+            ><Icon name="calendar" :size="22"
+          /></span>
+          <h2 id="meeting-detail-title">{{ detail.subject }}</h2>
+          <button
+            type="button"
+            class="icon-button"
+            aria-label="关闭会议详情"
+            :disabled="busy"
+            @click="closeDetail"
+          >
+            ×
+          </button>
+        </header>
+        <div class="flow-dialog-body">
+          <p
+            v-if="error"
+            id="meeting-detail-error"
+            class="form-error meeting-text"
+            role="alert"
+          >
+            {{ error }}
+          </p>
+          <section class="flow-dialog-section">
+            <p class="detail-state booking-badge" :data-state="detail.state">
+              {{ detail.kind === "WEEKLY" ? "周会" : "普通会议"
+              }}{{ detail.urgent ? " · 紧急" : "" }} ·
+              {{ meetingStates[detail.state] }}
+            </p>
+            <dl class="detail-facts">
+              <div class="detail-period">
+                <dt>预约时间</dt>
+                <dd>
+                  {{ portalTime(detail.startsAt) }} 至
+                  {{ portalTime(detail.endsAt) }}
+                </dd>
+              </div>
+              <div v-if="detail.actualStartedAt">
+                <dt>实际开始</dt>
+                <dd>{{ portalTime(detail.actualStartedAt) }}</dd>
+              </div>
+              <div v-if="detail.actualEndedAt">
+                <dt>实际结束</dt>
+                <dd>{{ portalTime(detail.actualEndedAt) }}</dd>
+              </div>
+              <div>
+                <dt>会议室</dt>
+                <dd>{{ detail.roomName }}</dd>
+              </div>
+              <div>
+                <dt>发起人</dt>
+                <dd>{{ detail.organizerName }}</dd>
+              </div>
+            </dl>
+            <p v-if="detail.description" class="meeting-text">
+              {{ detail.description }}
+            </p>
+            <p v-if="detail.cancelReason" class="meeting-text">
+              取消原因 {{ detail.cancelReason }}
+            </p>
+            <form
+              v-if="cancelling"
+              class="meeting-section"
+              @submit.prevent="
+                act(
+                  '/meetings/' + detail.id + '/cancel',
+                  { reason },
+                  '会议已取消',
+                )
+              "
+            >
+              <label
+                >取消原因<textarea
+                  ref="cancelInput"
+                  v-model="reason"
+                  required
+                  maxlength="1000"
+                  rows="3"
+                />
+              </label>
+              <button class="primary" :disabled="busy">确认取消</button>
+            </form>
+            <form
+              v-if="detail.canReply && decline"
+              class="meeting-section"
+              @submit.prevent="
+                act(
+                  '/meetings/' + detail.id + '/reply',
+                  { decision: 'DECLINED', reason: replyReason },
+                  '已回复不能参加',
+                )
+              "
+            >
+              <label
+                >不能参加的理由<textarea
+                  ref="declineInput"
+                  v-model="replyReason"
+                  required
+                  maxlength="1000"
+                  rows="3"
+                />
+              </label>
+              <button class="primary" :disabled="busy">提交回复</button>
+            </form>
+          </section>
+
+          <section class="flow-dialog-section">
+            <h3>
+              受邀员工
+              <span class="booking-count"
+                >{{ detail.attendees.length }} 人</span
+              >
+            </h3>
+            <ul class="meeting-history">
+              <li
+                v-for="person in detail.attendees"
+                :key="person.userId"
+                class="booking-person"
+              >
+                <div class="booking-person-name">
+                  <span aria-hidden="true" class="booking-avatar">{{
+                    person.name.slice(-1)
+                  }}</span>
+                  <strong>{{ person.name }}</strong
+                  ><span class="booking-count">{{ person.employeeNo }}</span>
+                </div>
+                <template v-if="person.reply">
+                  <span>
+                    · {{ replyLabel(person.reply)
+                    }}<template
+                      v-if="
+                        person.reply === 'PENDING' &&
+                        detail.state !== 'SCHEDULED'
+                      "
+                      >（{{
+                        detail.state === "CANCELLED"
+                          ? "会议已取消"
+                          : "回复已截止"
+                      }}）</template
+                    >
+                  </span>
+                  <p v-if="person.declineReason" class="meeting-text">
+                    {{ person.declineReason }}
+                  </p>
+                </template>
+                <template
+                  v-if="person.materialRequired && detail.materialTypes == null"
+                >
+                  <small v-if="person.materialAt"
+                    >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
+                  >
+                  <small
+                    v-else-if="
+                      detail.kind === 'WEEKLY' || person.reply !== 'DECLINED'
+                    "
+                    >未提交会前材料</small
+                  >
+                </template>
+                <div
+                  v-if="detail.materialTypes && person.materials"
+                  class="material-results"
+                >
+                  <p
+                    v-if="
+                      person.reply !== undefined &&
+                      detail.materialTypes.length > 0 &&
+                      person.materials.length < detail.materialTypes.length
+                    "
+                    class="booking-count"
+                  >
+                    未提交
+                    {{
+                      missingMaterials(detail.materialTypes, person.materials)
+                    }}
+                  </p>
+                  <details
+                    v-for="material in person.materials.filter(
+                      (entry) =>
+                        entry.kind === 'REPORT' ||
+                        !summaryTypes.includes(entry.kind),
+                    )"
+                    :key="material.kind"
+                  >
+                    <summary>
+                      {{ materialLabels[material.kind] }} ·
+                      {{ portalTime(material.submittedAt) }}
+                    </summary>
+                    <p class="booking-count">
+                      {{ material.data.author.name }} ·
+                      {{ material.data.author.department }}
+                    </p>
+                    <div
+                      v-if="material.kind === 'REPORT'"
+                      class="meeting-text"
+                      v-html="reportMarkup(material.data.html ?? '')"
+                    ></div>
+                    <ol v-else>
+                      <li
+                        v-for="(row, index) in material.data.rows"
+                        :key="index"
+                      >
+                        <strong>{{ row.subject }}</strong>
+                        <p class="meeting-text">期望结果 {{ row.expected }}</p>
+                        <small v-if="row.department || row.person">{{
+                          [row.department, row.person]
+                            .filter(Boolean)
+                            .join(" · ")
+                        }}</small>
+                      </li>
+                    </ol>
+                  </details>
+                </div>
+                <p v-if="person.report" class="meeting-text">
+                  汇报 {{ person.report }}
+                </p>
+                <p v-if="person.topics" class="meeting-text">
+                  议题 {{ person.topics }}
+                </p>
+              </li>
+            </ul>
+          </section>
+          <MeetingMaterialSummary
+            v-if="summaryTypes.length && !detail.minutes"
+            :types="summaryTypes"
+            :submissions="submissions"
+          />
+          <section
+            v-if="
+              detail.canSubmitMaterials &&
+              detail.materialTypes?.length &&
+              detail.materialAuthor &&
+              options
+            "
+            class="flow-dialog-section"
+          >
+            <MeetingMaterialForm
+              v-for="kind in formKinds"
+              :key="kind"
+              ref="materialForms"
+              :id="'meeting-material-' + kind"
+              :kind="kind"
+              :author="detail.materialAuthor"
+              :existing="own?.materials?.find((entry) => entry.kind === kind)"
+              :departments="options.departments"
+            />
+          </section>
+          <form
+            v-if="detail.canSubmitMaterials && detail.materialTypes == null"
+            class="flow-dialog-section"
+            @submit.prevent="
+              act(
+                '/meetings/' + detail.id + '/materials',
+                { report, topics },
+                '会前材料已保存',
+                'PUT',
+              )
+            "
+          >
+            <h3>会前汇报与议题</h3>
+            <label
+              >汇报信息<textarea v-model="report" rows="4" maxlength="4000" />
+            </label>
+            <label
+              >会议议题<textarea v-model="topics" rows="4" maxlength="4000" />
+            </label>
+            <button
+              class="primary"
+              :disabled="busy || (!report.trim() && !topics.trim())"
+            >
+              提交材料
+            </button>
+          </form>
+          <MeetingLiveNotes
+            v-if="detail.canEnd"
+            ref="liveNotes"
+            :meeting-id="detail.id"
+            :initial="detail.liveNotes ?? null"
+            :disabled="busy"
+          />
+          <section v-else-if="detail.liveNotes" class="flow-dialog-section">
+            <h3>会议记录</h3>
+            <p class="meeting-text">{{ detail.liveNotes }}</p>
+          </section>
+          <MeetingMinutes
+            v-if="detail.canWriteMinutes && options"
+            id="meeting-minutes-editor"
+            :key="detailRevision"
+            :meeting="detail"
+            :departments="options.departments"
+            @saved="minutesSaved"
+          />
+          <section v-else-if="detail.minutes" class="flow-dialog-section">
+            <h2>
+              {{ detail.minutes.publishedAt ? "会议纪要" : "会议纪要底稿" }}
+            </h2>
+            <small v-if="detail.minutes.publishedAt"
+              >发布于 {{ portalTime(detail.minutes.publishedAt) }}</small
+            >
+            <MeetingMaterialSummary
+              v-if="
+                detail.minutes.materialTables &&
+                detail.minutes.summaryTypes?.length
+              "
+              :types="detail.minutes.summaryTypes"
+              :submissions="detail.minutes.materialTables"
+            />
+            <template v-if="detail.minutes.materialsText">
+              <h3>会前材料汇总</h3>
+              <p class="meeting-text">{{ detail.minutes.materialsText }}</p>
+            </template>
+            <template v-if="detail.minutes.notes">
+              <h3>会议记录</h3>
+              <p class="meeting-text">{{ detail.minutes.notes }}</p>
+            </template>
+            <template v-if="detail.minutes.summary">
+              <h3>会议总结</h3>
+              <p class="meeting-text">{{ detail.minutes.summary }}</p>
+            </template>
+            <template v-if="detail.minutes.decisions">
+              <h3>会议决议</h3>
+              <p class="meeting-text">{{ detail.minutes.decisions }}</p>
+            </template>
+            <template v-if="detail.minutes.items?.length">
+              <h3>拟分派事项</h3>
+              <ul class="meeting-history">
+                <li v-for="(task, index) in detail.minutes.items" :key="index">
+                  <p class="meeting-text">{{ task.content }}</p>
+                  <small
+                    >{{ task.assigneeName }} · 截止
+                    {{ portalTime(task.dueAt) }}</small
+                  >
+                </li>
+              </ul>
+            </template>
+          </section>
+          <section
+            v-if="detail.trackFollowUp && detail.minutes?.publishedAt"
+            class="flow-dialog-section"
+          >
+            <h3>会后待办与反馈</h3>
+            <ul v-if="detail.items.length" class="meeting-history">
+              <li v-for="task in detail.items" :key="task.id">
+                <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{
+                  task.content
+                }}</a>
+                <p v-else class="meeting-text">{{ task.content }}</p>
+                <small
+                  >{{ task.assigneeName
+                  }}<template v-if="task.state">
+                    · {{ meetingStates[task.state] }}</template
+                  >
+                  · 截止 {{ portalTime(task.dueAt) }}</small
+                >
+              </li>
+            </ul>
+            <p v-else class="booking-count">
+              {{
+                detail.shareAll || detail.organizerId === profile?.user.id
+                  ? "本次会议未分派会后待办。"
+                  : "当前没有可查看的会后待办。"
+              }}
+            </p>
+            <button
+              v-if="detail.canClose"
+              class="primary"
+              :disabled="busy"
+              @click="
+                act('/meetings/' + detail.id + '/close', {}, '会议已办结')
+              "
+            >
+              确认会议办结
+            </button>
+          </section>
+        </div>
+        <footer class="flow-dialog-footer">
+          <button
+            v-if="detail.canStart"
+            type="button"
+            class="primary"
+            :disabled="busy"
+            @click="changeMeetingPhase('start')"
+          >
+            开始会议
+          </button>
+          <button
+            v-if="detail.canEnd"
+            type="button"
+            class="primary"
+            :disabled="busy"
+            @click="changeMeetingPhase('end')"
+          >
+            结束会议
+          </button>
+          <button
+            v-if="detail.canEdit"
+            type="button"
+            class="secondary"
+            :disabled="busy"
+            @click="editor = true"
+          >
+            修改安排
+          </button>
+          <button
+            v-if="detail.canEdit"
+            type="button"
+            class="secondary"
+            :disabled="busy"
+            @click="openCancellation"
+          >
+            取消会议
+          </button>
+          <div v-if="detail.canReply" class="meeting-actions">
+            <button
+              class="primary"
+              :disabled="busy"
+              @click="acceptMeeting(detail.id)"
+            >
+              {{
+                detail.canSubmitMaterials && formKinds.length
+                  ? "提交并参加"
+                  : "参加"
+              }}
+            </button>
+            <button class="secondary" :disabled="busy" @click="openDecline">
+              不能参加
+            </button>
+          </div>
+          <button
+            v-if="!detail.canEdit && !detail.canReply && !detail.canEnd"
+            type="button"
+            class="secondary"
+            :disabled="busy"
+            @click="closeDetail"
+          >
+            关闭
+          </button>
+        </footer>
+      </div>
+    </dialog>
+  </div>
+</template>
+
+<style>
+.material-results {
+  display: grid;
+  gap: 5px;
+  padding-top: 6px;
+}
+.material-results summary {
+  cursor: pointer;
+  color: var(--brand);
+}
+
+.meeting-page:not(.room-management) {
+  max-width: 1180px;
+  width: 100%;
+  margin-inline: auto;
+}
+.meeting-page-title,
+.meeting-page-title + .meeting-actions .primary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.meeting-page-title h1 {
+  font-size: clamp(21px, 3vw, 25px);
+}
+.booking-list-head {
+  border-bottom: 1px solid var(--line);
+  justify-content: space-between;
+}
+.booking-count,
+.booking-list-note {
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.booking-list-note {
+  padding: 12px 20px;
+}
+.booking-row {
+  display: grid;
+  grid-template-columns: 94px minmax(0, 1fr) auto 16px;
+  gap: 16px;
+  align-items: center;
+  padding: 16px 20px;
+  color: inherit;
+  text-decoration: none;
+}
+.booking-row + .booking-row {
+  border-top: 1px solid var(--line);
+}
+.booking-row:hover,
+.booking-row:focus-visible {
+  background: var(--surface-muted);
+}
+.booking-date {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 4px;
+  border-radius: 8px;
+  background: var(--brand-soft);
+  color: var(--brand);
+  font-size: 13px;
+  white-space: nowrap;
+}
+.booking-copy,
+.booking-title {
+  min-width: 0;
+}
+.booking-title,
+.booking-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 10px;
+  overflow-wrap: anywhere;
+}
+.booking-meta {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.booking-meta span {
+  display: inline-flex;
+  gap: 5px;
+  align-items: center;
+}
+.booking-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-self: start;
+  padding: 3px 9px;
+  border-radius: 999px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: nowrap;
+}
+.booking-badge[data-state="SCHEDULED"],
+.booking-badge[data-state="IN_PROGRESS"] {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.booking-badge.urgent,
+.booking-badge[data-state="AWAITING_MINUTES"],
+.booking-badge[data-state="FOLLOW_UP"] {
+  background: #fff3db;
+  color: #805210;
+}
+.booking-chevron {
+  color: var(--text-secondary);
+}
+.booking-list-footer {
+  border-top: 1px solid var(--line);
+  padding: 12px 20px;
+  justify-content: flex-end;
+}
+.booking-list-footer > :first-child {
+  margin-right: auto;
+}
+.task-panel {
+  padding: 20px;
+}
+.task-panel h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 18px;
+}
+.task-panel .meeting-history {
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.meeting-page .booking-person {
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.booking-person-name {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+}
+.booking-avatar {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.meeting-detail.material-table-dialog {
+  --flow-dialog-width: 1080px;
+}
+.meeting-detail .detail-state {
+  width: fit-content;
+}
+@media (max-width: 620px) {
+  .booking-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    padding: 12px;
+  }
+  .booking-date {
+    justify-self: start;
+    grid-row: 1;
+  }
+  .booking-copy {
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .booking-chevron {
+    display: none;
+  }
+}
+
+.meeting-page.room-management {
+  max-width: 1080px;
+  width: 100%;
+  margin-inline: auto;
+}
+.room-management .room-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.room-panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  overflow: hidden;
+}
+.room-panel-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px;
+}
+.room-panel-head h2 {
+  font-size: 16px;
+}
+.room-panel-head p {
+  margin-top: 4px;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+.room-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+.room-table th,
+.room-table td {
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+}
+.room-table th {
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.room-table th:last-child,
+.room-table td:last-child {
+  text-align: right;
+}
+.room-table th:nth-child(n + 2),
+.room-table td:nth-child(n + 2) {
+  white-space: nowrap;
+  width: 1%;
+}
+.room-table td:first-child {
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.room-table .secondary {
+  min-height: 32px;
+}
+.room-state {
+  display: inline-block;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+}
+.room-state.enabled {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+.room-panel-footer {
+  padding: 12px 20px;
+  border-top: 1px solid var(--line);
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.meeting-page label.room-status-check {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+}
+.room-status-check input {
+  margin: 0;
+  accent-color: var(--brand);
+}
+@media (max-width: 520px) {
+  .room-table th,
+  .room-table td {
+    padding-inline: 10px;
+  }
+}
+
+.meeting-detail {
+  --flow-dialog-width: 760px;
+}
+.meeting-detail .detail-state {
+  color: var(--text-secondary);
+}
+.meeting-detail .detail-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 20px;
+  margin: 0;
+  padding: 12px 16px;
+  border-radius: 8px;
+  background: var(--surface-muted);
+}
+.meeting-detail .detail-period {
+  grid-column: 1 / -1;
+}
+.meeting-detail .detail-facts dt {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.meeting-detail .detail-facts dd {
+  margin: 3px 0 0;
+  overflow-wrap: anywhere;
+}
+.meeting-page {
+  display: grid;
+  gap: 16px;
+  align-content: start;
+}
+.meeting-page h1,
+.meeting-page h2,
+.meeting-page h3,
+.meeting-page p {
+  margin: 0;
+}
+.meeting-page .meeting-section {
+  display: grid;
+  gap: 12px;
+  align-content: start;
+}
+.meeting-page .surface {
+  padding: 18px;
+}
+.meeting-page .meeting-actions,
+.meeting-page .meeting-checks {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+.meeting-page .meeting-spread {
+  justify-content: space-between;
+}
+.meeting-page .meeting-form-row {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.meeting-page label {
+  display: grid;
+  gap: 5px;
+}
+.meeting-page .meeting-checks label,
+.meeting-page label.meeting-inline,
+.meeting-page .meeting-attendees label {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.meeting-page input[type="checkbox"] {
+  width: auto;
+}
+.meeting-page textarea {
+  resize: vertical;
+}
+.meeting-page .meeting-person-panel,
+.meeting-page .meeting-fieldset {
+  max-width: 100%;
+  border: 1px solid #dce5ef;
+  padding: 12px;
+  margin-top: 8px;
+  border-radius: 8px;
+  display: grid;
+  gap: 10px;
+}
+.meeting-page .meeting-person-results {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.meeting-page .meeting-attendees,
+.meeting-page .meeting-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 8px;
+}
+.meeting-page .meeting-attendees li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.meeting-page .meeting-attendees li > span {
+  min-width: 160px;
+}
+.meeting-page .meeting-history li {
+  padding-block: 8px;
+  border-bottom: 1px solid #e8edf4;
+}
+.meeting-page .meeting-history small {
+  margin-block: 3px;
+  display: block;
+}
+.meeting-page .meeting-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.meeting-page .meeting-section > button {
+  justify-self: start;
+}
+</style>

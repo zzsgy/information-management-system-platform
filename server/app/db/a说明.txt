@@ -1,0 +1,4 @@
+数据库连接层：
+session.py —— 数据库会话（Session）管理
+base.py    —— ORM 声明基类
+seed.py    —— 初始化数据（首个管理员账号、字典数据等）

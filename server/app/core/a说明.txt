@@ -1,0 +1,4 @@
+核心配置层：
+config.py   —— 全局配置读取（.env 环境变量、数据库连接串等）
+security.py —— 密码哈希、JWT 令牌签发与校验
+logging.py  —— 日志配置

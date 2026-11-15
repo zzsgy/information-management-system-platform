@@ -1,0 +1,6 @@
+# 客户端依赖（企业档案管理系统）
+# 安装方式：在 client/.venv 激活后执行 pip install -r requirements.txt
+pyside6
+requests
+pydantic
+python-dotenv

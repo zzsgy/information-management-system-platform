@@ -1,0 +1,205 @@
+# 第一批仅用于隔离开发/试用；所有资源使用 IMS_PLATFORM_ 前缀，与旧系统完全分离。
+server:
+  # 缺省只监听本机；局域网试用显式配置0.0.0.0，并核对HTTPS证书与主机防火墙。
+  address: ${IMS_PLATFORM_BIND_ADDRESS:127.0.0.1}
+  port: ${IMS_PLATFORM_PORT:18443}
+  shutdown: graceful
+  ssl:
+    # 安全 Cookie 始终要求 HTTPS，本机使用独立开发证书。
+    enabled: true
+    key-store: ${IMS_PLATFORM_TLS_KEYSTORE}
+    key-store-password: ${IMS_PLATFORM_TLS_PASSWORD}
+    key-store-type: PKCS12
+  tomcat:
+    # 限制请求头及表单体，防止身份接口占用过量资源。
+    max-http-form-post-size: 64KB
+    threads:
+      max: 40
+      min-spare: 4
+spring:
+  task:
+    scheduling:
+      # 运维摘要核验不得阻塞消息、到期提醒等定时任务。
+      pool:
+        size: 4
+  application:
+    name: ims-platform
+  datasource:
+    # 无业务库默认地址；启动护栏还会核验数据库名称与隔离标记。
+    url: ${IMS_PLATFORM_DB_URL}
+    username: ${IMS_PLATFORM_DB_USER}
+    password: ${IMS_PLATFORM_DB_PASSWORD}
+    hikari:
+      # 首轮连接池初值；读请求分页，慢 SQL 超时，不随 HTTP 并发无限增长。
+      maximum-pool-size: 12
+      minimum-idle: 2
+      connection-timeout: 5000
+      connection-init-sql: "SET TIME ZONE 'UTC'"
+      data-source-properties:
+        options: "-c statement_timeout=10000 -c lock_timeout=5000"
+  flyway:
+    locations: classpath:db/platform
+    default-schema: platform_meta
+    schemas: platform_meta
+    clean-disabled: true
+    baseline-on-migrate: false
+  jackson:
+    deserialization:
+      fail-on-unknown-properties: true
+  web:
+    error:
+      include-message: never
+      include-stacktrace: never
+platform:
+  audit-storage:
+    # 后台建分区、容量采样和已排队归档；关闭不会关闭审计追加与权限校验。
+    enabled: ${IMS_PLATFORM_AUDIT_STORAGE_ENABLED:true}
+    # 主库日志及索引预算，字节；达到70%预警、85%严重，副本和备份另行预留。
+    budget-bytes: ${IMS_PLATFORM_AUDIT_BUDGET_BYTES:1000000000000}
+    # 数据库主机上可读的真实数据卷路径；未配置会提示无法核对剩余空间，不猜测远端卷。
+    database-volume: ${IMS_PLATFORM_AUDIT_DATABASE_VOLUME:}
+    # 可用字节下限；归档还须多预留一个归档文件的最大空间。
+    minimum-free-bytes: ${IMS_PLATFORM_AUDIT_MINIMUM_FREE_BYTES:5000000000}
+    # 热月份数量，1至120；仅更早的完整UTC月份可封存，不改变至少三年的保留规则。
+    hot-months: ${IMS_PLATFORM_AUDIT_HOT_MONTHS:3}
+    # 两份私有归档目录不可互相嵌套，也不可与业务原件、账本和临时目录嵌套。
+    primary: ${IMS_PLATFORM_AUDIT_ARCHIVE_PRIMARY:}
+    secondary: ${IMS_PLATFORM_AUDIT_ARCHIVE_SECONDARY:}
+    # 单份压缩归档字节上限，防止任务耗尽磁盘；超限失败，原记录仍可在线查询。
+    max-archive-bytes: ${IMS_PLATFORM_AUDIT_ARCHIVE_MAX_BYTES:2000000000}
+    # 毫秒；容量按小时采样、归档每轮只处理一个月份。
+    sample-delay-ms: ${IMS_PLATFORM_AUDIT_SAMPLE_DELAY_MS:3600000}
+    worker-delay-ms: ${IMS_PLATFORM_AUDIT_WORKER_DELAY_MS:30000}
+    initial-delay-ms: ${IMS_PLATFORM_AUDIT_INITIAL_DELAY_MS:15000}
+  operations:
+    # 默认关闭维护执行；备份恢复还需独立执行器与停机窗口。
+    enabled: ${IMS_PLATFORM_OPERATIONS_ENABLED:false}
+    # 测试可关闭自动调度，仅手动推进正式工作器。
+    schedule-enabled: ${IMS_PLATFORM_OPERATIONS_SCHEDULE_ENABLED:true}
+    # 检查轮询间隔，毫秒；每轮最多核验二十份，五秒后不再开始下一原件。
+    delay-ms: ${IMS_PLATFORM_OPERATIONS_DELAY_MS:3000}
+    # 仅保存自生成的无业务内容探针，禁止指向原件目录。
+    probe-directory: ${IMS_PLATFORM_OPERATIONS_PROBE_DIRECTORY:}
+  messaging:
+    # LOCAL保留私有本机收件箱；SMTP发送真实邮件，两种模式均不在HTTP返回凭据。
+    mail-mode: ${IMS_PLATFORM_MAIL_MODE:LOCAL}
+    # 平台受控HTTPS入口，邮件与技术告警只链接该地址，不包含档案题名或正文。
+    portal-url: ${IMS_PLATFORM_PUBLIC_URL:https://127.0.0.1:18443/platform.html}
+    # 账号邮件独立工作器；每轮最多20项、租约90秒，隔离测试可关闭后手动驱动。
+    schedule-enabled: ${IMS_PLATFORM_ACCOUNT_MESSAGES_SCHEDULE_ENABLED:true}
+    delay-ms: ${IMS_PLATFORM_ACCOUNT_MESSAGES_DELAY_MS:10000}
+    smtp:
+      host: ${IMS_PLATFORM_SMTP_HOST:}
+      port: ${IMS_PLATFORM_SMTP_PORT:587}
+      # 正式部署采用STARTTLS或TLS；LOCAL_TEST只允许隔离标记下的回环地址。
+      security: ${IMS_PLATFORM_SMTP_SECURITY:STARTTLS}
+      from: ${IMS_PLATFORM_SMTP_FROM:}
+      username: ${IMS_PLATFORM_SMTP_USERNAME:}
+      # 服务凭据仅由受限部署配置注入，页面不显示、不回传。
+      password: ${IMS_PLATFORM_SMTP_PASSWORD:}
+    dingtalk:
+      # 未配置保持关闭，待发技术告警如实进入失败重试，不影响登录和业务通知。
+      webhook: ${IMS_PLATFORM_DINGTALK_WEBHOOK:}
+      secret: ${IMS_PLATFORM_DINGTALK_SECRET:}
+      # 仅本机协议验收允许回环HTTP接收器，正式部署必须关闭。
+      local-test: ${IMS_PLATFORM_DINGTALK_LOCAL_TEST:false}
+  export:
+    # 受批下载/打印的私有双副本缓存；不能与原件、账本、回执、邮件和解析临时目录相互包含。
+    primary: ${IMS_PLATFORM_EXPORT_PRIMARY:}
+    secondary: ${IMS_PLATFORM_EXPORT_SECONDARY:}
+    # 仅服务账号可写的临时输出目录；每任务最多300页、128MiB，缓存每侧硬上限512MiB。
+    temporary: ${IMS_PLATFORM_EXPORT_TEMP:}
+  borrow-lifecycle:
+    # 电子借阅到期状态归档和站内提醒调度；默认关闭，实时授权失效不依赖此开关。
+    enabled: ${IMS_PLATFORM_BORROW_LIFECYCLE_ENABLED:false}
+    # 毫秒，每轮最多200条；多实例以事务锁竞争，崩溃后下轮可重新领取。
+    delay-ms: ${IMS_PLATFORM_BORROW_LIFECYCLE_DELAY_MS:60000}
+  notifications:
+    # 默认关闭本机业务邮件工作器；站内通知仍与业务事务一起生成，不自动发送真实公司邮件。
+    enabled: ${IMS_PLATFORM_NOTIFICATIONS_ENABLED:false}
+    # 可单独关闭调度，用于受控人工演练；关闭不删除队列或站内通知。
+    schedule-enabled: ${IMS_PLATFORM_NOTIFICATIONS_SCHEDULE_ENABLED:true}
+    # 私有绝对目录；按平台实例绑定，消息只有安全模板和业务引用，不含正文或口令。
+    local-directory: ${IMS_PLATFORM_NOTIFICATIONS_LOCAL_DIRECTORY:}
+    # 每轮最多20个投递，合法范围1至100，限制数据库与外部通道压力。
+    batch-size: ${IMS_PLATFORM_NOTIFICATIONS_BATCH_SIZE:20}
+    # 初次失败后的三次重试间隔，单位秒；耗尽后转人工，不循环重执业务。
+    retry-seconds: ${IMS_PLATFORM_NOTIFICATIONS_RETRY_SECONDS:60,300,900}
+    # 工作器轮询间隔，毫秒；租约到期恢复仍沿原投递号去重。
+    delay-ms: ${IMS_PLATFORM_NOTIFICATIONS_DELAY_MS:10000}
+  file-worker:
+    # 默认不启动处理器；部署完成检测器、服务身份和保护证据后显式启用。
+    enabled: ${IMS_PLATFORM_WORKER_ENABLED:false}
+    # 单工作器每轮最多两件；毫秒，处理期间不占用HTTP请求线程。
+    delay-ms: ${IMS_PLATFORM_WORKER_DELAY_MS:3000}
+  scanner:
+    # 固定的本机检测程序、官方签名目录、私有临时目录；均使用绝对路径。
+    executable: ${IMS_PLATFORM_SCANNER_EXE:}
+    database: ${IMS_PLATFORM_SCANNER_DATABASE:}
+    temporary: ${IMS_PLATFORM_SCANNER_TEMP:}
+    # 固定部署二进制摘要，变更版本需重新验证并更新；不从PATH搜索。
+    executable-sha256: ${IMS_PLATFORM_SCANNER_SHA256:}
+    # 秒，最多600；超时按未完成检测处理，不放行。
+    timeout-seconds: ${IMS_PLATFORM_SCANNER_TIMEOUT:300}
+    # 数据库受限服务身份，需显式获准模块、部门、动作和有效期。
+    service-id: ${IMS_PLATFORM_SCANNER_SERVICE_ID:}
+    # 档案专用FILE_CHECK身份，必须单独获准ARCHIVE模块与实际部门范围。
+    archive-service-id: ${IMS_PLATFORM_SCANNER_ARCHIVE_SERVICE_ID:}
+    # 员工部门 XLSX 检测的独立 PLATFORM 服务身份；未配置则保持待检测，不能借用公盘权限。
+    platform-service-id: ${IMS_PLATFORM_SCANNER_PLATFORM_SERVICE_ID:}
+  scan-intake:
+    # 扫描设备 HMAC 密钥的私有绝对目录；仅操作系统管理员与服务可读，不在网页返回秘密。
+    key-directory: ${IMS_PLATFORM_SCAN_KEY_DIRECTORY:}
+    # 扫描合并与检测工作器，缺省开启；隔离测试可关闭以确定性触发失败和恢复。
+    worker-enabled: ${IMS_PLATFORM_SCAN_WORKER_ENABLED:true}
+    # 每轮最多领取两项，轮询间隔毫秒；处理过程中使用数据库租约防重复提交。
+    worker-delay-ms: ${IMS_PLATFORM_SCAN_WORKER_DELAY_MS:5000}
+  protection:
+    # 默认缺省拒绝；证据由独立保护代理签发，业务接口不能更改其结论。
+    enabled: ${IMS_PLATFORM_PROTECTION_ENABLED:false}
+    evidence-file: ${IMS_PLATFORM_PROTECTION_EVIDENCE:}
+    key-file: ${IMS_PLATFORM_PROTECTION_KEY:}
+    node-id: ${IMS_PLATFORM_NODE_ID:}
+  reading:
+    # 可信Java与PDF工作器绝对路径，工作器须携带同目录lib依赖。
+    java: ${IMS_PLATFORM_READING_JAVA:}
+    worker-jar: ${IMS_PLATFORM_READING_WORKER:}
+    # 已建立且仅服务账号可写的处理临时目录，不能配置到公开网页目录。
+    temporary: ${IMS_PLATFORM_READING_TEMP:}
+    # 库外逐页交付回执根目录；写入失败即停止页面交付。
+    audit-root: ${IMS_PLATFORM_READING_AUDIT:}
+  storage:
+    # 两个隔离目录的绝对路径，默认未配置；必须与账本、邮箱及旧附件目录分开。
+    primary: ${IMS_PLATFORM_STORAGE_PRIMARY:}
+    secondary: ${IMS_PLATFORM_STORAGE_SECONDARY:}
+  office:
+    # 独立文档服务未部署时保持关闭，不影响公盘上传和历史版本管理。
+    enabled: ${IMS_PLATFORM_OFFICE_ENABLED:false}
+    # 默认关闭；部署时钟须连续且通过多人保真验收后启用。实测WSL/NTP重复校时会导致原生检查点漏字。
+    checkpoint-enabled: ${IMS_PLATFORM_OFFICE_CHECKPOINT_ENABLED:false}
+    # 浏览器、服务端调用、平台回调分别固定来源；HTTP只允许本机回环隔离联调。
+    browser-origin: ${IMS_PLATFORM_OFFICE_BROWSER_ORIGIN:}
+    server-origin: ${IMS_PLATFORM_OFFICE_SERVER_ORIGIN:}
+    callback-origin: ${IMS_PLATFORM_OFFICE_CALLBACK_ORIGIN:}
+    # 开启编辑前核对实际服务版本，升级后须重新执行原生回调联调。
+    expected-version: ${IMS_PLATFORM_OFFICE_VERSION:}
+    # 入站配置签名和出站回调必须使用不同密钥文件，防止浏览器配置令牌用于伪造回调。
+    inbox-key-file: ${IMS_PLATFORM_OFFICE_INBOX_KEY:}
+    outbox-key-file: ${IMS_PLATFORM_OFFICE_OUTBOX_KEY:}
+    temporary: ${IMS_PLATFORM_OFFICE_TEMP:}
+    # iam.service_identity中按发布部门授权的独立OFFICE身份。
+    service-id: ${IMS_PLATFORM_OFFICE_SERVICE_ID:}
+    # 在线编辑上限为256MiB，独立于公盘原件5GiB限额，避免文档服务内存耗尽。
+    max-bytes: ${IMS_PLATFORM_OFFICE_MAX_BYTES:268435456}
+  # 显式隔离确认；护栏不允许把旧业务库当作新平台库初始化。
+  isolation-confirmed: ${IMS_PLATFORM_ISOLATED:false}
+  # 独立追加账本，不随业务数据库恢复；本地实现仅用于本机试用，不代表正式双副本。
+  security-ledger: ${IMS_PLATFORM_LEDGER_ROOT}
+  # 本机测试邮件投递箱；受操作系统当前用户 ACL 保护，不通过 HTTP 暴露。
+  mailbox: ${IMS_PLATFORM_MAILBOX_ROOT}
+  bootstrap:
+    # 只在空库使用，初始化成功后移除密码；绝不修改已有账号。
+    employee-no: ${IMS_PLATFORM_ADMIN_NO:}
+    name: ${IMS_PLATFORM_ADMIN_NAME:平台管理员}
+    email: ${IMS_PLATFORM_ADMIN_EMAIL:}
+    password: ${IMS_PLATFORM_ADMIN_PASSWORD:}

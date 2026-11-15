@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+.env
+
+# IDE
+.vscode/
+
+# Runtime
+logs/
+*.log
+build_*.log
+
+# Generated
+build/
+dist/
+*.spec
+
+# Data
+backups/
+archive_files/
+
+# 安装包缓存目录（大文件/日志/口令不入库，仅保留最终产物子目录）
+/installer/*
+!/installer/server_release/
+!/installer/client_release/
+!/installer/*.iss
+
+# 环境/口令类
+*.pw.txt
+pg_pw.txt
+
+# 服务端运行存储（电子文件落盘，运行时生成）
+server/storage/
+
+# Java 构建结果、隔离工具链和开发数据库不得进入版本库。
+backend/target/
+.dev/
+runtime/
+*.hprof
+backend/.env
+# 网页依赖、构建产物和浏览器测试记录不提交；锁文件需要提交。
+web/node_modules/
+web/test-results/
+web/playwright-report/
+
+# 新平台独立构建与私有开发环境，不提交凭据和生成文件。
+backend/target-platform/
+web/dist-platform/
+*.private.json
+*.env
+*.dump
+*.sqlite
+*.sqlite3
+*.db
+*.p12
+*.pfx
+*.secret
+~$*.docx
+web/platform-test-results/
+processing/pdf-renderer/target/
