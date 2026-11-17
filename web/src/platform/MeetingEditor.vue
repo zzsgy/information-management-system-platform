@@ -2,6 +2,7 @@
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { api, profile } from "./api";
 import Icon from "../preview/PlatformIcon.vue";
+import { vNumbered } from "./meetingNumbered";
 import MeetingTimeField from "./MeetingTimeField.vue";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
 import {
@@ -61,7 +62,7 @@ const busy = ref(false),
 const dialog = ref<HTMLDialogElement>();
 let clock: number;
 onMounted(() => {
-  dialog.value?.showModal();
+  if (original) dialog.value?.showModal();
   clock = window.setInterval(() => {
     now.value = Date.now();
   }, 1000);
@@ -157,21 +158,25 @@ async function save() {
 </script>
 
 <template>
-  <dialog
+  <component
+    :is="original ? 'dialog' : 'section'"
     ref="dialog"
-    class="form-dialog flow-dialog meeting-editor"
+    class="meeting-editor"
+    :class="original ? 'form-dialog flow-dialog' : 'booking-create-page'"
     aria-labelledby="meeting-editor-title"
     @cancel.prevent="dismiss"
   >
-    <form class="flow-dialog-shell" @submit.prevent="save">
-      <header class="flow-dialog-header">
+    <a v-if="!original" class="booking-back" href="#/meetings">← 返回会议列表</a>
+    <form :class="original ? 'flow-dialog-shell' : 'booking-create-form'" @submit.prevent="save">
+      <header :class="original ? 'flow-dialog-header' : 'booking-create-header'">
         <span class="flow-dialog-icon" aria-hidden="true"
           ><Icon name="calendar" :size="22"
         /></span>
-        <h2 id="meeting-editor-title">
+        <component :is="original ? 'h2' : 'h1'" id="meeting-editor-title">
           {{ original ? "修改会议安排" : "发起会议" }}
-        </h2>
+        </component>
         <button
+          v-if="original"
           type="button"
           class="icon-button"
           aria-label="关闭会议弹窗"
@@ -182,7 +187,7 @@ async function save() {
         </button>
       </header>
 
-      <div class="flow-dialog-body">
+      <div :class="original ? 'flow-dialog-body' : 'booking-create-body'">
         <section class="flow-dialog-section">
           <h3>会议安排</h3>
           <div class="flow-dialog-fields booking-fields">
@@ -246,7 +251,7 @@ async function save() {
                 >会议说明
                 <small v-if="data.roomId !== 'OTHER'">选填</small></span
               >
-              <textarea
+              <textarea v-numbered
                 v-model="data.description"
                 maxlength="2000"
                 rows="2"
@@ -290,11 +295,14 @@ async function save() {
             />向所有受邀员工共享会议全部内容
           </label>
           <p>
-            共享后，受邀员工可查看彼此的回复、会前材料、会中记录、纪要和会后反馈。
+            共享后，受邀员工可查看彼此的回复、会前材料、会中决议、纪要和会后反馈。
           </p>
           <p>会议结束后须填写并发布纪要。</p>
           <p v-if="!original && materialTypes.length">
             选中的会前材料将发给所有受邀员工。
+          </p>
+          <p v-if="!original && materialTypes.includes('WEEKLY_PLAN')">
+            受邀员工须先填写本周计划，才能提交并参加。
           </p>
         </section>
 
@@ -349,7 +357,7 @@ async function save() {
         </section>
       </div>
 
-      <footer class="flow-dialog-footer">
+      <footer :class="original ? 'flow-dialog-footer' : 'booking-create-footer'">
         <p v-if="error" class="form-error booking-error" role="alert">
           {{ error }}
         </p>
@@ -369,10 +377,30 @@ async function save() {
         </button>
       </footer>
     </form>
-  </dialog>
+  </component>
 </template>
 
 <style scoped>
+/* 发起页面在工作台内容区正常滚动，窄屏时间字段分行。 */
+.booking-create-page { max-width: 860px; margin: 0 auto; }
+.booking-back { display: inline-block; color: var(--brand); margin-bottom: 14px; }
+.booking-create-form {
+  border: 1px solid var(--line); border-radius: 14px; background: #fff;
+}
+.booking-create-header, .booking-create-footer {
+  display: flex; align-items: center; gap: 12px; padding: 18px 24px;
+}
+.booking-create-header { border-bottom: 1px solid var(--line); }
+.booking-create-header h1 { margin: 0; font-size: 23px; }
+.booking-create-body { padding: 0 24px; }
+.booking-create-body > section { padding: 18px 0; }
+.booking-create-footer { border-top: 1px solid var(--line); justify-content: flex-end; flex-wrap: wrap; }
+@media (max-width: 640px) {
+  .booking-create-header, .booking-create-footer { padding-inline: 14px; }
+  .booking-create-body { padding-inline: 14px; }
+  .booking-create-body .booking-fields { grid-template-columns: minmax(0, 1fr); }
+}
+
 .meeting-editor {
   --flow-dialog-width: 760px;
 }

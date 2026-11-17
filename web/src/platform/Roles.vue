@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import Icon from "../preview/PlatformIcon.vue";
 import { computed, inject, onMounted, ref } from "vue";
+import { ElOption, ElSelect } from "element-plus";
+import "element-plus/es/components/select/style/css";
 import {
   api,
   mutate,
@@ -44,6 +46,7 @@ const dialog = ref<HTMLDialogElement | null>(null),
 const usersLoading = ref(false),
   usersPage = ref(1),
   moreUsers = ref(false);
+let usersKeyword = "", usersRequest = 0;
 /** 任职版本来自 UserRoles，选择视图不需要暴露完整账号管理字段。 */
 const authVersion = ref(0);
 /** 公盘只允许一个有效角色，选择新角色时替换旧值，不生成后端必然拒绝的组合。 */
@@ -181,6 +184,7 @@ async function openAssignment() {
   target.value = null;
   selectedUserId.value = "";
   usersPage.value = 1;
+  usersKeyword = "";
   moreUsers.value = false;
   users.value = [];
   selectedRoles.value = [];
@@ -202,7 +206,9 @@ async function openAssignment() {
   await loadUsers();
 }
 /** 打开即加载人员下拉选项；继续使用最小选择视图和服务端分页。 */
-async function loadUsers(append = false) {
+async function loadUsers(keyword = "", append = false) {
+  const request = ++usersRequest;
+  usersKeyword = keyword.trim();
   usersLoading.value = true;
   formError.value = "";
   try {
@@ -213,8 +219,9 @@ async function loadUsers(append = false) {
         ? "DRIVE_GRANT"
         : "ARCHIVE_GRANT";
     const result = await api<Page<{ selector: (typeof users.value)[number] }>>(
-      `/admin/users?${query({ page: append ? usersPage.value + 1 : 1, pageSize: 100, status: "ACTIVE", purpose, projection: "SELECTOR" })}`,
+      `/admin/users?${query({ keyword: usersKeyword || undefined, page: append ? usersPage.value + 1 : 1, pageSize: 100, status: "ACTIVE", purpose, projection: "SELECTOR" })}`,
     );
+    if (request !== usersRequest) return;
     const options = result.items
       .map((item) => item.selector)
       .filter(
@@ -229,9 +236,9 @@ async function loadUsers(append = false) {
     usersPage.value = result.page;
     moreUsers.value = result.hasNext;
   } catch (failure) {
-    formError.value = (failure as Error).message;
+    if (request === usersRequest) formError.value = (failure as Error).message;
   } finally {
-    usersLoading.value = false;
+    if (request === usersRequest) usersLoading.value = false;
   }
 }
 /** 选择员工后读取真实任职和授权版本，不沿用上一次表单内容。 */
@@ -393,32 +400,34 @@ onMounted(() => {
           <h3>选择员工</h3>
           <label class="flow-inline-field"
             >选择人员
-            <select
+            <ElSelect
               v-model="selectedUserId"
-              required
-              :disabled="usersLoading || saving"
+              aria-label="选择人员"
+              filterable
+              remote
+              :teleported="false"
+              :remote-method="loadUsers"
+              :loading="usersLoading"
+              :disabled="saving"
+              placeholder="输入姓名或工号搜索"
+              loading-text="正在查找员工…"
+              no-data-text="没有匹配的在职人员"
               @change="chooseUser"
             >
-              <option value="" disabled>
-                {{
-                  usersLoading
-                    ? "正在加载人员…"
-                    : users.length
-                      ? "请选择人员"
-                      : "暂无可分配角色的在职人员"
-                }}
-              </option>
-              <option v-for="user in users" :key="user.id" :value="user.id">
-                {{ user.name }}（{{ user.employeeNo }}）
-              </option>
-            </select>
+              <ElOption
+                v-for="user in users"
+                :key="user.id"
+                :value="user.id"
+                :label="`${user.name}（${user.employeeNo}）`"
+              />
+            </ElSelect>
           </label>
           <button
             v-if="moreUsers"
             type="button"
             class="text-button"
             :disabled="usersLoading"
-            @click="loadUsers(true)"
+            @click="loadUsers(usersKeyword, true)"
           >
             加载更多人员
           </button>

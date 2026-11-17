@@ -1,14 +1,15 @@
 <script setup lang="ts">
 import { onBeforeUnmount, ref } from "vue";
 import { api } from "./api";
+import { vNumbered } from "./meetingNumbered";
 
 const props = defineProps<{
   meetingId: string;
   initial: string | null;
   disabled: boolean;
 }>();
-const notes = ref(props.initial ?? "");
-let saved = notes.value;
+const decisions = ref(props.initial ?? "");
+let saved = decisions.value;
 let pending: Promise<void> | undefined;
 let timer: ReturnType<typeof setTimeout> | undefined;
 const status = ref("");
@@ -25,17 +26,17 @@ function scheduleSave() {
 async function flush() {
   clearTimeout(timer);
   try {
-    while (pending || notes.value !== saved) {
+    while (pending || decisions.value !== saved) {
       if (pending) {
         await pending;
         continue;
       }
-      const snapshot = notes.value;
+      const snapshot = decisions.value;
       error.value = "";
       status.value = "保存中";
-      pending = api("/meetings/" + props.meetingId + "/live-notes", {
+      pending = api("/meetings/" + props.meetingId + "/live-decisions", {
         method: "PUT",
-        body: JSON.stringify({ notes: snapshot }),
+        body: JSON.stringify({ decisions: snapshot }),
       })
         .then(() => {
           saved = snapshot;
@@ -61,9 +62,10 @@ defineExpose({ flush });
 <template>
   <section class="flow-dialog-section">
     <label>
-      会议记录
+      会议决议
       <textarea
-        v-model="notes"
+        v-numbered
+        v-model="decisions"
         rows="7"
         maxlength="12000"
         :disabled="disabled"

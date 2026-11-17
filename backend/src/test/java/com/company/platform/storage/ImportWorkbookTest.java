@@ -15,7 +15,17 @@ class ImportWorkbookTest {
     /** 仅测试临时目录，不接触业务附件。 */
     @TempDir Path root;
     /** 保留工号前导零及原表行号。 */
-    @Test void textIdentifiersAndLineNumbers()throws Exception{Path file=file(ImportWorkbook.workbook("EMPLOYEE",List.of(Sql.map("employeeNo","00001","name","员工甲","departmentCode","A","companyEmail","a@biolink.com"))));assertTrue(ImportWorkbook.validContainer(file));var rows=ImportWorkbook.read(file,"EMPLOYEE");assertEquals(3,rows.getFirst().number());assertEquals("00001",rows.getFirst().values().get("employeeNo"));assertEquals(ImportWorkbook.MEDIA,FileMediaCheck.detect(file,"台账.xlsx",ImportWorkbook.MEDIA));}
+    @Test void textIdentifiersAndLineNumbers()throws Exception{
+        var input=Sql.map("employeeNo","00001","name","员工甲","departmentCode","行政部",
+            "jobTitle","工程师","supervisorEmployeeNo","00002","mobilePhone","+86 13800000000",
+            "contactEmail","contact@example.com","companyEmail","a@biolink.com");
+        Path file=file(ImportWorkbook.workbook("EMPLOYEE",List.of(input)));
+        assertTrue(ImportWorkbook.validContainer(file));
+        var row=ImportWorkbook.read(file,"EMPLOYEE").getFirst();
+        assertEquals(2,row.number());
+        assertEquals(input,row.values());
+        assertEquals(ImportWorkbook.MEDIA,FileMediaCheck.detect(file,"台账.xlsx",ImportWorkbook.MEDIA));
+    }
     /** 跨类型模板不能被误读为另一个领域。 */
     @Test void wrongTypeRejected()throws Exception{Path file=file(ImportWorkbook.workbook("EMPLOYEE",List.of(Sql.map("employeeNo","1"))));assertThrows(ApiFault.class,()->ImportWorkbook.read(file,"ARCHIVE"));}
     /** 空模板不是成功的零行批次。 */

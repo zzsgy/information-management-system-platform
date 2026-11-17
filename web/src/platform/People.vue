@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import {
   computed,
+  defineAsyncComponent,
   inject,
   nextTick,
   onMounted,
@@ -20,6 +21,7 @@ import {
   type Page,
   type User,
 } from "./api";
+const Imports = defineAsyncComponent(() => import("./Imports.vue"));
 /** 复用全局验证和提示；取消验证直接中止提交。 */
 const askPassword =
   inject<(title: string) => Promise<string | null>>("askPassword")!;
@@ -46,6 +48,9 @@ const tab = ref<"users" | "departments">("users"),
   loading = ref(false),
   error = ref("");
 const companyCode = ref("");
+/** 关闭导入弹窗时清理本次选中的文件和预检页面。 */
+const importDialog = ref<HTMLDialogElement | null>(null),
+  importOpen = ref(false);
 const users = ref<DirectoryUser[]>([]),
   departments = ref<Department[]>([]),
   departmentOptions = ref<Department[]>([]);
@@ -304,7 +309,7 @@ async function save() {
             departmentId: departmentId.value,
           };
       const details = {
-        organizationName: organizationName.value || null,
+        ...(user ? { organizationName: organizationName.value || null } : {}),
         jobTitle: jobTitle.value || null,
         supervisorId: supervisorId.value || null,
         mobilePhone: mobilePhone.value || null,
@@ -416,11 +421,21 @@ onMounted(async () => {
       <h1>组织与人员</h1>
       <p>维护员工账号与部门信息 · 公司编号 {{ companyCode }}</p>
     </div>
-    <button class="primary" @click="openForm()">
-      <Icon name="plus" :size="17" />{{
-        tab === "users" ? "新增人员" : "新增部门"
-      }}
-    </button>
+    <div class="people-heading-actions">
+      <button
+        v-if="tab === 'users'"
+        type="button"
+        class="secondary"
+        @click="importOpen = true; importDialog?.showModal()"
+      >
+        批量导入人员
+      </button>
+      <button class="primary" @click="openForm()">
+        <Icon name="plus" :size="17" />{{
+          tab === "users" ? "新增人员" : "新增部门"
+        }}
+      </button>
+    </div>
   </section>
   <section class="panel management-panel">
     <div class="section-tabs" role="tablist">
@@ -636,6 +651,26 @@ onMounted(async () => {
     </footer>
   </section>
   <dialog
+    ref="importDialog"
+    aria-labelledby="people-import-title"
+    class="form-dialog flow-dialog people-import"
+    @close="importOpen = false"
+  >
+    <div class="flow-dialog-shell">
+      <header class="flow-dialog-header">
+        <span class="flow-dialog-icon"><Icon name="upload" :size="22" /></span>
+        <h2 id="people-import-title">批量导入人员</h2>
+        <button type="button" class="icon-button" aria-label="关闭批量导入" @click="importDialog?.close()">×</button>
+      </header>
+      <div class="flow-dialog-body">
+        <Imports v-if="importOpen" employee-only @changed="load()" />
+      </div>
+      <footer class="flow-dialog-footer">
+        <button type="button" class="secondary" @click="importDialog?.close()">关闭</button>
+      </footer>
+    </div>
+  </dialog>
+  <dialog
     ref="dialog"
     aria-labelledby="people-editor-title"
     class="form-dialog flow-dialog flow-dialog-compact people-editor"
@@ -693,11 +728,11 @@ onMounted(async () => {
           </section>
           <section class="flow-dialog-section">
             <h3>组织与职位</h3>
-            <label class="flow-inline-field">
+            <label v-if="editUser" class="flow-inline-field">
               企业／组织<input v-model.trim="organizationName" maxlength="200" placeholder="选填" />
             </label>
             <label class="flow-inline-field">
-              职位<input v-model.trim="jobTitle" maxlength="128" placeholder="选填" />
+              职位<input v-model.trim="jobTitle" maxlength="128" :required="!editUser" />
             </label>
             <div class="supervisor-field">
               <label>
@@ -711,9 +746,9 @@ onMounted(async () => {
               </label>
               <label>
                 直属主管
-                <select v-model="supervisorId"
+                <select v-model="supervisorId" :required="!editUser"
                   @change="selectedSupervisor = supervisorChoices.find(person => person.id === supervisorId) ?? null">
-                  <option value="">未指定</option>
+                  <option value="">{{ editUser ? "未指定" : "请选择直属主管" }}</option>
                   <option v-if="supervisorId && !supervisorChoices.some(person => person.id === supervisorId)" :value="supervisorId">
                     已指定主管
                   </option>
@@ -727,7 +762,7 @@ onMounted(async () => {
           <section class="flow-dialog-section">
             <h3>联系方式</h3>
             <label class="flow-inline-field">
-              手机号<input v-model.trim="mobilePhone" type="tel" maxlength="32" placeholder="选填，可包含国际区号" />
+              手机号<input v-model.trim="mobilePhone" type="tel" maxlength="32" :required="!editUser" placeholder="可包含国际区号" />
             </label>
             <label class="flow-inline-field">
               联系邮箱<input v-model.trim="contactEmail" type="email" maxlength="254" placeholder="选填，可填写个人邮箱" />
@@ -976,6 +1011,17 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.people-import {
+  width: min(780px, calc(100vw - 32px));
+}
+
+.people-heading-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
 .people-editor .flow-dialog-body .flow-inline-field {
   grid-template-columns: 5em minmax(0, 1fr);
 }

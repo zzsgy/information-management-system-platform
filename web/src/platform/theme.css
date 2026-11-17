@@ -641,7 +641,6 @@ tbody tr:hover {
 }
 html,
 .management-sidebar,
-.drive-sidebar,
 .table-scroll {
   scrollbar-width: thin;
   scrollbar-color: #cbd5de transparent;
@@ -718,6 +717,135 @@ html,
   }
   .portal-home-side {
     grid-column: 1 / -1;
+  }
+}
+
+/* 左侧导航占用全局左栏，首页和业务页面共用右侧内容区。 */
+@media (min-width: 761px) {
+  .platform-shell.with-workspace-sidebar {
+    --workspace-rail: clamp(170px, 13vw, 222px);
+    --page-gutter: clamp(14px, 1.1vw, 22px);
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 100dvh;
+    padding-inline-start: var(--workspace-rail);
+  }
+
+  .platform-shell.with-workspace-sidebar > .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 14px;
+    min-height: 64px;
+    padding-block: 8px;
+  }
+
+  .platform-shell.with-workspace-sidebar > .topbar:has(.portal-search) > .brand,
+  .platform-shell.with-workspace-sidebar > .topbar > .brand .company-logo {
+    display: none;
+  }
+
+  .platform-shell.with-workspace-sidebar > .topbar > .brand .brand-title {
+    padding-left: 0;
+    border: 0;
+  }
+
+  .platform-shell.with-workspace-sidebar .portal-search {
+    max-width: 540px;
+    justify-self: start;
+  }
+
+  .platform-shell.with-workspace-sidebar .account-actions {
+    grid-column: 2;
+  }
+
+  .platform-shell.with-workspace-sidebar > .page-container,
+  .platform-shell.with-workspace-sidebar
+    > .page-container
+    > .platform-page-content {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+  }
+
+  .platform-shell.with-workspace-sidebar > .page-container {
+    padding-block: 16px;
+  }
+
+  .platform-shell.with-workspace-sidebar > .service-health {
+    margin-inline: var(--page-gutter);
+  }
+
+  .with-workspace-sidebar > .workspace-sidebar {
+    position: fixed;
+    inset: 0 auto 0 0;
+    z-index: 31;
+    width: var(--workspace-rail);
+    padding-block: 16px;
+    overflow-y: auto;
+    border-radius: 0;
+  }
+
+  .with-workspace-sidebar > .workspace-sidebar > * {
+    flex-shrink: 0;
+  }
+
+  .workspace-with-sidebar .welcome {
+    margin-bottom: 16px;
+  }
+
+  .workspace-with-sidebar .portal-home-grid {
+    flex: 1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 16px;
+  }
+}
+
+@media (min-width: 1200px) {
+  .workspace-with-sidebar .portal-home-grid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 0.85fr);
+  }
+
+  .workspace-with-sidebar .portal-home-side {
+    grid-column: auto;
+  }
+}
+
+@media (min-width: 761px) and (max-width: 960px) {
+  .workspace-with-sidebar .portal-home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-with-sidebar .welcome {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 760px) {
+  .platform-shell.with-workspace-sidebar {
+    min-width: 0;
+    --page-gutter: 14px;
+  }
+
+  .platform-shell.with-workspace-sidebar > .topbar {
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+  }
+
+  .platform-shell.with-workspace-sidebar .portal-search {
+    grid-area: 2 / 1 / 3 / -1;
+    min-width: 0;
+  }
+
+  .platform-shell.with-workspace-sidebar .account-actions {
+    grid-column: 2;
+  }
+
+  .platform-shell.with-workspace-sidebar .brand-title {
+    display: none;
+  }
+
+  .workspace-with-sidebar .welcome {
+    flex-wrap: wrap;
   }
 }
 

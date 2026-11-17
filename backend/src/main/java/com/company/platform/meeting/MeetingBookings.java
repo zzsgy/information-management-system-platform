@@ -140,7 +140,10 @@ public class MeetingBookings {
                     """, actor.userId()), "name,department"));
         }
         result.put("canSubmitMaterials", scheduled && own != null && eligibleForMaterials(row, own));
-        if (full && "IN_PROGRESS".equals(row.get("state"))) result.put("liveNotes", row.get("live_notes"));
+        if (full && "IN_PROGRESS".equals(row.get("state"))) {
+            result.put("liveDecisions", row.get("live_decisions"));
+            if (row.get("live_notes") != null) result.put("liveNotes", row.get("live_notes"));
+        }
         result.put("minutes", minutes);
         result.put("items", published ? db.rows("""
                 SELECT i.id,i.content,i.assignee_id,u.name AS assignee_name,i.due_at,
@@ -165,11 +168,11 @@ public class MeetingBookings {
         boolean urgent = flag(body, "urgent", false);
         Set<String> types = null;
         if (body.containsKey("materialTypes")) {
-            if (!(body.get("materialTypes") instanceof List<?> values) || values.size()>3)
+            if (!(body.get("materialTypes") instanceof List<?> values) || values.size()>4)
                 throw ApiFault.invalid("请选择有效的会前材料类型");
             types = new LinkedHashSet<>();
             for (Object value : values)
-                if (!types.add(Inputs.choice(value, "REPORT", "TOPICS", "COORDINATION")))
+                if (!types.add(materialKind(value)))
                     throw ApiFault.invalid("会前材料类型不能重复");
         }
         boolean collect = weekly || (types == null ? flag(body, "collectMaterials", false) : !types.isEmpty());
@@ -308,6 +311,19 @@ public class MeetingBookings {
         db.update("UPDATE portal.meeting_booking SET live_notes=? WHERE id=?", notes, id);
     }
 
+    /** 发起人可在实际开会到结束之间保存决议，结束后改由纪要编辑。 */
+    @Transactional
+    public void saveLiveDecisions(Actor actor, UUID id, Map<String, Object> body) {
+        Inputs.only(body, "decisions");
+        if (!body.containsKey("decisions")) throw ApiFault.invalid("缺少会议决议");
+        String decisions = optional(body, "decisions", 12000);
+        identity.lockActor(actor);
+        var row = owned(actor, id);
+        if (row.get("actual_started_at") == null || row.get("actual_ended_at") != null)
+            throw ApiFault.conflict("只有进行中的会议可以编辑会中决议");
+        db.update("UPDATE portal.meeting_booking SET live_decisions=? WHERE id=?", decisions, id);
+    }
+
     /** 发起人手动结束后开放纪要填写，并以实际结束时间释放剩余预约时段。 */
     @Transactional
     public void end(Actor actor, UUID id, UUID request) {
@@ -356,12 +372,17 @@ public class MeetingBookings {
         if (body.containsKey("materials")) {
             if (!decision.equals("ACCEPTED")) throw ApiFault.invalid("请通过提交并参加保存会前材料");
             var kinds = new HashSet<String>();
-            for (var material : Inputs.objects(body.get("materials"), 3)) {
-                String kind = Inputs.choice(material.get("kind"), "REPORT", "TOPICS", "COORDINATION");
+            for (var material : Inputs.objects(body.get("materials"), 4)) {
+                String kind = materialKind(material.get("kind"));
                 if (!kinds.add(kind)) throw ApiFault.invalid("同一材料类型只能提交一次");
                 saveStructuredMaterial(actor, id, request, material, kind, row, attendee);
             }
         }
+        if (decision.equals("ACCEPTED") && row.get("material_types") instanceof List<?> types
+                && types.contains("WEEKLY_PLAN") && db.count("""
+                SELECT count(*) FROM portal.meeting_material WHERE attendee_id=? AND kind='WEEKLY_PLAN'
+                """, attendee.get("id")) == 0)
+            throw ApiFault.invalid("请先填写本周计划，再提交并参加");
         db.update("UPDATE portal.meeting_attendee SET reply=?,decline_reason=?,replied_at=CURRENT_TIMESTAMP WHERE id=?",
                 decision, reason, attendee.get("id"));
         event(actor, request, id, "MEETING_REPLY");
@@ -371,7 +392,7 @@ public class MeetingBookings {
     @Transactional
     public void materials(Actor actor, UUID id, UUID request, Map<String, Object> body) {
         if (body.containsKey("kind")) {
-            String kind = Inputs.choice(body.get("kind"), "REPORT", "TOPICS", "COORDINATION");
+            String kind = materialKind(body.get("kind"));
             identity.lockActor(actor);
             var meeting = lockBooking(id);
             var attendee = activeAttendee(actor, id);
@@ -395,6 +416,11 @@ public class MeetingBookings {
         event(actor, request, id, "MEETING_MATERIALS");
     }
 
+    /** 预约、参会回复和独立材料提交共用相同的材料类型。 */
+    private static String materialKind(Object value) {
+        return Inputs.choice(value, "REPORT", "WEEKLY_PLAN", "TOPICS", "COORDINATION");
+    }
+
     /** 新材料按类型保存，填写人和所属部门从员工档案取值。 */
     private void saveStructuredMaterial(Actor actor, UUID id, UUID request, Map<String, Object> body,
             String kind, Map<String, Object> meeting, Map<String, Object> attendee) {
@@ -408,6 +434,8 @@ public class MeetingBookings {
         Map<String,Object> payload;
         if (kind.equals("REPORT")) {
             payload = Sql.map("html",Inputs.text(body,"html",12000),"text",Inputs.text(body,"text",8000));
+        } else if (kind.equals("WEEKLY_PLAN")) {
+            payload = Sql.map("text", Inputs.text(body,"text",8000));
         } else {
             var rows = Inputs.objects(body.get("rows"),30);
             if (rows.isEmpty()) throw ApiFault.invalid("请至少填写一条");
@@ -547,21 +575,25 @@ public class MeetingBookings {
         if (!"AWAITING_MINUTES".equals(row.get("state"))) return null;
         var sections = new ArrayList<String>();
         for (var person : attendees) {
-            var report = db.one("SELECT payload->>'text' AS text FROM portal.meeting_material WHERE attendee_id=? AND kind='REPORT'", person.get("id"));
-            if (person.get("report") == null && report == null) continue;
+            var materials = db.rows("""
+                    SELECT kind,payload->>'text' AS text FROM portal.meeting_material
+                    WHERE attendee_id=? AND kind IN ('REPORT','WEEKLY_PLAN') ORDER BY kind
+                    """, person.get("id"));
+            if (person.get("report") == null && materials.isEmpty()) continue;
             var lines = new ArrayList<String>();
             lines.add(person.get("name") + "（" + person.get("employee_no") + "）");
             if (person.get("report") != null) lines.add("汇报 " + person.get("report"));
-            if (report != null) lines.add("工作汇报 " + report.get("text"));
+            for (var material : materials)
+                lines.add(("REPORT".equals(material.get("kind")) ? "工作汇报 " : "本周计划 ") + material.get("text"));
             sections.add(String.join("\n", lines));
         }
-        return Sql.map("materialsText", String.join("\n\n", sections), "decisions", "", "notes", row.get("live_notes"),
+        return Sql.map("materialsText", String.join("\n\n", sections), "decisions", row.get("live_decisions"), "notes", row.get("live_notes"),
                 "publishedAt", null, "items", List.of(), "summaryTypes", summaryTypes(row), "materialTables", minuteTables(meeting));
     }
 
     private static List<String> summaryTypes(Map<String, Object> row) {
         return row.get("material_types") instanceof List<?> types
-                ? types.stream().map(Object::toString).filter(kind -> !"REPORT".equals(kind)).toList() : List.of();
+                ? types.stream().map(Object::toString).filter(kind -> Set.of("TOPICS","COORDINATION").contains(kind)).toList() : List.of();
     }
 
     boolean allItemsConfirmed(UUID meeting) {

@@ -3,40 +3,43 @@ import EmptyState from "./EmptyState.vue";
 import { computed, onActivated, ref } from "vue";
 import Icon from "../preview/PlatformIcon.vue";
 import { api, profile } from "./api";
-import { type Announcement, type Site, portalTime, siteCategories } from "./portal";
+import {
+  type Announcement,
+  type Site,
+  portalTime,
+  siteCategories,
+} from "./portal";
 import PortalTasks from "./PortalTasks.vue";
 import biolinkLogo from "./assets/biolink-logo.png";
 import dingtalkIcon from "./assets/dingtalk-site-icon.png";
-/** 入口复用外层导航的可见性，数据接入预览仅供 IT 管理员查看。 */
 const props = defineProps<{
-  hasManagement: boolean;
-  hasMeetingBooking: boolean;
-  hasDataIntakePreview: boolean;
+  applications: { code: string; name: string; icon: string }[];
+  layout: "cards" | "sidebar";
 }>();
-/** 应用入口、公告和外链只使用真实服务结果，不引入设计稿示例数据。 */
-const applications = ref<
-    { code: string; name: string; entry: string; canManage: boolean }[]
-  >([]),
-  announcements = ref<Announcement[]>([]),
+const emit = defineEmits<{ layout: [value: "cards" | "sidebar"] }>();
+
+const announcements = ref<Announcement[]>([]),
   sites = ref<Site[]>([]),
   loaded = ref(false),
   error = ref("");
 let refreshing = false;
 /** 按已配置的网站域名匹配内置图标，其他网站保留名称首字。 */
 const siteShortcuts = computed(() =>
-  sites.value.filter((site) => site.category === "QUICK_LINK").map((site) => {
-    const host = new URL(site.url).hostname.replace(/^www\./, "");
-    return {
-      ...site,
-      icon:
-        host === "biolink.city"
-          ? biolinkLogo
-          : host === "dingtalk.com"
-            ? dingtalkIcon
-            : null,
-      showBrandMark: host === "biolink.city",
-    };
-  }),
+  sites.value
+    .filter((site) => site.category === "QUICK_LINK")
+    .map((site) => {
+      const host = new URL(site.url).hostname.replace(/^www\./, "");
+      return {
+        ...site,
+        icon:
+          host === "biolink.city"
+            ? biolinkLogo
+            : host === "dingtalk.com"
+              ? dingtalkIcon
+              : null,
+        showBrandMark: host === "biolink.city",
+      };
+    }),
 );
 /** 办公工具与快捷入口共用首页返回的启用网站。 */
 const officeSiteGroups = computed(() =>
@@ -65,43 +68,12 @@ const greeting = computed(() => {
   return hour < 12 ? "上午好" : hour < 18 ? "下午好" : "晚上好";
 });
 const descriptions: Record<string, string> = {
-  DRIVE: "共享资料，有序协作。",
-  ARCHIVE: "档案查询、审批与借还。",
-  MEETINGS: "预约会议室，处理参会邀请。",
-  DATA_INTAKE: "数据源、映射与同步任务。",
-  MANAGEMENT: "组织、权限与运行维护。",
+  drive: "共享资料，有序协作。",
+  archive: "档案查询、审批与借还。",
+  meetings: "预约会议室，处理参会邀请。",
+  "data-intake": "数据源、映射与同步任务。",
+  management: "组织、权限与运行维护。",
 };
-/** 档案入口可被发现，但未获档案授权时仅展示开通指引，不请求档案数据。 */
-const workspaceApplications = computed(() => {
-  const items = applications.value
-    .filter((item) => item.code === "DRIVE" || item.code === "ARCHIVE" ||
-      (item.code === "MEETINGS" && props.hasMeetingBooking))
-    .map((item) =>
-      item.code === "ARCHIVE" ? { ...item, name: "档案管理" } : item,
-    );
-  if (!items.some((item) => item.code === "ARCHIVE"))
-    items.splice(items.some((item) => item.code === "DRIVE") ? 1 : 0, 0, {
-      code: "ARCHIVE",
-      name: "档案管理",
-      entry: "#/archive",
-      canManage: false,
-    });
-  if (props.hasDataIntakePreview)
-    items.push({
-      code: "DATA_INTAKE",
-      name: "业务数据接入",
-      entry: "#/data-intake",
-      canManage: false,
-    });
-  if (props.hasManagement)
-    items.push({
-      code: "MANAGEMENT",
-      name: "管理中心",
-      entry: "#/management",
-      canManage: true,
-    });
-  return items;
-});
 /** 返回时直接显示本会话已加载的内容，并在后台获取最新数据。 */
 onActivated(async () => {
   if (refreshing) return;
@@ -109,11 +81,9 @@ onActivated(async () => {
   error.value = "";
   try {
     const data = await api<{
-      applications: typeof applications.value;
       announcements: Announcement[];
       sites: Site[];
     }>("/portal/home");
-    applications.value = data.applications;
     // 服务端先按发布时间取最近五条，未查看优先展示且组内保持原顺序。
     announcements.value = [...data.announcements].sort(
       (a, b) => Number(!!a.viewed) - Number(!!b.viewed),
@@ -128,48 +98,70 @@ onActivated(async () => {
 });
 </script>
 <template>
-  <div class="platform-page-content">
-    <section class="welcome">
-      <div>
-        <span class="eyebrow">工作台</span>
-        <h1>{{ greeting }}，{{ profile?.user.name }}。</h1>
-        <p>处理待办、查看公告，快速进入工作应用。</p>
-      </div>
-      <div class="date-panel">
-        <Icon name="calendar" :size="24" /><span>{{ date }}</span>
-      </div>
-    </section>
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <section class="application-grid portal-applications" aria-label="我的应用">
+  <div
+    class="platform-page-content workspace"
+    :class="{ 'workspace-with-sidebar': layout === 'sidebar' }"
+  >
+    <div class="workspace-intro">
+      <section class="welcome">
+        <div>
+          <span class="eyebrow">工作台</span>
+          <h1>{{ greeting }}，{{ profile?.user.name }}。</h1>
+          <p>处理待办、查看公告，快速进入工作应用。</p>
+        </div>
+        <div class="workspace-controls">
+          <div class="date-panel">
+            <Icon name="calendar" :size="24" /><span>{{ date }}</span>
+          </div>
+          <div
+            class="workspace-layout-picker"
+            role="group"
+            aria-label="工作台布局"
+          >
+            <button
+              type="button"
+              :aria-pressed="layout === 'cards'"
+              @click="emit('layout', 'cards')"
+            >
+              <Icon name="grid" :size="16" />顶部卡片
+            </button>
+            <button
+              type="button"
+              :aria-pressed="layout === 'sidebar'"
+              @click="emit('layout', 'sidebar')"
+            >
+              <Icon name="menu" :size="16" />左侧导航
+            </button>
+          </div>
+        </div>
+      </section>
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    </div>
+
+    <nav
+      v-if="props.layout === 'cards'"
+      class="application-grid portal-applications"
+      aria-label="我的应用"
+    >
       <a
-        v-for="(item, index) in workspaceApplications"
+        v-for="(item, index) in applications"
         :key="item.code"
         class="application-card"
-        :class="`tone-${index % 3}`"
-        :href="item.entry"
-        ><span class="application-icon" aria-hidden="true"
-          ><Icon
-            :name="
-              item.code === 'ARCHIVE'
-                ? 'archive'
-                : item.code === 'MANAGEMENT'
-                  ? 'shield'
-                  : item.code === 'DATA_INTAKE'
-                    ? 'database'
-                    : item.code === 'MEETINGS'
-                      ? 'calendar'
-                      : 'file'
-            "
-            :size="22"
+        :class="'tone-' + (index % 3)"
+        :href="'#/' + item.code"
+      >
+        <span class="application-icon" aria-hidden="true"
+          ><Icon :name="item.icon" :size="22"
         /></span>
         <div class="application-copy">
           <h2>{{ item.name }}</h2>
-          <p v-if="descriptions[item.code]">{{ descriptions[item.code] }}</p>
+          <p>{{ descriptions[item.code] }}</p>
         </div>
-        <span class="application-trailing">
-          <Icon name="arrow" :size="16" aria-hidden="true" /> </span
-      ></a>
-    </section>
+        <span class="application-trailing" aria-hidden="true"
+          ><Icon name="arrow" :size="15"
+        /></span>
+      </a>
+    </nav>
     <div class="portal-home-grid">
       <PortalTasks compact />
       <section class="panel portal-panel">
@@ -228,7 +220,11 @@ onActivated(async () => {
             </li>
           </ul>
           <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
-          <section v-if="officeSiteGroups.length" class="office-sites" aria-labelledby="office-sites-title">
+          <section
+            v-if="officeSiteGroups.length"
+            class="office-sites"
+            aria-labelledby="office-sites-title"
+          >
             <h3 id="office-sites-title">办公工具</h3>
             <details v-for="group in officeSiteGroups" :key="group.category">
               <summary>
@@ -252,6 +248,66 @@ onActivated(async () => {
 </template>
 
 <style scoped>
+.workspace-controls,
+.workspace-layout-picker {
+  display: flex;
+  align-items: center;
+}
+
+.workspace-controls {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 12px;
+}
+
+.workspace-layout-picker {
+  flex: 0 0 auto;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.workspace-layout-picker button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.workspace-layout-picker button:hover,
+.workspace-layout-picker button[aria-pressed="true"] {
+  background: var(--brand-soft);
+  color: var(--brand);
+}
+
+.workspace-layout-picker button[aria-pressed="true"] {
+  font-weight: 600;
+}
+
+@media (max-width: 760px) {
+  .workspace-with-sidebar .welcome {
+    margin-bottom: 14px;
+  }
+
+  .workspace-with-sidebar .portal-home-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .workspace-controls {
+    justify-content: flex-start;
+  }
+}
+
 .office-sites {
   margin-top: 16px;
   padding-top: 14px;

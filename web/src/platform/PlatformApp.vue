@@ -11,6 +11,7 @@ import {
   onUnmounted,
   provide,
   ref,
+  watch,
 } from "vue";
 import Icon from "../preview/PlatformIcon.vue";
 /** 公司提供的原始透明 LOGO 随平台打包，登录前也可同源加载。 */
@@ -27,6 +28,7 @@ import {
   type PasswordPromptOptions,
 } from "./api";
 import Workspace from "./Workspace.vue";
+import WorkspaceSidebar from "./WorkspaceSidebar.vue";
 import ServiceHealthNotice from "./ServiceHealthNotice.vue";
 /** 首页扩展页面仅在访问时加载，员工不下载全部内容管理表单。 */
 const PortalAnnouncements = defineAsyncComponent(
@@ -83,6 +85,10 @@ const Operations = defineAsyncComponent(() => import("./Operations.vue"));
 const Settings = defineAsyncComponent(() => import("./Settings.vue"));
 /** 当前导航来自 hash，不携带认证凭据。 */
 const route = ref(location.hash.slice(2) || "home");
+/** 批量导入入口可预选类型，导入页面再按实际权限过滤。 */
+const initialImportType = computed(
+  () => new URLSearchParams(route.value.split("?")[1]).get("type") ?? undefined,
+);
 /** 登录、首次设密与页面恢复状态分别管理。 */
 const recoveryMode = ref(false),
   departmentName = ref("");
@@ -155,7 +161,11 @@ const tabs = computed(() =>
     { code: "drive", name: "企业公盘", visible: can("DRIVE.ACCESS") },
     { code: "archive", name: "档案管理", visible: true },
     { code: "meetings", name: "会议预约", visible: !systemAdministrator.value },
-    { code: "meeting-config", name: "会议配置", visible: systemAdministrator.value },
+    {
+      code: "meeting-config",
+      name: "会议配置",
+      visible: systemAdministrator.value,
+    },
     {
       code: "catalog",
       name: "目录与保管",
@@ -267,7 +277,8 @@ const managementGroups = computed(() =>
 const allowedRoute = computed(() => {
   const requested = route.value.split("?")[0];
   // 兼容管理员收藏的原会议入口，统一进入管理中心。
-  if (requested === "meetings" && systemAdministrator.value) return "meeting-config";
+  if (requested === "meetings" && systemAdministrator.value)
+    return "meeting-config";
   if (
     requested === "physical" &&
     can("ARCHIVE.ACCESS") &&
@@ -295,6 +306,77 @@ const archiveTabs = computed(() =>
 const inArchive = computed(() =>
   archiveTabs.value.some((tab) => tab.code === allowedRoute.value),
 );
+type WorkspaceLayout = "cards" | "sidebar";
+const workspaceLayout = ref<WorkspaceLayout>("cards");
+const workspaceLayoutKey = computed(() => {
+  const userId = profile.value?.user.id;
+  return userId ? "ims.workspace.layout." + userId : "";
+});
+
+/** 同一账号的布局跨首页和模块页面使用，继续读取已有浏览器偏好。 */
+watch(
+  workspaceLayoutKey,
+  (key) => {
+    workspaceLayout.value = "cards";
+    if (!key) return;
+    try {
+      if (localStorage.getItem(key) === "sidebar")
+        workspaceLayout.value = "sidebar";
+    } catch {
+      // 存储不可用时仍可在当前会话切换。
+    }
+  },
+  { immediate: true },
+);
+
+function selectWorkspaceLayout(next: WorkspaceLayout) {
+  workspaceLayout.value = next;
+  if (!workspaceLayoutKey.value) return;
+  try {
+    localStorage.setItem(workspaceLayoutKey.value, next);
+  } catch {
+    // 存储不可用时保留当前会话选择。
+  }
+}
+
+const workspaceSidebar = computed(() => workspaceLayout.value === "sidebar");
+/** 顶部卡片与左侧导航共用路由已确定的可见模块。 */
+const workspaceApplications = computed(() => {
+  const icons = {
+    drive: "file",
+    archive: "archive",
+    meetings: "calendar",
+    "data-intake": "database",
+  };
+  const apps = Object.entries(icons).flatMap(([code, icon]) =>
+    tabs.value
+      .filter((tab) => tab.code === code)
+      .map(({ name }) => ({ code, name, icon })),
+  );
+  if (managementGroups.value.length)
+    apps.push({ code: "management", name: "管理中心", icon: "shield" });
+  return apps;
+});
+
+const currentWorkspaceModule = computed(() => {
+  if (allowedRoute.value === "data-intake") return "data-intake";
+  if (inManagement.value) return "management";
+  if (inArchive.value) return "archive";
+  return allowedRoute.value;
+});
+const workspaceSubnav = computed(() =>
+  currentWorkspaceModule.value === "management"
+    ? managementGroups.value
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((tab) => tab.code !== "data-intake"),
+        }))
+        .filter((group) => group.items.length)
+    : currentWorkspaceModule.value === "archive"
+      ? [{ name: "", items: archiveTabs.value }]
+      : [],
+);
+
 /** 全局提示只使用已清洗的消息，不显示原始请求。 */
 function inform(message: string) {
   notice.value = message;
@@ -570,7 +652,11 @@ onUnmounted(() => {
       <footer>公司内部使用 · 保护账号与资料安全</footer>
     </section>
   </main>
-  <div v-else class="platform-shell">
+  <div
+    v-else
+    class="platform-shell"
+    :class="{ 'with-workspace-sidebar': workspaceSidebar }"
+  >
     <TodoReminderPopup :key="profile.user.id" />
     <header class="topbar">
       <a class="brand" href="#/home"
@@ -630,6 +716,13 @@ onUnmounted(() => {
         ><button class="text-button" @click="signOut">退出</button>
       </div>
     </header>
+    <WorkspaceSidebar
+      v-if="workspaceSidebar"
+      :applications="workspaceApplications"
+      :active-module="currentWorkspaceModule"
+      :active-route="allowedRoute"
+      :groups="workspaceSubnav"
+    />
     <ServiceHealthNotice
       v-if="
         can('PLATFORM.OPERATIONS_MANAGE') &&
@@ -638,10 +731,12 @@ onUnmounted(() => {
     />
     <main
       class="page-container"
-      :class="{ 'management-layout': inManagement || inArchive }"
+      :class="{
+        'management-layout': !workspaceSidebar && (inManagement || inArchive),
+      }"
     >
       <aside
-        v-if="inManagement"
+        v-if="!workspaceSidebar && inManagement"
         class="management-sidebar"
         aria-label="管理中心模块"
       >
@@ -670,7 +765,7 @@ onUnmounted(() => {
         </nav>
       </aside>
       <aside
-        v-else-if="inArchive"
+        v-else-if="!workspaceSidebar && inArchive"
         class="management-sidebar"
         aria-label="档案管理模块"
       >
@@ -695,12 +790,16 @@ onUnmounted(() => {
       <KeepAlive :key="profile.csrfToken">
         <Workspace
           v-if="allowedRoute === 'home'"
-          :has-management="managementTabs.length > 0"
-          :has-meeting-booking="!systemAdministrator"
-          :has-data-intake-preview="tabs.some((tab) => tab.code === 'data-intake')"
+          :applications="workspaceApplications"
+          :layout="workspaceLayout"
+          @layout="selectWorkspaceLayout"
         />
       </KeepAlive>
-      <div v-if="allowedRoute !== 'home'" class="platform-page-content" :key="route">
+      <div
+        v-if="allowedRoute !== 'home'"
+        class="platform-page-content"
+        :key="route"
+      >
         <PortalAnnouncements
           v-if="allowedRoute === 'announcements'"
         /><PortalFeedback v-else-if="allowedRoute === 'feedback'" /><PortalAdmin
@@ -712,11 +811,19 @@ onUnmounted(() => {
           v-else-if="allowedRoute === 'message-service'"
         /><People v-else-if="allowedRoute === 'people'" /><Roles
           v-else-if="allowedRoute === 'roles'"
-        /><Drive v-else-if="allowedRoute === 'drive'" /><Meetings v-else-if="allowedRoute === 'meetings' || allowedRoute === 'meeting-config'" :route="allowedRoute === 'meeting-config' ? 'meeting-config' : route" /><Catalog
-          v-else-if="allowedRoute === 'catalog'"
-        /><DataIntake v-else-if="allowedRoute === 'data-intake'" /><Imports
+        /><Drive v-else-if="allowedRoute === 'drive'" /><Meetings
+          v-else-if="
+            allowedRoute === 'meetings' || allowedRoute === 'meeting-config'
+          "
+          :route="allowedRoute === 'meeting-config' ? 'meeting-config' : route"
+        /><Catalog v-else-if="allowedRoute === 'catalog'" /><DataIntake
+          v-else-if="allowedRoute === 'data-intake'"
+        /><Imports
           v-else-if="allowedRoute === 'imports'"
-        /><Scanning v-else-if="allowedRoute === 'scanning'" />
+          :initial-type="initialImportType"
+        /><Scanning
+          v-else-if="allowedRoute === 'scanning'"
+        />
         <template v-else-if="allowedRoute === 'archive'">
           <Archive v-if="can('ARCHIVE.ACCESS')" />
           <section

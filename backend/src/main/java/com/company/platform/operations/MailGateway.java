@@ -20,7 +20,7 @@ public class MailGateway {
     public MailGateway(Environment env) {
         mode=env.getProperty("platform.messaging.mail-mode","LOCAL");
         if(!Set.of("LOCAL","SMTP").contains(mode))throw new IllegalArgumentException("邮件模式无效");
-        from=env.getProperty("platform.messaging.smtp.from","");portal=env.getProperty("platform.messaging.portal-url","https://127.0.0.1:18443/platform.html");
+        from=env.getProperty("platform.messaging.smtp.from","");portal=env.getProperty("platform.messaging.portal-url","https://127.0.0.1:18443/");
         localRoot=env.getRequiredProperty("platform.mailbox");sender=new JavaMailSenderImpl();
         if(!portal.matches("https://[^\\s\\r\\n]+"))throw new IllegalArgumentException("消息入口必须是HTTPS地址");
         if(mode.equals("SMTP")) {

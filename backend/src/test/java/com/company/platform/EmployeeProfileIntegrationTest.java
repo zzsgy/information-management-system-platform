@@ -119,7 +119,8 @@ class EmployeeProfileIntegrationTest {
         return new Commands.Context(admin,UUID.randomUUID(),UUID.randomUUID(),"TEST "+action+" "+id,(String)proof.get("verificationToken"),version);
     }
     private Map<String,Object> createWithEmployeePassword(){
-        var body=Sql.map("employeeNo","PWD"+UUID.randomUUID(),"name","隔离密码员工","departmentId",admin.user().get("departmentId"),"companyEmail",UUID.randomUUID()+"@biolink.com");
+        var body=Sql.map("employeeNo","PWD"+UUID.randomUUID(),"name","隔离密码员工","departmentId",admin.user().get("departmentId"),"companyEmail",UUID.randomUUID()+"@biolink.com",
+            "jobTitle","测试员工","supervisorId",admin.userId(),"mobilePhone","+86 13800000000");
         var ctx=credentialContext("COLLECTION",ApiController.COLLECTION,"CREATE_USER",null);
         var result=commands.run(ctx,body,"COLLECTION",ApiController.COLLECTION,"CREATE_USER",()->admin.require("PLATFORM.USERS_MANAGE"),()->directory.createUser(ctx,body),directory::user);
         assertEquals(result,commands.run(ctx,body,"COLLECTION",ApiController.COLLECTION,"CREATE_USER",()->admin.require("PLATFORM.USERS_MANAGE"),()->directory.createUser(ctx,body),directory::user));

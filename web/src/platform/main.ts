@@ -7,5 +7,10 @@ import "./portal.css";
 import "./theme.css";
 import "./flowDialog.css";
 
+// 正式服务的根地址提供同一入口，旧链接仍携带原查询参数和模块路由。
+if (import.meta.env.PROD && location.pathname === "/platform.html") {
+  history.replaceState(history.state, "", "/" + location.search + location.hash);
+}
+
 /** 新平台从真实会话恢复；不加载旧 Bearer 登录和静态预览数据。 */
 createApp(App).mount("#app");

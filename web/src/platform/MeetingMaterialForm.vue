@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch } from "vue";
 import { api } from "./api";
+import { vNumbered } from "./meetingNumbered";
 import {
   materialLabels,
   reportMarkup,
@@ -18,6 +19,7 @@ const props = defineProps<{
   departments: MeetingOption[];
 }>();
 const editor = ref<HTMLElement>();
+const weeklyPlan = ref(props.existing?.data.text ?? "");
 let nextRowId = 0;
 function makeRow(values: MaterialRow = { subject: "", expected: "" }) {
   return { departmentId: null, personId: null, ...values, rowId: nextRowId++ };
@@ -78,6 +80,10 @@ function paste(event: ClipboardEvent) {
 }
 /** 空材料保持待提交，已填写的行沿用字段校验。 */
 function collect() {
+  if (props.kind === "WEEKLY_PLAN") {
+    if (!weeklyPlan.value.trim()) throw new Error("请先填写本周计划，再提交并参加");
+    return { kind: props.kind, text: weeklyPlan.value };
+  }
   if (props.kind === "REPORT") {
     const text = editor.value?.innerText.trim();
     return text
@@ -137,6 +143,7 @@ defineExpose({ collect });
         ref="editor"
         class="report-editor"
         contenteditable="true"
+        v-numbered
         role="textbox"
         aria-label="工作汇报正文"
         aria-multiline="true"
@@ -144,6 +151,10 @@ defineExpose({ collect });
         @drop.prevent
       />
     </template>
+    <label v-else-if="kind === 'WEEKLY_PLAN'">
+      本周计划内容
+      <textarea v-model="weeklyPlan" v-numbered rows="5" maxlength="8000" />
+    </label>
     <template v-else>
       <div
         class="material-table-wrap"
@@ -192,7 +203,7 @@ defineExpose({ collect });
             <tr v-for="(row, index) in rows" :key="row.rowId">
               <th scope="row">{{ index + 1 }}</th>
               <td>
-                <textarea
+                <textarea v-numbered
                   v-model="row.subject"
                   maxlength="500"
                   rows="2"
@@ -205,7 +216,7 @@ defineExpose({ collect });
                 />
               </td>
               <td>
-                <textarea
+                <textarea v-numbered
                   v-model="row.expected"
                   maxlength="1000"
                   rows="2"

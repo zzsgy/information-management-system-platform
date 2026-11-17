@@ -266,6 +266,34 @@ class MeetingIntegrationTest {
     }
 
     @Test
+    void requestedWeeklyPlanAndLiveDecisionCarryThroughToMinutes() {
+        var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        body.put("materialTypes", List.of("WEEKLY_PLAN"));
+        UUID id = bookings.create(organizer, request(), body);
+        assertTrue(hasPending(employee, id));
+        assertEquals(400, assertThrows(ApiFault.class,
+                () -> bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"))).status);
+        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED", "materials",
+                List.of(Map.of("kind", "WEEKLY_PLAN", "text", "1. 完成排期"))));
+        assertFalse(hasPending(employee, id));
+        assertEquals("WEEKLY_PLAN", values(attendee(organizer, id, employee), "materials").getFirst().get("kind"));
+        assertEquals(409, assertThrows(ApiFault.class,
+                () -> bookings.saveLiveDecisions(organizer, id, Map.of("decisions", "尚未开始"))).status);
+        bookings.start(organizer, id, request());
+        assertEquals(404, assertThrows(ApiFault.class,
+                () -> bookings.saveLiveDecisions(employee, id, Map.of("decisions", "受邀员工不能编辑"))).status);
+        bookings.saveLiveDecisions(organizer, id, Map.of("decisions", "1. 确认排期"));
+        assertEquals("1. 确认排期", bookings.detail(organizer, id).get("liveDecisions"));
+        assertFalse(bookings.detail(employee, id).containsKey("liveDecisions"));
+        bookings.end(organizer, id, request());
+        var draft = (Map<?, ?>) bookings.detail(organizer, id).get("minutes");
+        assertEquals("1. 确认排期", draft.get("decisions"));
+        assertTrue(draft.get("materialsText").toString().contains("本周计划 1. 完成排期"));
+        followUp.saveMinutes(organizer, id, request(), 3, Map.of("publish", true, "decisions", draft.get("decisions")));
+        assertEquals("1. 确认排期", ((Map<?, ?>) bookings.detail(employee, id).get("minutes")).get("decisions"));
+    }
+
+    @Test
     void reportSharingControlsBothAuthorReportsAndTheMinutesSummary() {
         for (boolean share : List.of(false, true)) {
             var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);

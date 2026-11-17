@@ -16,8 +16,14 @@ public class ImportController {
     @GetMapping("/templates/{type}") public ResponseEntity<byte[]> template(@PathVariable String type,@RequestParam(defaultValue="BOX_LEDGER") String format,HttpServletRequest r){return ResponseEntity.ok().header("Cache-Control","no-store").header("Content-Disposition","attachment; filename=\"import-"+ImportWorkbook.type(type)+(type.equals("ARCHIVE")&&format.equals("BOX_LEDGER")?"-boxes":"")+".xlsx\"").contentType(MediaType.parseMediaType(ImportWorkbook.MEDIA)).body(imports.template(actor(r),type,format));}
     /** 只返回相应类型的字段说明和部门选择范围。 */
     @GetMapping("/options/{type}") public Map<String,Object> options(@PathVariable String type,@RequestParam(defaultValue="BOX_LEDGER") String format,HttpServletRequest r){return ok(imports.options(actor(r),type,format),r);}
+    /** 仅人员维护者可读取本人已检测员工表中的姓名和行号，供网页生成公司邮箱。 */
+    @GetMapping("/employee-email-sources/{id}") public Map<String,Object> employeeEmailSources(@PathVariable String id,HttpServletRequest r){return ok(imports.employeeEmailSources(actor(r),Inputs.uuid(id)),r);}
     /** 已完成真实检测的 XLSX 才可建立预检批次，结构错误以批次错误显示。 */
     @PostMapping("/batches") @ResponseStatus(HttpStatus.CREATED) public Map<String,Object> create(@RequestBody Map<String,Object> b,HttpServletRequest r){return ok(imports.create(context(r),b),r);}
+    /** 仅单机员工导入启用时，账号管理员可读取缺邮箱的行号与姓名。 */
+    @PostMapping("/employee-workbook/inspect") public Map<String,Object> inspectEmployeeWorkbook(@RequestBody byte[] workbook,HttpServletRequest r){return ok(imports.inspectEmployeeWorkbook(actor(r),workbook),r);}
+    /** 本人再验证后保存员工预检批次，确认前不新建账号。 */
+    @PostMapping("/employee-workbook/batches") @ResponseStatus(HttpStatus.CREATED) public Map<String,Object> createEmployeeWorkbook(@RequestBody Map<String,Object> b,HttpServletRequest r){return ok(imports.createEmployeeWorkbook(context(r),b),r);}
     /** 分页仅列当前仍有权读取的本人批次。 */
     @GetMapping("/batches") public Map<String,Object> list(@RequestParam Map<String,String> q,HttpServletRequest r){return ok(imports.list(actor(r),q),r);}
     /** 当前批次汇总与预检摘要。 */

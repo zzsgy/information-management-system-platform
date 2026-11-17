@@ -12,6 +12,8 @@ public class DirectoryService {
     /** 名片资料仅通过人员管理投影返回。 */
     private static final String DIRECTORY_USER_FIELDS = IdentityService.USER_FIELDS
             + ",organization_name,job_title,supervisor_id,mobile_phone,contact_email";
+    /** 人员新建或导入时未指定组织的默认名片名称。 */
+    private static final String DEFAULT_EMPLOYEE_ORGANIZATION = "百林科（兰州）新材料有限公司";
     public static final String PERMISSION_FIELDS = "id,module,code,name,resource_type,action,sensitive_flag,assignable_scope_type";
     /** 数据、身份失效和受控临时凭据投递接口。 */
     private final Sql db;
@@ -173,6 +175,15 @@ public class DirectoryService {
 
     /** 初始密码使用工号，24小时内完成强制改密后才可进入业务。 */
     public Map<String, Object> createUser(Commands.Context ctx, Map<String, Object> body) {
+        return createUser(body, true);
+    }
+
+    /** 已确认的员工批次允许空白名片字段，沿用账号创建和初始凭据流程。 */
+    public Map<String, Object> createImportedUser(Map<String, Object> body) {
+        return createUser(body, false);
+    }
+
+    private Map<String, Object> createUser(Map<String, Object> body, boolean requireProfile) {
         Inputs.only(body, "employeeNo", "name", "departmentId", "companyEmail", "organizationName", "jobTitle", "supervisorId", "mobilePhone", "contactEmail");
         UUID department = Inputs.uuid(body.get("departmentId"));
         activeDepartment(department);
@@ -180,12 +191,16 @@ public class DirectoryService {
                 email = Inputs.email(body), temporary = employee;
         UUID id = UUID.randomUUID();
         var details = employeeDetails(id, body, Map.of());
+        if (requireProfile && details.title() == null) throw ApiFault.invalid("请填写职位");
+        if (requireProfile && details.supervisor() == null) throw ApiFault.invalid("请选择直属主管");
+        if (requireProfile && details.phone() == null) throw ApiFault.invalid("请填写手机号");
         db.update("""
                 INSERT INTO iam.user_account(id,employee_no,name,department_id,company_email,password_hash,
                     organization_name,job_title,supervisor_id,mobile_phone,contact_email)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)
                 """, id, employee, name, department, email, Crypto.password(temporary),
-                details.organization(), details.title(), details.supervisor(), details.phone(), details.contactEmail());
+                Objects.requireNonNullElse(details.organization(), DEFAULT_EMPLOYEE_ORGANIZATION),
+                details.title(), details.supervisor(), details.phone(), details.contactEmail());
         delivery.issue(id, employee, email);
         return user(id);
     }
@@ -240,13 +255,23 @@ public class DirectoryService {
                 throw ApiFault.invalid("请选择其他在职员工担任直属主管");
         }
         String mobile = profileText(body, current, "mobilePhone", "mobile_phone", 32);
-        if (mobile != null && !mobile.matches("\\+?[0-9][0-9 ()-]{4,30}[0-9]"))
-            throw ApiFault.invalid("请填写有效的手机号，可包含国际区号");
+        if (mobile != null) validateEmployeeMobile(mobile);
         String contact = profileText(body, current, "contactEmail", "contact_email", 254);
-        if (contact != null && !contact.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+"))
-            throw ApiFault.invalid("请填写有效的联系邮箱");
+        if (contact != null) validateEmployeeContactEmail(contact);
         return new EmployeeDetails(profileText(body, current, "organizationName", "organization_name", 200),
                 profileText(body, current, "jobTitle", "job_title", 128), supervisor, mobile, contact);
+    }
+
+    /** 人员表单与 Excel 预检共用手机号校验，空值由入口处理。 */
+    public static void validateEmployeeMobile(String mobile) {
+        if (!mobile.matches("\\+?[0-9][0-9 ()-]{4,30}[0-9]"))
+            throw ApiFault.invalid("请填写有效的手机号，可包含国际区号");
+    }
+
+    /** 联系邮箱可用个人邮箱，与公司邮箱的域名校验独立。 */
+    public static void validateEmployeeContactEmail(String contact) {
+        if (!contact.matches("[^@\\s]+@[^@\\s]+\\.[^@\\s]+"))
+            throw ApiFault.invalid("请填写有效的联系邮箱");
     }
 
     /** 可选名片文字沿用入口长度校验。 */

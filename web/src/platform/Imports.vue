@@ -5,14 +5,21 @@ import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
 import { api, can, COLLECTION, dateTime, mutate, profile, query } from "./api";
 import { interactionRequest } from "./interaction";
 import { uploadArchivePdf } from "./archiveFiles";
-const props = defineProps<{ archiveOnly?: boolean }>();
+import { companyEmailFromName } from "./companyEmail";
+const props = defineProps<{
+  archiveOnly?: boolean;
+  /** 人员管理弹窗仅处理员工账号，不展示导入领域和历史切换。 */
+  employeeOnly?: boolean;
+  /** 从业务入口进入时预选导入类型，仍以当前账号可用类型为准。 */
+  initialType?: string;
+}>();
 const emit = defineEmits<{ changed: [] }>();
 /** 导入批次只返回汇总，逐行内容独立分页。 */
 interface Batch {
   /** 批次标识。 */ id: string;
   /** 导入领域。 */ importType: string;
   /** 当前状态。 */ state: string;
-  /** 有效行数。 */ rowCount: number;
+  /** 有数据的原表行数。 */ rowCount: number;
   /** 错误行数。 */ errorCount: number;
   /** 预检规范摘要。 */ validationDigest: string;
   /** 并发版本。 */ rowVersion: number;
@@ -49,11 +56,18 @@ const types = [
     visible: can("PLATFORM.DEPARTMENTS_MANAGE"),
   },
 ].filter(
-  (item) => item.visible && (!props.archiveOnly || item.code === "ARCHIVE"),
+  (item) =>
+    item.visible &&
+    (!props.archiveOnly || item.code === "ARCHIVE") &&
+    (!props.employeeOnly || item.code === "EMPLOYEE"),
 );
 /** 两个页签保留各自输入，记录页可独立选择导入类型。 */
 const view = ref<"create" | "history">("create");
-const type = ref(types[0]?.code || "ARCHIVE"),
+const type = ref(
+    types.find((item) => item.code === props.initialType)?.code ??
+      types[0]?.code ??
+      "ARCHIVE",
+  ),
   historyType = ref(type.value),
   archiveFormat = ref("BOX_LEDGER"),
   departments = ref<Department[]>([]),
@@ -61,9 +75,14 @@ const type = ref(types[0]?.code || "ARCHIVE"),
   columns = ref<string[]>([]),
   version = ref(""),
   templates = ref<{ id: string; name: string; objectType: string }[]>([]);
+/** 员工预检错误使用模板中的中文列名。 */
+const employeeColumnLabels = computed(
+  () => new Map(columns.value.map((column) => column.split("|") as [string, string])),
+);
 /** 文件检测状态、批次及错误分页，页面只在内存保存已检测对象。 */
 const file = ref<File | null>(null),
   uploadObject = ref(""),
+  localEmployeeWorkbook = ref(false),
   busy = ref(false),
   error = ref(""),
   progress = ref(""),
@@ -82,6 +101,8 @@ const file = ref<File | null>(null),
   reason = ref("");
 const downloading = ref(false),
   downloadNotice = ref(""),
+  /** 按实际保存方式提示用户如何打开文件，取消或失败时不展示。 */
+  downloadOpenHint = ref(""),
   templateUrl = ref(""),
   templateName = ref("");
 const states: Record<string, string> = {
@@ -116,6 +137,7 @@ async function load() {
   file.value = null;
   confirmed.value = false;
   downloadNotice.value = "";
+  downloadOpenHint.value = "";
   if (templateUrl.value) URL.revokeObjectURL(templateUrl.value);
   templateUrl.value = "";
   try {
@@ -123,6 +145,8 @@ async function load() {
       version: string;
       columns: string[];
       departments: Department[];
+      employeeImportScopeId?: string;
+      localEmployeeWorkbook?: boolean;
     }>(
       `/imports/options/${type.value}?${query({ format: archiveFormat.value })}`,
     );
@@ -137,14 +161,15 @@ async function load() {
     }
     if (current !== generation || !alive) return;
     version.value = options.version;
+    localEmployeeWorkbook.value = options.localEmployeeWorkbook === true;
     columns.value = options.columns;
     departments.value = units;
     scope.value =
       type.value === "ARCHIVE"
         ? units.map((unit) => unit.id)
-        : units.length
-          ? [units[0].id]
-          : [];
+        : type.value === "EMPLOYEE"
+          ? options.employeeImportScopeId ? [options.employeeImportScopeId] : []
+          : units.length ? [units[0].id] : [];
   } catch (e) {
     if (current === generation) error.value = (e as Error).message;
   }
@@ -192,6 +217,12 @@ function chooseFile(event: Event) {
   uploadObject.value = "";
   operation = crypto.randomUUID();
 }
+/** 员工模板在本地另存权限受限时，可交由浏览器下载。取消仍停止本次操作。 */
+function canFallbackTemplateDownload(failure: unknown) {
+  return type.value === "EMPLOYEE" && failure instanceof DOMException &&
+    ["NoModificationAllowedError", "NotAllowedError", "SecurityError", "InvalidStateError", "NotReadableError"].includes(failure.name);
+}
+
 /** 点击时立即由当前窗口选择保存位置；实际写入完成、取消与失败分别反馈。 */
 async function downloadTemplate(event: MouseEvent) {
   if (downloading.value) return;
@@ -206,14 +237,18 @@ async function downloadTemplate(event: MouseEvent) {
         : "组织部门导入模板.xlsx";
   downloading.value = true;
   downloadNotice.value = "";
+  downloadOpenHint.value = "";
   error.value = "";
+  let fallback = false;
   try {
     window.focus();
     const picker = (window as SavePickerWindow).showSaveFilePicker;
     // 原生保存框必须在用户点击时发起，先等待网络会丢失当前手势和窗口上下文。
-    downloadNotice.value = "请选择保存位置；若要取消，请关闭保存窗口。";
-    const handle = picker
-      ? await picker.call(window, {
+    let handle: FileSystemFileHandle | null = null;
+    if (picker) {
+      downloadNotice.value = "请选择保存位置；若要取消，请关闭保存窗口。";
+      try {
+        handle = await picker.call(window, {
           suggestedName: name,
           types: [
             {
@@ -224,8 +259,12 @@ async function downloadTemplate(event: MouseEvent) {
               },
             },
           ],
-        })
-      : null;
+        });
+      } catch (failure) {
+        if (!canFallbackTemplateDownload(failure)) throw failure;
+        fallback = true;
+      }
+    }
     downloadNotice.value = "正在获取并保存模板…";
     const response = await fetch(
       `/api/v1/imports/templates/${type.value}?${query({ format: archiveFormat.value })}`,
@@ -251,9 +290,15 @@ async function downloadTemplate(event: MouseEvent) {
     const blob = await response.blob();
     if (!blob.size) throw new Error("模板文件为空，请重试。");
     if (handle) {
-      await blob.stream().pipeTo(await handle.createWritable());
-      downloadNotice.value = `模板已保存：${handle.name}`;
-      return;
+      try {
+        await blob.stream().pipeTo(await handle.createWritable());
+        downloadNotice.value = `模板已保存：${handle.name}`;
+        downloadOpenHint.value = "打开刚才选择的保存文件夹，双击模板文件即可打开。";
+        return;
+      } catch (failure) {
+        if (!canFallbackTemplateDownload(failure)) throw failure;
+        fallback = true;
+      }
     }
     if (templateUrl.value) URL.revokeObjectURL(templateUrl.value);
     const url = URL.createObjectURL(blob),
@@ -266,7 +311,10 @@ async function downloadTemplate(event: MouseEvent) {
     button.after(link);
     link.click();
     link.remove();
-    downloadNotice.value = "模板已准备。若未开始下载，可点击下方保存文件。";
+    downloadNotice.value = fallback
+      ? "无法另存到所选位置，已改用浏览器下载。若未开始，可点击下方保存模板文件。"
+      : "模板已准备。若未开始下载，可点击下方保存文件。";
+    downloadOpenHint.value = "下载完成后，按 Ctrl+J 打开浏览器下载记录。点击文件名打开，或选择「在文件夹中显示」。";
   } catch (failure) {
     downloadNotice.value = "";
     if (failure instanceof DOMException && failure.name === "AbortError")
@@ -286,11 +334,24 @@ async function preflight() {
   if (busy.value || !file.value || !scope.value.length) return;
   busy.value = true;
   error.value = "";
+  progress.value = "";
   try {
-    if (!uploadObject.value) {
+    const selectedFile = file.value;
+    const singleNode = type.value === "EMPLOYEE" && localEmployeeWorkbook.value;
+    let workbook: string | undefined;
+    if (singleNode) {
+      if (selectedFile.size > 4 * 1024 * 1024)
+        throw new Error("员工 Excel 文件须在 4 MB 以内");
+      progress.value = "正在读取员工表";
+      const bytes = new Uint8Array(await selectedFile.arrayBuffer());
+      const sections: string[] = [];
+      for (let offset = 0; offset < bytes.length; offset += 32768)
+        sections.push(String.fromCharCode(...bytes.subarray(offset, offset + 32768)));
+      workbook = btoa(sections.join(""));
+    } else if (!uploadObject.value) {
       const upload = await uploadArchivePdf(
         scope.value[0],
-        file.value,
+        selectedFile,
         () => alive,
         (message) => (progress.value = message),
         "IMPORT_XLSX",
@@ -300,12 +361,31 @@ async function preflight() {
         await api<{ objectId: string }>(`/storage/upload-sessions/${upload}`)
       ).objectId;
     }
-    const body = {
-      importType: type.value,
-      uploadObjectId: uploadObject.value,
-      templateVersion: version.value,
-      departmentScope: scope.value,
-    };
+    const generatedEmployeeEmails: Record<number, string> = {};
+    if (type.value === "EMPLOYEE") {
+      const names = singleNode
+        ? await api<{ rowNo: number; name: string }[]>("/imports/employee-workbook/inspect", {
+            method: "POST",
+            headers: { "Content-Type": "application/octet-stream" },
+            body: selectedFile,
+          })
+        : await api<{ rowNo: number; name: string }[]>(
+            `/imports/employee-email-sources/${uploadObject.value}`,
+          );
+      for (const { rowNo, name } of names) {
+        const email = companyEmailFromName(name);
+        if (email && email.length <= 254) generatedEmployeeEmails[rowNo] = email;
+      }
+    }
+    const body = singleNode
+      ? { workbook, templateVersion: version.value, generatedEmployeeEmails }
+      : {
+          importType: type.value,
+          uploadObjectId: uploadObject.value,
+          templateVersion: version.value,
+          departmentScope: scope.value,
+          ...(type.value === "EMPLOYEE" ? { generatedEmployeeEmails } : {}),
+        };
     let batch: Batch;
     if (type.value === "ARCHIVE")
       batch = await api<Batch>("/imports/batches", {
@@ -314,10 +394,12 @@ async function preflight() {
         body: JSON.stringify(body),
       });
     else {
+      progress.value = "";
       const password = await ask("确认创建台账预检批次");
-      if (password === null) return;
+      if (password === null || !alive) return;
+      progress.value = "正在预检员工或部门数据";
       batch = await mutate<Batch>(
-        "/imports/batches",
+        singleNode ? "/imports/employee-workbook/batches" : "/imports/batches",
         "POST",
         body,
         COLLECTION,
@@ -331,9 +413,12 @@ async function preflight() {
     await select(batch);
     progress.value =
       batch.state === "READY"
-        ? "预检通过，请核对后确认导入。"
+        ? batch.importType === "EMPLOYEE" && batch.errorCount
+          ? `可导入 ${batch.rowCount - batch.errorCount} 条，失败 ${batch.errorCount} 条。确认时仅创建通过的账号。`
+          : "预检通过，请核对后确认导入。"
         : "预检发现问题，业务记录未创建。";
   } catch (e) {
+    progress.value = "";
     error.value = (e as Error).message;
   } finally {
     busy.value = false;
@@ -436,16 +521,20 @@ const listFilters = ref(recentWeekFilters("created"));
 </script>
 
 <template>
-  <section class="intake-page" :class="{ 'intake-embedded': archiveOnly }">
+  <section class="intake-page" :class="{ 'intake-embedded': archiveOnly || employeeOnly, 'employee-import': employeeOnly }">
     <header>
       <div>
-        <h2>{{ props.archiveOnly ? "档案盒与文件批量登记" : "批量导入" }}</h2>
-        <p>
+        <h2 v-if="!employeeOnly">{{ props.archiveOnly ? "档案盒与文件批量登记" : "批量导入" }}</h2>
+        <p v-if="type === 'ARCHIVE'">
           档案只新增，全部预检通过后才可提交。已导入目录仍须质量检查和独立归档复核。
         </p>
+        <p v-else-if="type === 'EMPLOYEE'">
+          所有员工共用一份模板。同一 Excel 可填写多个部门，所属部门按每行内容识别。
+        </p>
+        <p v-else>上传组织部门模板，核对预检结果后确认导入。</p>
       </div>
     </header>
-    <nav class="module-tabs import-tabs" aria-label="批量导入页面">
+    <nav v-if="!employeeOnly" class="module-tabs import-tabs" aria-label="批量导入页面">
       <button type="button" :class="{ selected: view === 'create' }"
         :aria-pressed="view === 'create'" :disabled="busy || downloading" @click="openCreate">
         批量导入
@@ -458,7 +547,7 @@ const listFilters = ref(recentWeekFilters("created"));
     <p v-if="error" role="alert" class="error">{{ error }}</p>
     <div class="workspace">
       <section v-show="view === 'create'" class="panel import-form" aria-label="建立导入批次">
-        <label
+        <label v-if="!employeeOnly"
           >导入类型<select v-model="type" :disabled="busy || downloading">
             <option v-for="item in types" :key="item.code" :value="item.code">
               {{ item.name }}
@@ -478,7 +567,7 @@ const listFilters = ref(recentWeekFilters("created"));
           所有部门共用同一模板。每行所属部门以 Excel
           内容为准，系统按当前登记权限核验。
         </p>
-        <label v-else
+        <label v-else-if="type === 'DEPARTMENT'"
           >批准的部门范围<select
             v-model="scope"
             multiple
@@ -490,7 +579,7 @@ const listFilters = ref(recentWeekFilters("created"));
             </option>
           </select></label
         >
-        <p v-if="type !== 'ARCHIVE'" class="hint">
+        <p v-if="type === 'DEPARTMENT'" class="hint">
           {{ selectedNames || "请选择至少一个部门" }}
         </p>
         <button
@@ -504,7 +593,7 @@ const listFilters = ref(recentWeekFilters("created"));
               ? "等待选择或保存…"
               : type === "ARCHIVE" && archiveFormat === "BOX_LEDGER"
                 ? "下载档案盒通用 Excel 模板"
-                : "下载当前 Excel 模板"
+                : type === "EMPLOYEE" ? "下载员工 Excel 模板" : "下载当前 Excel 模板"
           }}
         </button>
         <p v-if="downloadNotice" class="hint" role="status">
@@ -517,8 +606,12 @@ const listFilters = ref(recentWeekFilters("created"));
           :download="templateName"
           >保存模板文件</a
         >
+        <details v-if="type === 'EMPLOYEE' && downloadOpenHint" class="download-open-hint">
+          <summary>打开文件或所在文件夹</summary>
+          <p class="hint">{{ downloadOpenHint }}</p>
+        </details>
         <label
-          >台账文件<input
+          >{{ type === "EMPLOYEE" ? "上传 Excel 文件" : "台账文件" }}<input
             :key="`${type}-${archiveFormat}`"
             type="file"
             accept=".xlsx"
@@ -532,6 +625,10 @@ const listFilters = ref(recentWeekFilters("created"));
           沿用原表第 2、3 行中文表头，从第 4 行填写，每行登记一个档案盒。支持
           Excel 日期及原表到期日期公式，可保留“部门及档案负责人”参考表。
           保存类型填写纸质、电子或纸质+电子；含纸质时须在新增“纸质标签”列填写纸质原件、纸质复印件，两个标签用顿号分隔。
+        </p>
+        <p v-else-if="type === 'EMPLOYEE'" class="hint">
+          公司工号、姓名和所属部门必填，部门可填名称或编码。职位、手机号和直属主管可留空。主管可填在职或同批员工工号，姓名唯一时也可填写姓名。
+          联系邮箱可留空，公司邮箱留空时按姓名自动生成。支持 .xlsx，最多 1,000 行、{{ localEmployeeWorkbook ? 4 : 50 }} MB。
         </p>
         <p v-else class="hint">
           最多 1,000 行、50
@@ -547,9 +644,9 @@ const listFilters = ref(recentWeekFilters("created"));
         <p v-if="type === 'ARCHIVE' && archiveFormat === 'BOX_LEDGER'" class="hint">最多 1,000 条、50 MB。</p>
         <p role="status" class="hint">{{ progress }}</p>
         <details>
-          <summary>填写说明与目录模板</summary>
+          <summary>{{ type === "EMPLOYEE" ? "查看模板字段" : "填写说明与目录模板" }}</summary>
           <p v-for="column in columns" :key="column" class="column-note">
-            {{ column }}
+            {{ type === "EMPLOYEE" ? column.split("|")[1] : column }}
           </p>
           <p
             v-for="item in archiveFormat === 'STANDARD' ? templates : []"
@@ -622,7 +719,11 @@ const listFilters = ref(recentWeekFilters("created"));
                 <td>{{ dateTime(batch.createdAt) }}</td>
                 <td>{{ batch.rowCount }}</td>
                 <td>{{ batch.errorCount }}</td>
-                <td>{{ states[batch.state] }}</td>
+                <td>{{ batch.importType === "EMPLOYEE" && batch.errorCount && batch.state === "READY"
+                  ? "部分通过"
+                  : batch.importType === "EMPLOYEE" && batch.errorCount && batch.state === "CONFIRMED"
+                    ? "部分已导入"
+                    : states[batch.state] }}</td>
                 <td><button @click="select(batch)">查看</button></td>
               </tr>
               <tr v-if="!batches.length">
@@ -671,7 +772,10 @@ const listFilters = ref(recentWeekFilters("created"));
               ><input v-model="onlyErrors" type="checkbox" />只看错误</label
             >
           </div>
-          <p v-if="chosen.state === 'CONFIRMED'" class="success">
+          <p v-if="chosen.importType === 'EMPLOYEE' && chosen.state === 'CONFIRMED'" class="success">
+            已导入 {{ chosen.rowCount - chosen.errorCount }} 条，未导入 {{ chosen.errorCount }} 条。
+          </p>
+          <p v-else-if="chosen.state === 'CONFIRMED'" class="success">
             {{
               chosen.importType === "ARCHIVE"
                 ? "本批全部新增，等待人工质量检查与归档复核，尚未发布。"
@@ -697,6 +801,9 @@ const listFilters = ref(recentWeekFilters("created"));
                       row.input.rowKey ||
                       "模板结构"
                     }}
+                    <div v-if="chosen.importType === 'EMPLOYEE' && row.input.companyEmail" class="hint">
+                      {{ row.input.companyEmail }}
+                    </div>
                   </td>
                   <td>
                     <template v-if="row.errors.length"
@@ -705,7 +812,7 @@ const listFilters = ref(recentWeekFilters("created"));
                         :key="index"
                         class="error-text"
                       >
-                        {{ issue.field }}：{{ issue.message }}
+                        {{ chosen.importType === "EMPLOYEE" ? employeeColumnLabels.get(issue.field) || issue.field : issue.field }}：{{ issue.message }}
                       </p></template
                     ><span v-else>{{ states[row.result] || row.result }}</span>
                   </td>
@@ -755,7 +862,9 @@ const listFilters = ref(recentWeekFilters("created"));
             ><label class="check"
               ><input v-model="confirmed" type="checkbox" />{{
                 chosen.state === "READY"
-                  ? "我已核对本批人员、编号、原件及部门范围"
+                  ? chosen.importType === "EMPLOYEE"
+                    ? "我已核对预检结果，确认仅导入通过的员工"
+                    : "我已核对本批人员、编号、原件及部门范围"
                   : "我已确认本批新增资料尚未发布，并需要整体撤回"
               }}</label
             ><button
@@ -768,7 +877,11 @@ const listFilters = ref(recentWeekFilters("created"));
               @click="commit(chosen.state === 'CONFIRMED')"
             >
               {{
-                chosen.state === "READY" ? "确认整批导入" : "撤回本批新增档案"
+                chosen.state === "READY"
+                  ? chosen.importType === "EMPLOYEE"
+                    ? `导入通过的 ${chosen.rowCount - chosen.errorCount} 条`
+                    : "确认整批导入"
+                  : "撤回本批新增档案"
               }}
             </button>
           </div>
@@ -800,6 +913,11 @@ header p,
 }
 .import-form {
   width: min(100%, 720px);
+}
+.employee-import .import-form {
+  width: 100%;
+  padding: 4px 0 0;
+  border: 0;
 }
 .import-form select[multiple] {
   min-height: 112px;
@@ -938,6 +1056,13 @@ th {
 }
 details {
   margin-top: 20px;
+}
+.download-open-hint {
+  margin-top: 8px;
+  color: var(--brand);
+}
+.download-open-hint p {
+  margin: 6px 0 0;
 }
 summary {
   font-size: 13px;

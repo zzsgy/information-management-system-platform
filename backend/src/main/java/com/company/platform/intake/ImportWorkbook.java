@@ -15,9 +15,11 @@ public final class ImportWorkbook {
     public static final String VERSION="IMS-IMPORT-1";
     /** 实测 XLSX 的标准媒体类型。 */
     public static final String MEDIA="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+    /** 保留已下载的旧版四列表头，旧批次无需重填。 */
+    private static final List<String> LEGACY_EMPLOYEE_HEADERS=List.of("employeeNo|工号","name|姓名","departmentCode|部门编码","companyEmail|公司邮箱");
     /** 字段及中文含义，空白可选字段不会成为覆盖指令。 */
     private static final Map<String,String> HEADERS=Map.of(
-        "EMPLOYEE","employeeNo|工号,name|姓名,departmentCode|部门编码,companyEmail|公司邮箱",
+        "EMPLOYEE","employeeNo|公司工号,name|姓名,departmentCode|所属部门,jobTitle|职位,supervisorEmployeeNo|直属主管,mobilePhone|手机号,contactEmail|联系邮箱,companyEmail|公司邮箱",
         "DEPARTMENT","code|部门编码,name|部门名称,parentCode|上级部门编码,sortOrder|排序号",
         "ARCHIVE","objectType|BOX或RECORD,rowKey|本批稳定行号,boxKey|本批盒行号,boxNo|已有系统盒号,departmentCode|部门编码,title|题名,safeTitle|安全题名,classification|GENERAL或IMPORTANT或CORE,retentionCode|05或10或30或YJ,archiveDate|实际存档日期,numberMonth|编号月首日期,categoryCode|业务类别,carrierType|ELECTRONIC或PAPER或MIXED,ownerEmployeeNo|责任人工号,templateVersionId|目录模板版本标识,itemNo|盒内件号,location|原件位置,keywords|关键词以分号分隔,abstract|摘要,formedDate|形成日期,notes|备注,extensionValues|扩展字段JSON,originalNumber|原有编号");
     private ImportWorkbook() { }
@@ -29,6 +31,15 @@ public final class ImportWorkbook {
     public record Row(/** Excel 原行号。 */ int number,/** 列名到文本。 */ Map<String,Object> values) { }
     /** 类型检测只读取有界包结构，业务字段交由预检校验。 */
     public static boolean validContainer(Path path){try{parts(path);return true;}catch(Exception failure){return false;}}
+    /** 单机员工表只进入临时文件供受限解析，解析完成后立即删除。 */
+    static List<Row> readEmployeeWorkbook(byte[] bytes){
+        if(bytes.length==0||bytes.length>4*1024*1024)throw ApiFault.invalid("员工 Excel 文件须在 4 MB 以内");
+        try{
+            Path temporary=Files.createTempFile("ims-employee-import-",".xlsx");
+            try{Files.write(temporary,bytes);return read(temporary,"EMPLOYEE");}
+            finally{Files.deleteIfExists(temporary);}
+        }catch(IOException failure){throw ApiFault.protection();}
+    }
     /** 解析当前模板；编号和日期应使用文本格式以保留前导零及日历日期。 */
     public static List<Row> read(Path path,String type) {
         try {
@@ -39,10 +50,11 @@ public final class ImportWorkbook {
             if(entries.containsKey("xl/worksheets/sheet2.xml"))throw ApiFault.invalid("只有档案盒通用台账可附带人员参考表");
             List<Element> rows=elements(xml(entries.get("xl/worksheets/sheet1.xml")),"row");
             if(rows.size()>1002)throw ApiFault.invalid("每批台账最多 1000 行");
-            List<String> columns=headers(type);List<Row> result=new ArrayList<>();int last=0;
+            boolean employee=type.equals("EMPLOYEE"), headerSeen=false;
+            List<String> columns=headers(type);List<Row> result=new ArrayList<>();int last=0,headerRow=2;
             for(Element row:rows){
                 int number=Inputs.integer(row.getAttribute("r"),0,1,1002);if(number<=last)throw ApiFault.invalid("行号重复或乱序");last=number;
-                Map<Integer,String> cells=new TreeMap<>();
+                var cells=new TreeMap<Integer,String>();
                 for(Element cell:elements(row,"c")){
                     String ref=cell.getAttribute("r");if(!ref.matches("[A-Z]{1,2}"+number))throw ApiFault.invalid("单元格坐标不一致");
                     int column=0;for(char letter:ref.replaceAll("[0-9]", "").toCharArray())column=column*26+letter-'A'+1;
@@ -53,13 +65,27 @@ public final class ImportWorkbook {
                     else if(!Set.of("","n","str","inlineStr").contains(kind))throw ApiFault.invalid("请使用文本单元格");
                     if(value.length()>20000)throw ApiFault.invalid("单元格超过长度上限");cells.put(column,value.trim());
                 }
-                if(number==1){if(!Objects.equals(cells.get(1),VERSION+":"+type)||cells.size()!=1)throw ApiFault.invalid("模板版本或类型不匹配");}
-                else if(number==2){for(int c=0;c<columns.size();c++)if(!columns.get(c).equals(cells.get(c+1)))throw ApiFault.invalid("模板列名或顺序已变化");}
+                if(number==1){
+                    if(Objects.equals(cells.get(1),VERSION+":"+type)&&cells.size()==1)continue;
+                    if(!employee)throw ApiFault.invalid("模板版本或类型不匹配");
+                    headerRow=1;
+                }
+                if(number==headerRow){
+                    List<String> actual=new ArrayList<>(cells.values());
+                    if(cells.isEmpty()||cells.lastKey()!=cells.size())throw ApiFault.invalid("模板列名或顺序已变化");
+                    // 已下载的八列模板写作“直属主管工号”，字段含义相同。
+                    if(employee&&actual.size()==columns.size()&&actual.get(4).equals("直属主管工号"))actual.set(4,"直属主管");
+                    if(employee&&headerRow==2&&actual.equals(LEGACY_EMPLOYEE_HEADERS))columns=LEGACY_EMPLOYEE_HEADERS;
+                    else if(!actual.equals(displayHeaders(type,columns)))
+                        throw ApiFault.invalid("模板列名或顺序已变化");
+                    headerSeen=true;
+                }
                 else if(cells.values().stream().anyMatch(value->!value.isBlank())){
                     Map<String,Object> values=new LinkedHashMap<>();for(int c=0;c<columns.size();c++){String value=cells.get(c+1);if(value!=null&&!value.isBlank())values.put(columns.get(c).split("\\|")[0],value);}result.add(new Row(number,values));
                 }
             }
-            if(rows.size()<2||!rows.get(0).getAttribute("r").equals("1")||!rows.get(1).getAttribute("r").equals("2")||result.isEmpty())throw ApiFault.invalid("模板缺少标题或有效数据行");
+            if(result.size()>1000)throw ApiFault.invalid("每批台账最多 1000 行");
+            if(!headerSeen||!rows.get(0).getAttribute("r").equals("1")||result.isEmpty())throw ApiFault.invalid("模板缺少标题或有效数据行");
             return result;
         }catch(ApiFault fault){throw fault;}catch(Exception failure){throw ApiFault.invalid("XLSX 结构损坏或不受支持，请使用当前模板");}
     }
@@ -74,10 +100,17 @@ public final class ImportWorkbook {
             put(zip,"xl/workbook.xml","<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"导入台账\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
             put(zip,"xl/_rels/workbook.xml.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>");
             StringBuilder sheet=new StringBuilder("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
-            appendRow(sheet,1,List.of(VERSION+":"+type(type)));appendRow(sheet,2,headers(type));
-            for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+3,headers(type).stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
+            int headerRow=type.equals("EMPLOYEE")?1:2;
+            List<String> columns=headers(type);
+            if(headerRow==2)appendRow(sheet,1,List.of(VERSION+":"+type));
+            appendRow(sheet,headerRow,displayHeaders(type,columns));
+            for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
             put(zip,"xl/worksheets/sheet1.xml",sheet.append("</sheetData></worksheet>").toString());zip.finish();return bytes.toByteArray();
         }catch(IOException failure){throw ApiFault.protection();}
+    }
+    /** 员工模板使用与添加表单对应的中文表头，其他类型保留原契约。 */
+    private static List<String> displayHeaders(String type,List<String> columns){
+        return type.equals("EMPLOYEE")?columns.stream().map(column->column.substring(column.indexOf('|')+1)).toList():columns;
     }
     /** 包内文件不释放到磁盘；每项 20MiB、总量 32MiB、最多 128 项。 */
     static Map<String,byte[]> parts(Path path) throws Exception {

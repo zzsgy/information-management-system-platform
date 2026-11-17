@@ -74,7 +74,7 @@ export interface MeetingDetail extends MeetingSummary {
   materialAuthor?: { name: string; department: string };
   trackFollowUp: boolean;
   shareAll: boolean | null;
-  liveNotes?: string | null;
+  liveDecisions?: string | null;
   rowVersion: number;
   actualStartedAt: string | null;
   actualEndedAt: string | null;
@@ -129,6 +129,7 @@ export function meetingInstant(value: string) {
 
 export const materialLabels = {
   REPORT: "工作汇报",
+  WEEKLY_PLAN: "本周计划",
   TOPICS: "会议议题",
   COORDINATION: "部门协调事宜",
 } as const;

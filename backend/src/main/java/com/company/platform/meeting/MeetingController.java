@@ -78,6 +78,14 @@ public class MeetingController {
         return saved(meeting, r);
     }
 
+    /** 进行中的会议只允许发起人保存决议。 */
+    @PutMapping("/meetings/{id}/live-decisions")
+    public Map<String, Object> liveDecisions(@PathVariable String id, @RequestBody Map<String, Object> body, HttpServletRequest r) {
+        UUID meeting = Inputs.uuid(id);
+        bookings.saveLiveDecisions(actor(r), meeting, body);
+        return saved(meeting, r);
+    }
+
     @PostMapping("/meetings/{id}/cancel")
     public Map<String, Object> cancel(@PathVariable String id, @RequestBody Map<String, Object> body, HttpServletRequest r) {
         UUID meeting = Inputs.uuid(id);

@@ -415,22 +415,28 @@ onUnmounted(() => {
   </section>
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <p v-if="notice" class="drive-notice" role="status">{{ notice }}</p>
-  <div class="drive-layout">
-    <aside class="panel drive-sidebar">
-      <h2>资料目录</h2>
-      <button class="drive-root" @click="back(-1)">
+  <div>
+    <nav class="module-tabs" aria-label="企业公盘视图">
+      <button
+        type="button"
+        :class="{ active: !recycle }"
+        :aria-pressed="!recycle"
+        @click="back(-1)"
+      >
         <Icon name="file" :size="18" />企业公盘
       </button>
       <button
-        class="drive-folder"
+        type="button"
+        :class="{ active: recycle }"
+        :aria-pressed="recycle"
         @click="
           recycle = true;
           detailId = '';
         "
       >
-        <Icon name="file" :size="18" />回收站
+        <Icon name="trash" :size="18" />回收站
       </button>
-    </aside>
+    </nav>
     <section class="panel drive-files">
       <DriveRecycle v-if="recycle" @changed="load" />
       <template v-else>
@@ -706,7 +712,6 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-/* 电脑端两栏留白布局；阅读器独立占满工作区，不增加手机端分支。 */
 .file-name {
   border: 0;
   background: none;
@@ -735,42 +740,6 @@ onUnmounted(() => {
   border-radius: 30px;
   padding: 8px 12px;
   font-size: 13px;
-}
-.drive-layout {
-  display: grid;
-  grid-template-columns: 208px minmax(0, 1fr);
-  gap: 24px;
-  min-height: 360px;
-}
-.drive-sidebar {
-  padding: 24px 18px;
-  align-self: start;
-}
-.drive-sidebar h2 {
-  font-size: 15px;
-  margin: 0 8px 22px;
-}
-.drive-root,
-.drive-folder {
-  border: 0;
-  background: transparent;
-  display: flex;
-  gap: 12px;
-  width: 100%;
-  align-items: center;
-  text-align: left;
-  padding: 14px 12px;
-  border-radius: 10px;
-  font-size: 14px;
-  color: var(--ink);
-  cursor: pointer;
-}
-.drive-root {
-  background: var(--surface-muted);
-  font-weight: 600;
-}
-.drive-folder:hover {
-  background: var(--surface-muted);
 }
 .drive-files {
   padding: 20px 24px;

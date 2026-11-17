@@ -379,7 +379,41 @@ class IntakeIntegrationTest {
     /** 已发布对象和包含其他批次成员的盒不能被通用撤回带走。 */
     @Test void withdrawalRejectsPublishedAndOutsideMembers()throws Exception{var first=confirm(preflight("ARCHIVE",archivistB,List.of(boxRow())),"ARCHIVE",archivistB);UUID box=imported((UUID)first.get("id"),"BOX");approve(review(archivistB,"BOX",box,null));UUID id=(UUID)first.get("id");assertThrows(ApiFault.class,()->imports.withdraw(context(archivistB,"IMPORT_BATCH",id,"WITHDRAW_IMPORT",2),id,Sql.map("reason","不得撤已发布")));assertEquals("PUBLISHED",db.required("SELECT state FROM archive.box WHERE id=?",box).get("state"));}
     /** 员工工号、单部门和公司邮箱都由领域重新验证；口令不出现在批次结果。 */
-    @Test void employeeImportDeliversCredentialsPrivately()throws Exception{String no="IMPORT-"+UUID.randomUUID();var row=Sql.map("employeeNo",no,"name","合成员工","departmentCode",db.required("SELECT code FROM iam.department WHERE id=?",b).get("code"),"companyEmail",no.toLowerCase()+"@biolink.com");var batch=confirm(preflight("EMPLOYEE",admin,List.of(row)),"EMPLOYEE",admin);UUID id=(UUID)batch.get("id");assertEquals("ALL_CREATED",batch.get("outcome"));assertEquals(1,db.count("SELECT count(*) FROM iam.user_account WHERE employee_no=? AND password_setup_required",no));assertFalse(Crypto.json(imports.rows(admin,id,Map.of())).contains("password"));assertThrows(ApiFault.class,()->imports.withdraw(context(admin,"IMPORT_BATCH",id,"WITHDRAW_IMPORT",2),id,Sql.map("reason","禁止通用删除")));}
+    @Test void employeeImportDeliversCredentialsPrivately() throws Exception {
+        String no="IMPORT-"+UUID.randomUUID();
+        UUID root=(UUID)imports.options(admin,"EMPLOYEE").get("employeeImportScopeId");
+        db.update("UPDATE iam.service_identity SET department_scope=array_append(department_scope,?) WHERE id=?",root,platformScanner);
+        UUID manager=people.get("managerA");
+        var row=Sql.map("employeeNo",no,"name","合成员工",
+            "departmentCode",db.required("SELECT code FROM iam.department WHERE id=?",b).get("code"),
+            "jobTitle","工程师","supervisorEmployeeNo","AR-"+manager,"mobilePhone","+86 13800000000",
+            "contactEmail","contact@example.com");
+        String departmentName="导入验收部门-"+UUID.randomUUID();
+        db.update("UPDATE iam.department SET name=? WHERE id=?",departmentName,a);
+        var other=Sql.map("employeeNo",no+"-A","name","合成员工乙",
+            "departmentCode",departmentName,
+            "jobTitle","职员","supervisorEmployeeNo","AR-"+manager,"mobilePhone","+86 13800000001",
+            "companyEmail",no.toLowerCase()+"-a@biolink.com");
+        var workbook=ImportWorkbook.workbook("EMPLOYEE",List.of(row,other));
+        String generatedEmail=no.toLowerCase()+"@biolink.com";
+        var checked=preflight("EMPLOYEE",admin,workbook,List.of(root),Map.of("2",generatedEmail));
+        assertEquals("READY",checked.get("state"),()->Crypto.json(imports.rows(admin,(UUID)checked.get("id"),Map.of())));
+        var batch=confirm(checked,"EMPLOYEE",admin);
+        UUID id=(UUID)batch.get("id");
+        assertEquals("ALL_CREATED",batch.get("outcome"));
+        assertEquals(1,db.count("SELECT count(*) FROM iam.user_account WHERE employee_no=? AND password_setup_required",no));
+        var user=db.required("SELECT department_id,organization_name,job_title,supervisor_id,mobile_phone,contact_email FROM iam.user_account WHERE employee_no=?",no);
+        assertEquals(b,user.get("department_id"));
+        assertEquals("百林科（兰州）新材料有限公司",user.get("organization_name"));
+        assertEquals("工程师",user.get("job_title"));
+        assertEquals(manager,user.get("supervisor_id"));
+        assertEquals("+86 13800000000",user.get("mobile_phone"));
+        assertEquals("contact@example.com",user.get("contact_email"));
+        assertEquals(generatedEmail,db.required("SELECT company_email FROM iam.user_account WHERE employee_no=?",no).get("company_email"));
+        assertEquals(a,db.required("SELECT department_id FROM iam.user_account WHERE employee_no=?",no+"-A").get("department_id"));
+        assertFalse(Crypto.json(imports.rows(admin,id,Map.of())).contains("password"));
+        assertThrows(ApiFault.class,()->imports.withdraw(context(admin,"IMPORT_BATCH",id,"WITHDRAW_IMPORT",2),id,Sql.map("reason","禁止通用删除")));
+    }
     /** 部门乱序可以按依赖创建；本批环和重复编码必须在预检阶段报告。 */
     @Test void departmentTreeOrderedAndCycleRejected()throws Exception{String parent="P"+UUID.randomUUID().toString().substring(0,7).toUpperCase(),child="C"+UUID.randomUUID().toString().substring(0,7).toUpperCase();var batch=confirm(preflight("DEPARTMENT",admin,List.of(Sql.map("code",child,"name","子部门","parentCode",parent),Sql.map("code",parent,"name","父部门"))),"DEPARTMENT",admin);assertEquals("CONFIRMED",batch.get("state"));assertEquals(1,db.count("SELECT count(*) FROM iam.department c JOIN iam.department p ON p.id=c.parent_id WHERE c.code=? AND p.code=?",child,parent));String x="X"+child.substring(1),y="Y"+parent.substring(1);assertEquals("INVALID",preflight("DEPARTMENT",admin,List.of(Sql.map("code",x,"name","环甲","parentCode",y),Sql.map("code",y,"name","环乙","parentCode",x))).get("state"));}
     /** 部分接收、重发相同分片和重复回执只形成一个 PDF 候选；合格仍是草稿。 */
@@ -422,7 +456,29 @@ class IntakeIntegrationTest {
     /** 真实分片上传、合并和原生病毒检测后预检，不直接构造 READY 对象。 */
     private Map<String,Object> preflight(String type,Actor actor,List<Map<String,Object>> rows)throws Exception{return preflight(type,actor,ImportWorkbook.workbook(type,rows),List.of(b));}
     /** 上传真实字节、技术检测和批次预检共用同一流程，中文台账不绕过文件服务。 */
-    private Map<String,Object> preflight(String type,Actor actor,byte[] bytes,List<UUID> scope)throws Exception{evidence(false);UUID upload=(UUID)uploads.create(actor,Sql.map("module",type.equals("ARCHIVE")?"ARCHIVE":"PLATFORM","businessContextId",b.toString(),"purpose","IMPORT_XLSX","originalName","合成台账.xlsx","expectedSize",bytes.length,"expectedSha256",hash(bytes),"expectedMediaType",ImportWorkbook.MEDIA),UUID.randomUUID(),UUID.randomUUID()).get("uploadId");uploads.part(actor,upload,1,"bytes 0-"+(bytes.length-1)+"/"+bytes.length,bytes.length,hash(bytes),new ByteArrayInputStream(bytes),UUID.randomUUID());UUID job=(UUID)uploads.complete(actor,upload,Sql.map("partCount",1,"finalSha256",hash(bytes)),UUID.randomUUID(),UUID.randomUUID()).get("jobId");assembly.assemble(actor,job,UUID.randomUUID());inspection.inspect(actor,job,UUID.randomUUID());UUID object=(UUID)uploads.get(actor,upload).get("objectId");return imports.create(type.equals("ARCHIVE")?plain(actor,"CREATE_IMPORT"):context(actor,"IMPORT_BATCH",ApiController.COLLECTION,"CREATE_IMPORT",null),Sql.map("importType",type,"uploadObjectId",object.toString(),"templateVersion",ImportWorkbook.VERSION,"departmentScope",scope.stream().map(UUID::toString).toList()));}
+    private Map<String,Object> preflight(String type,Actor actor,byte[] bytes,List<UUID> scope)throws Exception{
+        return preflight(type,actor,bytes,scope,Map.of());
+    }
+    private Map<String,Object> preflight(String type,Actor actor,byte[] bytes,List<UUID> scope,Map<String,String> generatedEmails)throws Exception{
+        evidence(false);
+        UUID upload=(UUID)uploads.create(actor,Sql.map("module",type.equals("ARCHIVE")?"ARCHIVE":"PLATFORM",
+            "businessContextId",type.equals("EMPLOYEE")?scope.getFirst().toString():b.toString(),
+            "purpose","IMPORT_XLSX","originalName","合成台账.xlsx","expectedSize",bytes.length,
+            "expectedSha256",hash(bytes),"expectedMediaType",ImportWorkbook.MEDIA),UUID.randomUUID(),UUID.randomUUID()).get("uploadId");
+        uploads.part(actor,upload,1,"bytes 0-"+(bytes.length-1)+"/"+bytes.length,bytes.length,hash(bytes),new ByteArrayInputStream(bytes),UUID.randomUUID());
+        UUID job=(UUID)uploads.complete(actor,upload,Sql.map("partCount",1,"finalSha256",hash(bytes)),UUID.randomUUID(),UUID.randomUUID()).get("jobId");
+        assembly.assemble(actor,job,UUID.randomUUID());
+        inspection.inspect(actor,job,UUID.randomUUID());
+        UUID object=(UUID)uploads.get(actor,upload).get("objectId");
+        var body=Sql.map("importType",type,"uploadObjectId",object.toString(),"templateVersion",ImportWorkbook.VERSION,
+            "departmentScope",scope.stream().map(UUID::toString).toList());
+        if(!generatedEmails.isEmpty()){
+            assertEquals(List.of(Sql.map("rowNo",2,"name","合成员工")),imports.employeeEmailSources(actor,object));
+            body.put("generatedEmployeeEmails",generatedEmails);
+        }
+        return imports.create(type.equals("ARCHIVE")?plain(actor,"CREATE_IMPORT"):
+            context(actor,"IMPORT_BATCH",ApiController.COLLECTION,"CREATE_IMPORT",null),body);
+    }
     private Map<String,Object> confirm(Map<String,Object> batch,String type,Actor actor){UUID id=(UUID)batch.get("id");return imports.confirm(context(actor,"IMPORT_BATCH",id,"CONFIRM_IMPORT",((Number)batch.get("rowVersion")).intValue()),id,Sql.map("validationDigest",batch.get("validationDigest")));}
     private UUID imported(UUID batch,String type){return (UUID)db.required("SELECT object_id FROM ops.import_row WHERE batch_id=? AND object_type=?",batch,type).get("object_id");}
     /** 每个测试独立设备、固定清单和原件取出记录。 */

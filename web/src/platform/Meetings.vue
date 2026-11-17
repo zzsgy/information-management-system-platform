@@ -9,7 +9,8 @@ import MeetingEditor from "./MeetingEditor.vue";
 import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingMaterialForm from "./MeetingMaterialForm.vue";
 import MeetingMinutes from "./MeetingMinutes.vue";
-import MeetingLiveNotes from "./MeetingLiveNotes.vue";
+import MeetingLiveDecision from "./MeetingLiveDecision.vue";
+import { vNumbered } from "./meetingNumbered";
 import {
   materialLabels,
   reportMarkup,
@@ -69,14 +70,14 @@ async function openCancellation() {
   }
 }
 
-const liveNotes =
-  useTemplateRef<InstanceType<typeof MeetingLiveNotes>>("liveNotes");
+const liveDecision =
+  useTemplateRef<InstanceType<typeof MeetingLiveDecision>>("liveDecision");
 
 async function closeDetail() {
   if (busy.value) return;
   busy.value = true;
   try {
-    if (!liveNotes.value || (await liveNotes.value.flush()))
+    if (!liveDecision.value || (await liveDecision.value.flush()))
       location.hash = "#/meetings";
   } finally {
     busy.value = false;
@@ -87,6 +88,7 @@ const params = computed(
 );
 const meetingId = computed(() => params.value.get("id") ?? "");
 const itemId = computed(() => params.value.get("item") ?? "");
+const creating = computed(() => !meetingId.value && !itemId.value && params.value.get("new") === "1");
 /** 配置页只由管理中心进入，会议室接口仍按现有管理权限鉴权。 */
 const configuring = computed(() => props.route === "meeting-config");
 const roomDialog = ref<HTMLDialogElement>();
@@ -98,7 +100,7 @@ function closeRoom() {
 }
 const materialForms =
   useTemplateRef<InstanceType<typeof MeetingMaterialForm>[]>("materialForms");
-const materialOrder: MaterialKind[] = ["REPORT", "TOPICS", "COORDINATION"];
+const materialOrder: MaterialKind[] = ["REPORT", "WEEKLY_PLAN", "TOPICS", "COORDINATION"];
 const formKinds = computed(() =>
   materialOrder.filter((kind) => detail.value?.materialTypes?.includes(kind)),
 );
@@ -110,7 +112,7 @@ const own = computed(() =>
 const summaryTypes = computed<MaterialKind[]>(() =>
   detail.value?.shareAll === true ||
   detail.value?.organizerId === profile.value?.user.id
-    ? (detail.value?.materialTypes ?? []).filter((kind) => kind !== "REPORT")
+    ? (detail.value?.materialTypes ?? []).filter((kind) => kind === "TOPICS" || kind === "COORDINATION")
     : [],
 );
 const submissions = computed(
@@ -169,7 +171,7 @@ watch(
           "/meetings?page=" + page.value,
         );
       }
-      if (current) await refresh();
+      if (current && !creating.value) await refresh();
     } catch (e) {
       if (current) error.value = (e as Error).message;
     } finally {
@@ -213,19 +215,15 @@ async function act(
   }
 }
 
-async function saved() {
-  const message = meetingId.value ? "会议安排已保存" : "会议已发布";
-  finishMeetingAction(message);
-  // 新建本来就在列表路由，关闭弹窗后需要主动刷新。
-  if (!meetingId.value) {
-    try {
-      await refresh();
-    } catch (e) {
-      error.value = (e as Error).message;
-    }
-  }
+function saved() {
+  finishMeetingAction(meetingId.value ? "会议安排已保存" : "会议已发布");
 }
-/** 回复和填写内容通过同一个事务提交，接口失败时保留弹窗里的输入。 */
+
+function cancelEditor() {
+  if (creating.value) location.hash = "#/meetings";
+  else editor.value = false;
+}
+
 async function acceptMeeting(id: string) {
   if (busy.value) return;
   let materials;
@@ -259,7 +257,7 @@ async function changeMeetingPhase(action: "start" | "end") {
   busy.value = true;
   error.value = "";
   try {
-    if (action === "end" && liveNotes.value && !(await liveNotes.value.flush()))
+    if (action === "end" && liveDecision.value && !(await liveDecision.value.flush()))
       return;
     await api("/meetings/" + id + "/" + action, { method: "POST" });
     inform(message);
@@ -356,7 +354,7 @@ function replyLabel(reply?: string) {
     class="platform-page-content meeting-page"
     :class="{ 'room-management': configuring }"
   >
-    <header class="meeting-actions meeting-spread">
+    <header v-if="!creating" class="meeting-actions meeting-spread">
       <div class="meeting-page-title">
         <span v-if="!configuring" class="flow-dialog-icon" aria-hidden="true"
           ><Icon name="calendar" :size="23"
@@ -372,7 +370,7 @@ function replyLabel(reply?: string) {
         >
           <Icon name="plus" :size="16" />新增会议室
         </button>
-        <button
+        <a
           v-if="
             options?.canCreate &&
             !editor &&
@@ -381,10 +379,10 @@ function replyLabel(reply?: string) {
             !configuring
           "
           class="primary"
-          @click="editor = true"
+          href="#/meetings?new=1"
         >
           <Icon name="plus" :size="16" />发起会议
-        </button>
+        </a>
       </div>
     </header>
     <p
@@ -395,15 +393,16 @@ function replyLabel(reply?: string) {
       {{ error }}
     </p>
     <MeetingEditor
-      v-if="editor && options"
+      v-if="options && ((creating && options.canCreate) || editor)"
       :key="detail?.id ?? 'new'"
       :detail="detail"
       :options="options"
       @saved="saved"
-      @cancel="editor = false"
+      @cancel="cancelEditor"
     />
 
     <p v-if="loading" role="status">加载中</p>
+    <p v-else-if="creating && options && !options.canCreate" role="alert">你没有发起会议的权限。<a href="#/meetings">返回会议列表</a></p>
 
     <section v-else-if="configuring" class="room-panel" aria-label="会议室列表">
       <header class="room-panel-head">
@@ -484,7 +483,7 @@ function replyLabel(reply?: string) {
           "
         >
           <label
-            >落实情况<textarea
+            >落实情况<textarea v-numbered
               v-model="feedback"
               required
               maxlength="8000"
@@ -527,7 +526,7 @@ function replyLabel(reply?: string) {
           "
         >
           <label
-            >退回原因<textarea
+            >退回原因<textarea v-numbered
               v-model="returnReason"
               required
               maxlength="1000"
@@ -540,7 +539,7 @@ function replyLabel(reply?: string) {
     </template>
 
     <section
-      v-else-if="!itemId && !configuring && results"
+      v-else-if="!creating && !itemId && !configuring && results"
       class="room-panel booking-list"
       aria-label="我的会议"
     >
@@ -688,7 +687,7 @@ function replyLabel(reply?: string) {
           summaryTypes.length ||
           detail.minutes?.materialTables?.length ||
           (detail.canSubmitMaterials &&
-            formKinds.some((kind) => kind !== 'REPORT')),
+            formKinds.some((kind) => kind === 'TOPICS' || kind === 'COORDINATION')),
       }"
       aria-labelledby="meeting-detail-title"
       @cancel.prevent="closeDetail"
@@ -767,7 +766,7 @@ function replyLabel(reply?: string) {
               "
             >
               <label
-                >取消原因<textarea
+                >取消原因<textarea v-numbered
                   ref="cancelInput"
                   v-model="reason"
                   required
@@ -789,7 +788,7 @@ function replyLabel(reply?: string) {
               "
             >
               <label
-                >不能参加的理由<textarea
+                >不能参加的理由<textarea v-numbered
                   ref="declineInput"
                   v-model="replyReason"
                   required
@@ -891,6 +890,7 @@ function replyLabel(reply?: string) {
                       class="meeting-text"
                       v-html="reportMarkup(material.data.html ?? '')"
                     ></div>
+                    <p v-else-if="material.kind === 'WEEKLY_PLAN'" class="meeting-text">{{ material.data.text }}</p>
                     <ol v-else>
                       <li
                         v-for="(row, index) in material.data.rows"
@@ -955,10 +955,10 @@ function replyLabel(reply?: string) {
           >
             <h3>会前汇报与议题</h3>
             <label
-              >汇报信息<textarea v-model="report" rows="4" maxlength="4000" />
+              >汇报信息<textarea v-numbered v-model="report" rows="4" maxlength="4000" />
             </label>
             <label
-              >会议议题<textarea v-model="topics" rows="4" maxlength="4000" />
+              >会议议题<textarea v-numbered v-model="topics" rows="4" maxlength="4000" />
             </label>
             <button
               class="primary"
@@ -967,16 +967,16 @@ function replyLabel(reply?: string) {
               提交材料
             </button>
           </form>
-          <MeetingLiveNotes
+          <MeetingLiveDecision
             v-if="detail.canEnd"
-            ref="liveNotes"
+            ref="liveDecision"
             :meeting-id="detail.id"
-            :initial="detail.liveNotes ?? null"
+            :initial="detail.liveDecisions ?? null"
             :disabled="busy"
           />
-          <section v-else-if="detail.liveNotes" class="flow-dialog-section">
-            <h3>会议记录</h3>
-            <p class="meeting-text">{{ detail.liveNotes }}</p>
+          <section v-else-if="detail.liveDecisions" class="flow-dialog-section">
+            <h3>会议决议</h3>
+            <p class="meeting-text">{{ detail.liveDecisions }}</p>
           </section>
           <MeetingMinutes
             v-if="detail.canWriteMinutes && options"
@@ -1138,6 +1138,34 @@ function replyLabel(reply?: string) {
 </template>
 
 <style>
+/* 新建会议页取消工作台的固定桌面最小宽度，其他业务页面沿用原布局。 */
+.platform-shell:has(.booking-create-page) {
+  min-width: 0;
+}
+@media (max-width: 960px) {
+  .platform-shell:has(.booking-create-page) > .topbar {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 8px;
+  }
+  .platform-shell:has(.booking-create-page) > .topbar > * {
+    grid-column: 1;
+    grid-row: auto;
+    min-width: 0;
+  }
+  .platform-shell:has(.booking-create-page) > .topbar > .account-actions {
+    justify-self: start;
+    flex-wrap: wrap;
+    white-space: normal;
+  }
+}
+@media (max-width: 640px) {
+  .platform-shell:has(.booking-create-page) {
+    --page-gutter: 12px;
+  }
+  .platform-shell:has(.booking-create-page) > .topbar {
+    position: static;
+  }
+}
 .material-results {
   display: grid;
   gap: 5px;

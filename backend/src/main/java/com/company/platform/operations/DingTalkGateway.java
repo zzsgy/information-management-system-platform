@@ -14,7 +14,7 @@ import java.util.*;
 public class DingTalkGateway {
     private final String endpoint,secret,portal;
     private final HttpClient client=HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(5)).followRedirects(HttpClient.Redirect.NEVER).build();
-    public DingTalkGateway(Environment env){endpoint=env.getProperty("platform.messaging.dingtalk.webhook","");secret=env.getProperty("platform.messaging.dingtalk.secret","");portal=env.getProperty("platform.messaging.portal-url","https://127.0.0.1:18443/platform.html");
+    public DingTalkGateway(Environment env){endpoint=env.getProperty("platform.messaging.dingtalk.webhook","");secret=env.getProperty("platform.messaging.dingtalk.secret","");portal=env.getProperty("platform.messaging.portal-url","https://127.0.0.1:18443/");
         if(!endpoint.isBlank()){URI uri=URI.create(endpoint);boolean local=env.getProperty("platform.messaging.dingtalk.local-test",Boolean.class,false)&&env.getProperty("platform.isolation-confirmed",Boolean.class,false)&&"http".equals(uri.getScheme())&&Set.of("127.0.0.1","localhost","::1").contains(uri.getHost());if(!local&&!("https".equals(uri.getScheme())&&"oapi.dingtalk.com".equals(uri.getHost())&&"/robot/send".equals(uri.getPath())))throw new IllegalArgumentException("钉钉地址必须为官方机器人接口");if(secret.isBlank())throw new IllegalArgumentException("钉钉机器人必须配置加签密钥");}}
     public String mode(){return endpoint.isBlank()?"DISABLED":"DINGTALK";}
     /** 业务响应errcode为0才确认接受；未知网络结果不盲目重发。 */

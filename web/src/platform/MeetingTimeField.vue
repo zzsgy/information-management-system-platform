@@ -115,6 +115,14 @@ function openCalendar(event: MouseEvent) {
   min-width: 0;
   padding-inline: 6px;
 }
+@media (max-width: 420px) {
+  .meeting-time-fields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .meeting-time-fields label:first-child {
+    grid-column: 1 / -1;
+  }
+}
 .sr-only {
   position: absolute;
   width: 1px;

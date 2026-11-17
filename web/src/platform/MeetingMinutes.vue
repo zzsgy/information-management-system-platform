@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { api } from "./api";
+import { vNumbered } from "./meetingNumbered";
 import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
 import {
@@ -91,15 +92,11 @@ async function save(submit: boolean) {
       :submissions="draft.materialTables"
     />
     <label>
-      工作汇报汇总
-      <textarea v-model="minutes.materialsText" rows="7" />
+      会前材料汇总
+      <textarea v-numbered v-model="minutes.materialsText" rows="7" />
     </label>
     <label
-      >会议记录 <small>选填</small
-      ><textarea v-model="minutes.notes" maxlength="12000" rows="5" />
-    </label>
-    <label
-      >会议决议<textarea
+      >会议决议<textarea v-numbered
         v-model="minutes.decisions"
         :required="publish"
         maxlength="12000"
@@ -108,7 +105,7 @@ async function save(submit: boolean) {
     </label>
     <fieldset v-if="meeting.shareAll == null" class="meeting-fieldset">
       <legend>发布后的共享范围</legend>
-      <details class="minutes-readers">
+      <details v-if="minutes.notes" class="minutes-readers">
         <summary>
           会议记录共享对象 · 已选 {{ minutes.noteReaderIds.length }} 人
         </summary>
@@ -177,7 +174,7 @@ async function save(submit: boolean) {
       >
         <legend>事项 {{ index + 1 }}</legend>
         <label
-          >事项内容<textarea
+          >事项内容<textarea v-numbered
             v-model="item.content"
             required
             maxlength="4000"
