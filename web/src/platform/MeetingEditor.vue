@@ -188,7 +188,7 @@ async function save() {
       </header>
 
       <div :class="original ? 'flow-dialog-body' : 'booking-create-body'">
-        <section class="flow-dialog-section">
+        <section class="flow-dialog-section booking-schedule">
           <h3>会议安排</h3>
           <div class="flow-dialog-fields booking-fields">
             <label v-if="!original" class="booking-wide">
@@ -251,10 +251,11 @@ async function save() {
                 >会议说明
                 <small v-if="data.roomId !== 'OTHER'">选填</small></span
               >
-              <textarea v-numbered
+              <textarea
+                v-numbered
                 v-model="data.description"
                 maxlength="2000"
-                rows="2"
+                :rows="original ? 2 : 4"
                 :required="data.roomId === 'OTHER'"
                 :placeholder="
                   data.roomId === 'OTHER' ? '请填写具体会议地点' : undefined
@@ -266,7 +267,7 @@ async function save() {
 
         <section
           v-if="!original || data.kind === 'WEEKLY'"
-          class="flow-dialog-section"
+          class="flow-dialog-section booking-workflow"
         >
           <h3>会议流程</h3>
           <div v-if="!original" class="booking-options">
@@ -288,22 +289,24 @@ async function save() {
               <input v-model="data.urgent" type="checkbox" />紧急会议
             </label>
           </div>
-          <label class="booking-check">
-            <input
-              v-model="data.shareAll"
-              type="checkbox"
-            />向所有受邀员工共享会议全部内容
-          </label>
-          <p>
-            共享后，受邀员工可查看彼此的回复、会前材料、会中决议、纪要和会后反馈。
-          </p>
-          <p>会议结束后须填写并发布纪要。</p>
-          <p v-if="!original && materialTypes.length">
-            选中的会前材料将发给所有受邀员工。
-          </p>
-          <p v-if="!original && materialTypes.includes('WEEKLY_PLAN')">
-            受邀员工须先填写本周计划，才能提交并参加。
-          </p>
+          <div class="booking-sharing">
+            <label class="booking-check">
+              <input
+                v-model="data.shareAll"
+                type="checkbox"
+              />向所有受邀员工共享会议全部内容
+            </label>
+            <p>共享后，受邀员工可查看彼此的回复、会前材料、会中决议、纪要和会后反馈。</p>
+          </div>
+          <div class="booking-flow-hints">
+            <p v-if="!original && materialTypes.includes('WEEKLY_PLAN')">
+              受邀员工须先填写本周计划，才能提交并参加。
+            </p>
+            <p v-else-if="!original && materialTypes.length">
+              选中的会前材料将发给所有受邀员工。
+            </p>
+            <p>会议结束后须填写并发布纪要。</p>
+          </div>
         </section>
 
         <section class="flow-dialog-section booking-people">
@@ -381,23 +384,92 @@ async function save() {
 </template>
 
 <style scoped>
-/* 发起页面在工作台内容区正常滚动，窄屏时间字段分行。 */
-.booking-create-page { max-width: 860px; margin: 0 auto; }
-.booking-back { display: inline-block; color: var(--brand); margin-bottom: 14px; }
-.booking-create-form {
-  border: 1px solid var(--line); border-radius: 14px; background: #fff;
+/* 分栏由工作台实际内容宽度决定，展开左侧导航也能正常重排。 */
+.booking-create-page {
+  container-name: booking;
+  container-type: inline-size;
+  width: 100%;
+  min-width: 0;
 }
-.booking-create-header, .booking-create-footer {
-  display: flex; align-items: center; gap: 12px; padding: 18px 24px;
+.booking-back {
+  display: inline-block;
+  color: var(--brand);
 }
-.booking-create-header { border-bottom: 1px solid var(--line); }
-.booking-create-header h1 { margin: 0; font-size: 23px; }
-.booking-create-body { padding: 0 24px; }
-.booking-create-body > section { padding: 18px 0; }
-.booking-create-footer { border-top: 1px solid var(--line); justify-content: flex-end; flex-wrap: wrap; }
+.booking-create-header,
+.booking-create-footer {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.booking-create-header {
+  padding-block: 16px 20px;
+}
+.booking-create-header h1 {
+  margin: 0;
+  font-size: clamp(22px, 2.1vw, 30px);
+}
+.booking-create-body {
+  display: grid;
+  gap: 18px;
+}
+.booking-create-body > section {
+  align-content: start;
+  padding: clamp(16px, 2vw, 30px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface, #fff);
+}
+.booking-create-body > section > h3 {
+  font-size: 17px;
+  margin-bottom: 4px;
+}
+.booking-create-page .booking-options {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr));
+  gap: 8px;
+}
+.booking-create-page .booking-options .booking-check {
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.booking-create-page .booking-options .booking-check:has(input:checked) {
+  background: var(--brand-soft);
+  border-color: var(--brand);
+}
+.booking-sharing,
+.booking-flow-hints {
+  display: grid;
+  gap: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+.booking-create-page .booking-sharing {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.booking-create-footer {
+  margin-top: 16px;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+.booking-create-footer .primary {
+  min-width: 112px;
+}
+@container booking (min-width: 1050px) {
+  .booking-create-body {
+    grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr);
+    grid-template-rows: auto 1fr;
+    grid-template-areas:
+      "schedule workflow"
+      "schedule people";
+  }
+  .booking-schedule { grid-area: schedule; }
+  .booking-workflow { grid-area: workflow; }
+  .booking-people { grid-area: people; }
+}
 @media (max-width: 640px) {
-  .booking-create-header, .booking-create-footer { padding-inline: 14px; }
-  .booking-create-body { padding-inline: 14px; }
   .booking-create-body .booking-fields { grid-template-columns: minmax(0, 1fr); }
 }
 

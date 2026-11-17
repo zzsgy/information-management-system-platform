@@ -352,7 +352,7 @@ function replyLabel(reply?: string) {
 <template>
   <div
     class="platform-page-content meeting-page"
-    :class="{ 'room-management': configuring }"
+    :class="{ 'room-management': configuring, 'meeting-create': creating }"
   >
     <header v-if="!creating" class="meeting-actions meeting-spread">
       <div class="meeting-page-title">
@@ -1176,7 +1176,7 @@ function replyLabel(reply?: string) {
   color: var(--brand);
 }
 
-.meeting-page:not(.room-management) {
+.meeting-page:not(.room-management, .meeting-create) {
   max-width: 1180px;
   width: 100%;
   margin-inline: auto;
