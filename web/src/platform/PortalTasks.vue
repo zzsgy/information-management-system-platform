@@ -77,15 +77,7 @@ async function load(keepRows = false) {
     const data = await api<Page<Item>>(
       `/portal/${props.inbox ? "inbox" : "dashboard-tasks"}?${query({ page: page.value, pageSize: pageSize.value, ...(props.inbox ? { unreadOnly: filter.value || "false", ...listFilters.value } : { category: props.compact && !filter.value ? "RECENT" : filter.value, ...listFilters.value }) })}`,
     );
-    // 全部预览只在服务端选出的最新五条中把未办放前，保持各组时间顺序。
-    items.value =
-      props.compact && !props.inbox && !filter.value
-        ? [...data.items].sort(
-            (a, b) =>
-              Number(a.category === "COMPLETED") -
-              Number(b.category === "COMPLETED"),
-          )
-        : data.items;
+    items.value = data.items;
     total.value = data.total;
   } catch (e) {
     error.value = (e as Error).message;
@@ -291,10 +283,8 @@ function switchFilter(value: string) {
         }}</strong>
         <span
           v-if="compact && !inbox"
-          class="status-badge compact-task-status"
-          :class="{ pending: item.category !== 'COMPLETED' }"
-          >{{ ["INVITE_EXPIRED", "INVITE_CANCELLED", "MATERIAL_EXPIRED", "MATERIAL_CANCELLED", "MEETING_CANCELLED"].includes(item.state)
-            ? "已关闭" : item.category === "COMPLETED" ? "已处理" : "未处理" }}</span
+          class="status-badge compact-task-status pending"
+          >未处理</span
         >
         <small v-if="!inbox && item.source === 'MEETING'">
           {{ meetingTaskStates[item.state] || (item.category === "COMPLETED" ? "已处理" : "待办理") }}

@@ -97,11 +97,11 @@ public class PortalWork {
         var args=new ArrayList<Object>();
         String category=query.getOrDefault("category","");
         boolean completed=category.equals("COMPLETED");
-        // 完整列表的全部和工作台预览都合并已办、未办，分别保留各自排序。
+        // 完整列表保留已办，工作台预览在分页前只取未完成的事项。
         boolean all=category.isEmpty();
         boolean recent=category.equals("RECENT");
         String sources=taskSources(actor,args);
-        if((all||completed||recent)&&actor.actions().contains("ARCHIVE.ACCESS")){
+        if((all||completed)&&actor.actions().contains("ARCHIVE.ACCESS")){
             // 以实际提交的决定识别已办，详情仍沿用节点当前授权。
             sources+=" UNION ALL "+"""
                     SELECT s.id, CASE w.business_type
@@ -121,7 +121,8 @@ public class PortalWork {
         }
         String from=" FROM ("+sources+") t WHERE true";
         if(category.equals("ASSIGNED")) from+=" AND t.source='ASSIGNED' AND t.category<>'COMPLETED'";
-        else if(!all&&!recent){
+        else if(recent) from+=" AND t.category<>'COMPLETED'";
+        else if(!all){
             from+=" AND t.category=?";
             args.add(Inputs.choice(category,"APPROVAL","HANDLING","PERSONAL","COMPLETED"));
         }
@@ -129,7 +130,7 @@ public class PortalWork {
             .dates("listed",completed?"t.completed_at":"coalesce(t.completed_at,t.created_at,t.due_at)").sql();
         // 已办按办结时间，未办按创建或来源时间；审批节点的提醒时间比进入待办晚一天。
         String order=recent
-            ?"COALESCE(t.completed_at,t.created_at,CASE WHEN t.source='SYSTEM' AND t.category='APPROVAL' THEN t.due_at-interval '24 hours' ELSE t.due_at END) DESC NULLS LAST,t.id"
+            ?"COALESCE(t.created_at,CASE WHEN t.source='SYSTEM' AND t.category='APPROVAL' THEN t.due_at-interval '24 hours' ELSE t.due_at END) DESC NULLS LAST,t.id"
             :completed?"t.completed_at DESC NULLS LAST,t.id"
             :all?"(t.category='COMPLETED'),t.due_at NULLS LAST,coalesce(t.completed_at,t.created_at) DESC NULLS LAST,t.id"
             :"t.due_at NULLS LAST,t.created_at DESC NULLS LAST,t.id";

@@ -83,24 +83,25 @@ class PortalIntegrationTest {
         assertEquals(401,client.send(desktopRequest,HttpResponse.BodyHandlers.discarding()).statusCode());
         assertNull(reminders.web(employee).get("item"));
     }
-    /** 工作台跨状态统一取五条，已办排在较早的未办前，其他员工记录不能占用名额。 */
+    /** 工作台在分页前排除已办，完成的事项仍可从本人历史查询。 */
     @Test @org.springframework.transaction.annotation.Transactional
-    void workspaceRecentTodosIncludeBothStatesWithinFive(){
+    void workspaceRecentTodosExcludeCompletedBeforePagination(){
         var expected=new ArrayList<UUID>();
         UUID completed=null;
         for(int index=0;index<11;index++){
             UUID id=(UUID)todos.create(employee,UUID.randomUUID(),UUID.randomUUID(),Sql.map("title","预览验收 "+index)).get("id");
             db.update("UPDATE portal.employee_todo SET created_at=CURRENT_TIMESTAMP-(? * interval '1 minute') WHERE id=?",11-index,id);
             if(index==0)todos.transition(todoContext(employee,1),id,Sql.map("action","COMPLETE"));
-            else if(index>=7)expected.addFirst(id);
+            else if(index>=6)expected.addFirst(id);
             if(index==0)completed=id;
         }
         todos.create(other,UUID.randomUUID(),UUID.randomUUID(),Sql.map("title","其他员工的待办"));
-        expected.addFirst(completed);
-        var rows=items(work.tasks(employee,Map.of("category","RECENT","pageSize","5")));
+        var preview=work.tasks(employee,Map.of("category","RECENT","pageSize","5"));
+        var rows=items(preview);
         assertEquals(expected,rows.stream().map(row->row.get("id")).toList());
-        assertEquals("COMPLETED",rows.getFirst().get("category"));
-        assertEquals("PERSONAL",rows.getLast().get("category"));
+        assertEquals(10L,preview.get("total"));
+        assertTrue(rows.stream().allMatch(row->"PERSONAL".equals(row.get("category"))));
+        assertEquals(completed,items(work.tasks(employee,Map.of("category","COMPLETED"))).getFirst().get("id"));
     }
 
     @Test @org.springframework.transaction.annotation.Transactional
