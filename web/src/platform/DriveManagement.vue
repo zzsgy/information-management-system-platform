@@ -388,7 +388,7 @@ onMounted(load);
             "
           >
             <h3><Icon name="people" :size="18" />委托当前部门负责人</h3>
-            <p class="muted">IT配置动作上界，内容管理仍由当前负责人执行。</p>
+            <p class="muted">在任公盘负责人默认可向本部门目录上传。这里配置其他管理和员工授权范围。</p>
             <div class="choices">
               <label v-for="(label, key) in labels" :key="key"
                 ><input
