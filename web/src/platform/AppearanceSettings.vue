@@ -13,7 +13,7 @@ const dialog = ref<HTMLDialogElement>();
     </header>
     <div class="appearance-options" role="radiogroup" aria-label="主题配色">
       <label v-for="theme in appearanceThemes" :key="theme.id" class="appearance-option"
-        :class="{ selected: appearanceTheme === theme.id }"
+        :class="{ selected: appearanceTheme === theme.id }" :data-preview="theme.id"
         :style="{ '--preview-brand': theme.primary, '--preview-soft': theme.soft }">
         <span class="appearance-preview" aria-hidden="true">
           <span class="preview-top"></span><span class="preview-nav"></span>
@@ -40,6 +40,12 @@ const dialog = ref<HTMLDialogElement>();
 .appearance-option:focus-within { outline: 2px solid var(--brand); outline-offset: 3px; }
 .appearance-name { display: flex; align-items: center; gap: 8px; color: var(--ink); font-weight: 600; }
 .appearance-preview { display: grid; grid-template-columns: 25% 1fr; grid-template-rows: 20px 85px; gap: 8px; padding: 10px; border-radius: 6px; background: #f1f4f8; }
+/* 纸色主题的预览同步展示暖背景和金色导航。 */
+.appearance-option[data-preview="paper"] .appearance-preview { background: #faf8f5; }
+.appearance-option[data-preview="paper"] .preview-top,
+.appearance-option[data-preview="paper"] .preview-content { background: #fffdf9; }
+.appearance-option[data-preview="paper"] .preview-nav { border-top-color: #b8860b; }
+.appearance-option[data-preview="paper"] .preview-content i { background: #f5f0e8; }
 .preview-top { grid-column: 1 / -1; border-radius: 3px; background: white; }
 .preview-nav { border-top: 12px solid var(--preview-brand); border-radius: 3px; background: var(--preview-soft); }
 .preview-content { display: grid; gap: 7px; padding: 9px; border-radius: 3px; background: white; }

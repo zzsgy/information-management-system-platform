@@ -1,4 +1,4 @@
-/* 通用蓝白灰为默认，各主题只替换强调色，业务状态使用独立语义色。 */
+/* 通用蓝白灰为默认；纸色主题同时调整底色和强调色，业务状态使用独立语义色。 */
 :root, :root[data-theme="blue"] {
   --brand: #2563eb; --brand-hover: #1d4ed8; --brand-soft: #eff6ff;
   --ink: #243247; --text-secondary: #64748b; --muted: var(--text-secondary);
@@ -28,3 +28,43 @@ body { background: var(--canvas); color: var(--ink); }
 .platform-shell :is(.form-error, .danger), dialog .form-error { color: var(--danger); }
 /* 已提交材料采用柔和按钮，保留本次内容是否已保存的视觉反馈。 */
 .platform-shell .material-submit.submitted-unchanged { background: var(--brand-soft); color: var(--text-secondary); border-color: var(--line); box-shadow: none; }
+
+/* 暖纸墨金：深墨蓝承担主要操作，金色用于选中状态及导航细节。 */
+:root[data-theme="paper"] {
+  --brand: #1a1a2e;
+  --brand-hover: #2d2d44;
+  --brand-soft: #f5ead6;
+  --ink: #1a1a2e;
+  --text-secondary: #4a4a5a;
+  --canvas: #faf8f5;
+  --surface: #fffdf9;
+  --surface-muted: #f5f0e8;
+  --line: #e7dfd2;
+  --paper-gold: #b8860b;
+  --paper-gold-text: #866109;
+  --focus-ring: #b8860b26;
+  --shadow: 0 2px 8px #1a1a2e06;
+}
+:root[data-theme="paper"] .platform-shell :is(.management-nav-group a.active, .portal-filters .selected, .portal-tabs .selected, .workspace-back) {
+  color: var(--paper-gold-text);
+  background: var(--brand-soft);
+}
+:root[data-theme="paper"] .platform-shell :is(.module-tabs > button.selected, .module-tabs > button.active) {
+  color: var(--paper-gold-text);
+  border-bottom-color: var(--paper-gold);
+}
+:root[data-theme="paper"] .platform-shell :is(.eyebrow, .management-nav-group a.active::before) {
+  color: var(--paper-gold-text);
+}
+:root[data-theme="paper"] .platform-shell .secondary,
+:root[data-theme="paper"] dialog .secondary {
+  border-color: #d7bf89;
+  color: var(--ink);
+  background: var(--surface);
+}
+:root[data-theme="paper"] :is(input, select, textarea):focus {
+  border-color: var(--paper-gold);
+}
+:root[data-theme="paper"] :is(button, a):focus-visible {
+  outline-color: var(--paper-gold);
+}
