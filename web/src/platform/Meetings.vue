@@ -201,14 +201,13 @@ async function act(
   body: object,
   success: string,
   method = "POST",
-  stay = false,
 ) {
   if (busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     await api(path, { method, body: JSON.stringify(body) });
-    if (configuring.value || stay) {
+    if (configuring.value) {
       roomEditing.value = false;
       inform(success);
       await refresh();
@@ -236,9 +235,7 @@ async function acceptMeeting(id: string) {
   await act(
     "/meetings/" + id + "/reply",
     { decision: "ACCEPTED" },
-    "已回复参加",
-    "POST",
-    true,
+    "已参加",
   );
 }
 /** 开始后留在详情查看材料，结束后滚动到纪要编辑区。 */
@@ -824,143 +821,6 @@ function replyLabel(reply?: string) {
               </label>
               <button class="primary" :disabled="busy">提交回复</button>
             </form>
-          </section>
-
-          <div class="detail-tools">
-            <section class="flow-dialog-section detail-attendees" aria-labelledby="meeting-attendees-title">
-              <header class="meeting-actions meeting-spread">
-                <h2 id="meeting-attendees-title">
-                  受邀员工
-                  <span class="booking-count">{{ detail.attendees.length }} 人</span>
-                </h2>
-                <div v-if="(organizer && detail.canStart) || detail.readingRevision" class="meeting-actions">
-                  <button
-                    v-if="organizer && detail.canStart"
-                    type="button"
-                    class="secondary"
-                    :disabled="busy"
-                    @click="reloadDetail()"
-                  >
-                    刷新提交与阅读状态
-                  </button>
-                  <MeetingReading
-                    v-if="detail.readingRevision"
-                    :key="detail.id"
-                    :meeting-id="detail.id"
-                    :revision="detail.readingRevision"
-                    :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
-                    @saved="reloadDetail"
-                    @stale="reloadDetail"
-                  />
-                </div>
-              </header>
-              <ul class="meeting-history">
-                <li
-                  v-for="person in detail.attendees"
-                  :key="person.userId"
-                  class="booking-person"
-                >
-                  <div class="booking-person-name">
-                    <span aria-hidden="true" class="booking-avatar">{{
-                      person.name.slice(-1)
-                    }}</span>
-                    <strong>{{ person.name }}</strong
-                    ><span class="booking-count">{{ person.employeeNo }}</span>
-                  </div>
-                  <template v-if="person.reply">
-                    <span>
-                      · {{ replyLabel(person.reply)
-                      }}<template
-                        v-if="
-                          person.reply === 'PENDING' &&
-                          detail.state !== 'SCHEDULED'
-                        "
-                        >（{{
-                          detail.state === "CANCELLED"
-                            ? "会议已取消"
-                            : "回复已截止"
-                        }}）</template
-                      >
-                    </span>
-                    <p v-if="person.declineReason" class="meeting-text">
-                      {{ person.declineReason }}
-                    </p>
-                  </template>
-                  <small v-if="person.readingRequired">
-                    {{ person.readMaterialAt ? "资料已确认阅读 · " + portalTime(person.readMaterialAt) : "会前资料待确认" }}
-                  </small>
-                  <template v-if="person.materialRequired && detail.materialTypes == null">
-                    <small v-if="person.materialAt"
-                      >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
-                    >
-                    <small
-                      v-else-if="
-                        detail.kind === 'WEEKLY' || person.reply !== 'DECLINED'
-                      "
-                      >未提交会前材料</small
-                    >
-                  </template>
-                  <div
-                    v-if="detail.materialTypes && person.materials"
-                    class="material-results"
-                  >
-                    <p
-                      v-if="
-                        (organizer || person.userId === own?.userId) &&
-                        person.reply !== 'DECLINED' &&
-                        detail.materialTypes.length > 0 &&
-                        person.materials.length < detail.materialTypes.length
-                      "
-                      class="booking-count"
-                    >
-                      未提交
-                      {{
-                        missingMaterials(detail.materialTypes, person.materials)
-                      }}
-                    </p>
-                    <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
-                      && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
-                    <details
-                      v-for="material in person.materials.filter(
-                        (entry) =>
-                          entry.kind === 'REPORT' ||
-                          !summaryTypes.includes(entry.kind),
-                      )"
-                      :key="material.kind"
-                    >
-                      <summary>
-                        {{ materialLabels[material.kind] }} ·
-                        {{ portalTime(material.submittedAt) }}
-                      </summary>
-                      <p class="booking-count">
-                        {{ material.data.author.name }} ·
-                        {{ material.data.author.department }}
-                      </p>
-                      <RichTextView
-                        v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
-                        class="meeting-text" :value="material.data.text" :html="material.data.html"
-                      />
-                      <ol v-else>
-                        <li
-                          v-for="(row, index) in material.data.rows"
-                          :key="index"
-                        >
-                          <strong>{{ row.subject }}</strong>
-                          <p class="meeting-text">期望结果 {{ row.expected }}</p>
-                          <small v-if="row.department">{{ row.department }}</small>
-                        </li>
-                      </ol>
-                    </details>
-                  </div>
-                  <div v-if="person.report" class="material-results">
-                    <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
-                  </div>
-                  <div v-if="person.topics" class="material-results">
-                    <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
-                  </div>
-                </li>
-              </ul>
-            </section>
             <MeetingWorkbookPanel
               v-if="organizer"
               :key="detail.id"
@@ -969,7 +829,142 @@ function replyLabel(reply?: string) {
               :can-import="detail.canStart && !!detail.materialTypes?.length"
               @imported="reloadDetail"
             />
-          </div>
+          </section>
+
+          <section class="flow-dialog-section detail-attendees" aria-labelledby="meeting-attendees-title">
+            <header class="meeting-actions meeting-spread">
+              <h2 id="meeting-attendees-title">
+                受邀员工
+                <span class="booking-count">{{ detail.attendees.length }} 人</span>
+              </h2>
+              <div v-if="(organizer && detail.canStart) || detail.readingRevision" class="meeting-actions">
+                <button
+                  v-if="organizer && detail.canStart"
+                  type="button"
+                  class="secondary"
+                  :disabled="busy"
+                  @click="reloadDetail()"
+                >
+                  刷新提交与阅读状态
+                </button>
+                <MeetingReading
+                  v-if="detail.readingRevision"
+                  :key="detail.id"
+                  :meeting-id="detail.id"
+                  :revision="detail.readingRevision"
+                  :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
+                  @saved="reloadDetail"
+                  @stale="reloadDetail"
+                />
+              </div>
+            </header>
+            <ul class="meeting-history">
+              <li
+                v-for="person in detail.attendees"
+                :key="person.userId"
+                class="booking-person"
+              >
+                <div class="booking-person-name">
+                  <span aria-hidden="true" class="booking-avatar">{{
+                    person.name.slice(-1)
+                  }}</span>
+                  <strong>{{ person.name }}</strong
+                  ><span class="booking-count">{{ person.employeeNo }}</span>
+                </div>
+                <template v-if="person.reply">
+                  <span>
+                    · {{ replyLabel(person.reply)
+                    }}<template
+                      v-if="
+                        person.reply === 'PENDING' &&
+                        detail.state !== 'SCHEDULED'
+                      "
+                      >（{{
+                        detail.state === "CANCELLED"
+                          ? "会议已取消"
+                          : "回复已截止"
+                      }}）</template
+                    >
+                  </span>
+                  <p v-if="person.declineReason" class="meeting-text">
+                    {{ person.declineReason }}
+                  </p>
+                </template>
+                <small v-if="person.readingRequired">
+                  {{ person.readMaterialAt ? "资料已确认阅读 · " + portalTime(person.readMaterialAt) : "会前资料待确认" }}
+                </small>
+                <template v-if="person.materialRequired && detail.materialTypes == null">
+                  <small v-if="person.materialAt"
+                    >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
+                  >
+                  <small
+                    v-else-if="
+                      detail.kind === 'WEEKLY' || person.reply !== 'DECLINED'
+                    "
+                    >未提交会前材料</small
+                  >
+                </template>
+                <div
+                  v-if="detail.materialTypes && person.materials"
+                  class="material-results"
+                >
+                  <p
+                    v-if="
+                      (organizer || person.userId === own?.userId) &&
+                      person.reply !== 'DECLINED' &&
+                      detail.materialTypes.length > 0 &&
+                      person.materials.length < detail.materialTypes.length
+                    "
+                    class="booking-count"
+                  >
+                    未提交
+                    {{
+                      missingMaterials(detail.materialTypes, person.materials)
+                    }}
+                  </p>
+                  <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
+                    && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
+                  <details
+                    v-for="material in person.materials.filter(
+                      (entry) =>
+                        entry.kind === 'REPORT' ||
+                        !summaryTypes.includes(entry.kind),
+                    )"
+                    :key="material.kind"
+                  >
+                    <summary>
+                      {{ materialLabels[material.kind] }} ·
+                      {{ portalTime(material.submittedAt) }}
+                    </summary>
+                    <p class="booking-count">
+                      {{ material.data.author.name }} ·
+                      {{ material.data.author.department }}
+                    </p>
+                    <RichTextView
+                      v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
+                      class="meeting-text" :value="material.data.text" :html="material.data.html"
+                    />
+                    <ol v-else>
+                      <li
+                        v-for="(row, index) in material.data.rows"
+                        :key="index"
+                      >
+                        <strong>{{ row.subject }}</strong>
+                        <p class="meeting-text">期望结果 {{ row.expected }}</p>
+                        <small v-if="row.department">{{ row.department }}</small>
+                      </li>
+                    </ol>
+                  </details>
+                </div>
+                <div v-if="person.report" class="material-results">
+                  <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
+                </div>
+                <div v-if="person.topics" class="material-results">
+                  <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
+                </div>
+              </li>
+            </ul>
+          </section>
           <MeetingMaterialSummary
             v-if="summaryTypes.length && !detail.minutes"
             :types="summaryTypes"
@@ -1475,15 +1470,13 @@ function replyLabel(reply?: string) {
   font-size: clamp(22px, 2.2vw, 30px);
   overflow-wrap: anywhere;
 }
-.meeting-detail-body,
-.detail-tools {
+.meeting-detail-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
   gap: 16px;
   align-items: start;
 }
-.meeting-detail-body > :is(.flow-dialog-section, .meeting-section),
-.detail-tools > .flow-dialog-section {
+.meeting-detail-body > :is(.flow-dialog-section, .meeting-section) {
   padding: clamp(14px, 1.5vw, 22px);
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -1491,7 +1484,7 @@ function replyLabel(reply?: string) {
   min-width: 0;
 }
 .meeting-detail-body > .flow-dialog-section > :is(h2, h3),
-.detail-tools :is(.detail-attendees, .detail-workbook) :is(h2, h3) {
+.detail-attendees > header > h2 {
   font-size: 16px;
 }
 .meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, .material-form) {
@@ -1519,7 +1512,7 @@ function replyLabel(reply?: string) {
   margin: 4px 0 0;
   overflow-wrap: anywhere;
 }
-.detail-overview > .meeting-text {
+.detail-overview > :is(.meeting-text, .detail-workbook) {
   padding-top: 12px;
   border-top: 1px solid var(--line);
 }
@@ -1529,11 +1522,6 @@ function replyLabel(reply?: string) {
   }
   .detail-period {
     grid-column: auto;
-  }
-}
-@container meeting-detail (min-width: 980px) {
-  .detail-tools:has(.detail-workbook) {
-    grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
   }
 }
 .meeting-page {

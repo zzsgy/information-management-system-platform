@@ -35,7 +35,19 @@ function addRow() {
 }
 const error = ref("");
 const busy = ref(false);
-const saved = ref(false);
+/** 四类材料共用提交快照，行编号仅用于渲染，不参与内容判断。 */
+const contentSignature = computed(() => JSON.stringify(
+  props.kind === "REPORT" || props.kind === "WEEKLY_PLAN"
+    ? narrative.value
+    : rows.value.map(({ subject, expected, departmentId, category, support }) => ({
+        subject, expected,
+        ...(props.kind === "COORDINATION" ? { departmentId, category, support } : {}),
+      })),
+));
+const submittedSignature = ref(props.existing ? contentSignature.value : null);
+const submittedUnchanged = computed(() =>
+  submittedSignature.value !== null && contentSignature.value === submittedSignature.value,
+);
 const checkedRows = ref(false);
 const subjectLabel = computed(() => props.kind === "TOPICS" ? "议题" : "具体事宜");
 /** 先保留界面行号，再忽略空行，确保提示能对应到原表。 */
@@ -74,17 +86,17 @@ function collect() {
 async function submit() {
   busy.value = true;
   error.value = "";
-  saved.value = false;
   try {
     checkedRows.value = true;
     if (rowErrors.value.length) return;
     const material = collect();
     if (!material) throw new Error("请填写材料后提交");
+    const submittedContent = contentSignature.value;
     await api("/meetings/" + props.meetingId + "/materials", {
       method: "PUT",
       body: JSON.stringify(material),
     });
-    saved.value = true;
+    submittedSignature.value = submittedContent;
     emit("saved");
   } catch (e) {
     error.value = (e as Error).message;
@@ -226,10 +238,15 @@ async function submit() {
       </div>
     </template>
     <div class="meeting-actions">
-      <button type="button" class="primary" :disabled="busy" @click="submit">
+      <button type="button" class="primary material-submit"
+        :class="{ 'submitted-unchanged': submittedUnchanged }"
+        :disabled="busy" @click="submit">
         提交{{ materialLabels[kind] }}
       </button>
-      <small v-if="saved" role="status">已提交</small>
+      <small v-if="submittedSignature !== null"
+        class="material-submitted-status"
+        :class="{ current: submittedUnchanged }"
+        role="status">已提交</small>
     </div>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
     <div v-if="checkedRows && rowErrors.length" class="form-error" role="alert">
@@ -239,6 +256,21 @@ async function submit() {
 </template>
 
 <style scoped>
+.material-submit.submitted-unchanged {
+  background: var(--brand-soft);
+  border-color: var(--line);
+  color: var(--text-secondary);
+  box-shadow: none;
+}
+.material-submitted-status {
+  color: var(--text-secondary);
+  opacity: 0.55;
+}
+.material-submitted-status.current {
+  color: var(--ink);
+  font-weight: 600;
+  opacity: 1;
+}
 .material-author {
   color: var(--text-secondary);
   font-size: 13px;

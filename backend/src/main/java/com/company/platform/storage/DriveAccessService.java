@@ -13,12 +13,19 @@ public class DriveAccessService {
     public DriveAccessService(Sql db,IdentityService identity,DriveFilePolicy policy,StorageBoundaries protection,Commands commands) {this.db=db;this.identity=identity;this.policy=policy;this.protection=protection;this.commands=commands;}
     /** 只允许公盘IT基础管理者，不由平台角色推导权限。 */
     private void it(Actor actor) {actor.require("DRIVE.ROLES_MANAGE");if(!actor.systemAdministrator() && actor.roles().stream().noneMatch(r->"DRIVE".equals(r.get("module"))&&"IT_ADMIN".equals(r.get("code")))) throw ApiFault.denied();}
-    /** 顶层按部门唯一；子目录继承父区和部门，必须处于负责人有效委托内。 */
+    /** 顶层只登记目录元数据，由公盘 IT 创建；子目录继承父区和部门，受写入保护和有效委托约束。 */
     public Map<String,Object> folder(Commands.Context ctx,Map<String,Object> body) {
         Inputs.only(body,"parentId","zone","departmentId","name");String name=Inputs.text(body,"name",128);
         if(name.contains("/")||name.contains("\\")||name.chars().anyMatch(Character::isISOControl)) throw ApiFault.invalid("目录名称不合法");
         UUID parent=body.get("parentId")==null?null:Inputs.uuid(body.get("parentId"));
-        return commands.run(ctx,body,"DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",()->{protection.requireWritable("DRIVE","CREATE_FOLDER");if(parent==null) it(ctx.actor());else manager(ctx.actor(),parent,"FOLDER_MANAGE",null);},()->{
+        return commands.run(ctx,body,"DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",()->{
+            if(parent==null) {
+                it(ctx.actor());
+            } else {
+                protection.requireWritable("DRIVE","CREATE_FOLDER");
+                manager(ctx.actor(),parent,"FOLDER_MANAGE",null);
+            }
+        },()->{
             String zone=Inputs.choice(body.get("zone"),"COMPANY_SHARED","DEPARTMENT_SHARED","DEPARTMENT_INTERNAL");UUID department=body.get("departmentId")==null?null:Inputs.uuid(body.get("departmentId"));
             if(parent!=null) {var row=policy.requireFolder(ctx.actor(),parent,"FOLDER_MANAGE");if(!Objects.equals(department,row.get("department_id"))||!zone.equals(row.get("zone"))) throw ApiFault.invalid("子目录须继承部门与分区");}
             if(department==null && (!zone.equals("COMPANY_SHARED")||parent!=null)) throw ApiFault.invalid("请指定目录所属部门");

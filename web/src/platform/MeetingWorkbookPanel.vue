@@ -107,36 +107,38 @@ async function importMaterials() {
 
 <template>
   <section class="flow-dialog-section">
-    <h3>会议 Excel</h3>
-    <div class="meeting-actions">
-      <a
-        v-if="canImport"
-        class="secondary"
-        :href="'/api/v1' + path + 'template'"
-        download
-        >下载填报模板</a
-      >
-      <a class="secondary" :href="'/api/v1' + path + 'summary'" download
-        >导出会议汇总</a
-      >
-    </div>
-    <div v-if="canImport" class="meeting-actions workbook-upload">
-      <input
-        aria-label="选择会议填报 Excel"
-        type="file"
-        accept=".xlsx"
-        :disabled="busy"
-        @change="choose"
-      />
-      <button
-        class="secondary"
-        type="button"
-        :disabled="!file || busy"
-        @click="inspect"
-      >
-        预览导入
-      </button>
-    </div>
+    <header class="workbook-toolbar">
+      <h3>会议 Excel</h3>
+      <div class="meeting-actions">
+        <a
+          v-if="canImport"
+          class="secondary"
+          :href="'/api/v1' + path + 'template'"
+          download
+          >下载填报模板</a
+        >
+        <a class="secondary" :href="'/api/v1' + path + 'summary'" download
+          >导出会议汇总</a
+        >
+      </div>
+      <div v-if="canImport" class="meeting-actions workbook-upload">
+        <input
+          aria-label="选择会议填报 Excel"
+          type="file"
+          accept=".xlsx"
+          :disabled="busy"
+          @change="choose"
+        />
+        <button
+          class="secondary"
+          type="button"
+          :disabled="!file || busy"
+          @click="inspect"
+        >
+          预览导入
+        </button>
+      </div>
+    </header>
     <template v-if="preview">
       <ul v-if="preview.errors.length" class="form-error" role="alert">
         <li v-for="problem in preview.errors" :key="problem">{{ problem }}</li>
@@ -179,7 +181,7 @@ async function importMaterials() {
         </li>
       </ul>
       <button
-        class="primary"
+        class="primary workbook-confirm"
         type="button"
         :disabled="busy || !!preview.errors.length || !preview.materials.length"
         @click="importMaterials"
@@ -193,11 +195,29 @@ async function importMaterials() {
 </template>
 
 <style scoped>
+.workbook-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+.workbook-toolbar h3 {
+  font-size: 15px;
+}
+.workbook-upload {
+  flex: 1 1 21rem;
+  min-width: 0;
+  max-width: 32rem;
+  margin-inline-start: auto;
+}
 .workbook-upload input {
   flex: 1 1 12rem;
   min-width: 0;
   width: 100%;
   margin: 0;
+}
+.workbook-confirm {
+  justify-self: start;
 }
 .preview-list {
   max-height: 22rem;

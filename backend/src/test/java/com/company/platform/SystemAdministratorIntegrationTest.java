@@ -1,6 +1,7 @@
 package com.company.platform;
 
 import com.company.platform.archive.*;
+import com.company.platform.storage.DriveAccessService;
 import com.company.platform.workflow.OrganizationDuties;
 import com.company.platform.workflow.PersonnelContinuity;
 import org.junit.jupiter.api.*;
@@ -19,6 +20,7 @@ import static org.junit.jupiter.api.Assertions.*;
 class SystemAdministratorIntegrationTest {
     @DynamicPropertySource static void isolated(DynamicPropertyRegistry properties) {
         if(!System.getenv("IMS_PLATFORM_DB_URL").matches("jdbc:postgresql://127\\.0\\.0\\.1:(55473|55448)/ims_platform_dev_[0-9]+")) throw new IllegalStateException("仅允许角色或导入模块的独立验收库");
+        properties.add("platform.protection.enabled",()->false);
     }
     @Autowired Sql db;
     @Autowired IdentityService identity;
@@ -26,6 +28,7 @@ class SystemAdministratorIntegrationTest {
     @Autowired Commands commands;
     @Autowired ArchiveAuthority archive;
     @Autowired ArchiveCatalogService catalog;
+    @Autowired DriveAccessService driveAccess;
     @Autowired OrganizationDuties organizationDuties;
     @Autowired PersonnelContinuity continuity;
     private Actor admin;
@@ -86,6 +89,28 @@ class SystemAdministratorIntegrationTest {
         assertEquals(1,db.count("SELECT count(*) FROM iam.user_role WHERE user_id=? AND state='ENDED'",target));
         assertThrows(ApiFault.class,()->identity.background(subject.sessionId()));
         assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id=? AND record_kind='BUSINESS_EVENT' AND action='ASSIGN_ROLES' AND module='ARCHIVE'",ctx.request()));
+    }
+    /** 即使隔离库没有写保护适配器，公盘 IT 也能登记顶层目录，普通员工仍受授权约束。 */
+    @Test @Transactional void driveItCanCreateTopLevelDirectoryWithoutStorageProtection() {
+        UUID employee=person();
+        assign(context(employee,1),employee,List.of(Sql.map("roleId",role("PLATFORM","MEMBER")),
+                Sql.map("roleId",role("DRIVE","IT_ADMIN"))));
+        Actor driveIt=login(employee.toString(),"test-password");
+        assertFalse(driveIt.systemAdministrator());
+        UUID department=UUID.randomUUID();
+        db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",department,"DRIVE-"+department,"公盘隔离验收");
+        var body=Sql.map("zone","DEPARTMENT_SHARED","departmentId",department.toString(),"name","公盘隔离验收");
+        var adminContext=context(driveIt,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
+        UUID folder=(UUID)driveAccess.folder(adminContext,body).get("id");
+        assertEquals(1,db.count("SELECT count(*) FROM drive.folder WHERE id=? AND parent_id IS NULL",folder));
+        assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id=? AND record_kind='BUSINESS_EVENT' AND action='CREATE_FOLDER'",adminContext.request()));
+
+        var child=Sql.map("parentId",folder.toString(),"zone","DEPARTMENT_SHARED","departmentId",department.toString(),"name","子目录");
+        var childContext=context("DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
+        assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->driveAccess.folder(childContext,child)).code);
+        Actor staff=login(person().toString(),"test-password");
+        var staffContext=context(staff,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
+        assertEquals(403,assertThrows(ApiFault.class,()->driveAccess.folder(staffContext,body)).status);
     }
     /** 模块管理员可继续办理公盘及档案业务，管理中心角色及组织配置需平台 IT 任职。 */
     @Test @Transactional void moduleAdministratorsKeepBusinessActionsWithoutCentralConfiguration() {
