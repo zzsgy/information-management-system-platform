@@ -26,6 +26,32 @@ class ImportWorkbookTest {
         assertEquals(input,row.values());
         assertEquals(ImportWorkbook.MEDIA,FileMediaCheck.detect(file,"台账.xlsx",ImportWorkbook.MEDIA));
     }
+    /** 会议识别码隐藏后仍能导入，旧的可见识别行也继续兼容。 */
+    @Test void meetingMarkerIsHiddenAndKeepsImportBinding()throws Exception{
+        String marker="IMS-MEETING-1:"+UUID.randomUUID();
+        var columns=List.of("employeeNo|工号","report|上周工作内容");
+        var values=List.of(Sql.map("employeeNo","00001","report","本周内容"));
+        byte[] bytes=ImportWorkbook.meetingWorkbook("会议填报",marker,columns,values);
+        String sheet;
+        try(var zip=new ZipFile(file(bytes).toFile())){
+            sheet=new String(zip.getInputStream(zip.getEntry("xl/worksheets/sheet1.xml")).readAllBytes(),java.nio.charset.StandardCharsets.UTF_8);
+        }
+        assertTrue(sheet.contains("<row hidden=\"1\" r=\"1\">"));
+        assertTrue(sheet.contains("activeCell=\"A2\""));
+        assertEquals(values.getFirst(),ImportWorkbook.readMeeting(bytes,marker,columns).getFirst().values());
+        assertThrows(ApiFault.class,()->ImportWorkbook.readMeeting(bytes,"IMS-MEETING-1:"+UUID.randomUUID(),columns));
+        var legacy=new ByteArrayOutputStream();
+        try(var input=new ZipInputStream(new ByteArrayInputStream(bytes));var output=new ZipOutputStream(legacy)){
+            ZipEntry entry;
+            while((entry=input.getNextEntry())!=null){
+                output.putNextEntry(new ZipEntry(entry.getName()));
+                byte[] content=input.readAllBytes();
+                if(entry.getName().equals("xl/worksheets/sheet1.xml"))content=sheet.replace(" hidden=\"1\"", "").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                output.write(content);output.closeEntry();
+            }
+        }
+        assertEquals(values.getFirst(),ImportWorkbook.readMeeting(legacy.toByteArray(),marker,columns).getFirst().values());
+    }
     /** 跨类型模板不能被误读为另一个领域。 */
     @Test void wrongTypeRejected()throws Exception{Path file=file(ImportWorkbook.workbook("EMPLOYEE",List.of(Sql.map("employeeNo","1"))));assertThrows(ApiFault.class,()->ImportWorkbook.read(file,"ARCHIVE"));}
     /** 空模板不是成功的零行批次。 */

@@ -230,15 +230,17 @@ async function openCreatedFolder(created: Pick<Folder, "id" | "name" | "departme
 async function load() {
   const current = generation;
   try {
-    const result = await api<Page<Document>>(
+    const result = await api<Page<Document> & { folderCanUpload: boolean }>(
       `/drive/documents?${query({ folderId: selected.value?.id, space: space.value, departmentId: sharedDepartment.value, ...applied.value, page: page.value, pageSize: 20 })}`,
     );
     if (current !== generation || !alive) return;
     documents.value = result.items;
     total.value = result.total;
+    if (selected.value) selected.value.canUpload = result.folderCanUpload;
   } catch (failure) {
     if (current === generation && alive) {
       documents.value = [];
+      if (selected.value) selected.value.canUpload = false;
       error.value = (failure as Error).message;
     }
   }
@@ -491,8 +493,10 @@ onUnmounted(() => {
             :disabled="busy"
             @click="picker?.click()"
           >
-            {{ busy ? uploadLabel : "上传文件" }}</button
-          ><input
+            {{ busy ? uploadLabel : "上传文件" }}
+          </button>
+          <span v-else-if="selected && !error" class="muted">当前账号没有此目录的上传权限</span>
+          <input
             ref="picker"
             type="file"
             :accept="driveAccept"

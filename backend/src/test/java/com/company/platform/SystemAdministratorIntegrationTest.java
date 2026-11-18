@@ -2,6 +2,7 @@ package com.company.platform;
 
 import com.company.platform.archive.*;
 import com.company.platform.storage.DriveAccessService;
+import com.company.platform.storage.DriveDocumentService;
 import com.company.platform.storage.DriveFolders;
 import com.company.platform.workflow.OrganizationDuties;
 import com.company.platform.workflow.PersonnelContinuity;
@@ -30,6 +31,7 @@ class SystemAdministratorIntegrationTest {
     @Autowired ArchiveAuthority archive;
     @Autowired ArchiveCatalogService catalog;
     @Autowired DriveAccessService driveAccess;
+    @Autowired DriveDocumentService driveDocuments;
     @Autowired DriveFolders driveFolders;
     @Autowired OrganizationDuties organizationDuties;
     @Autowired PersonnelContinuity continuity;
@@ -131,18 +133,28 @@ class SystemAdministratorIntegrationTest {
     }
     /** 委托建立与撤销只写管理记录，仍要求 IT 权限和正确的委托版本。 */
     @Test @Transactional void driveItCanConfigureDelegationWithoutStorageProtection() {
-        UUID operator=person(),staffId=person(),department=UUID.randomUUID();
+        UUID operator=person(),staffId=person(),managerId=person(),department=UUID.randomUUID();
         assign(context(operator,1),operator,List.of(Sql.map("roleId",role("DRIVE","IT_ADMIN"))));
         assign(context(staffId,1),staffId,List.of(Sql.map("roleId",role("DRIVE","STAFF"))));
         Actor driveIt=login(operator.toString(),"test-password"),staff=login(staffId.toString(),"test-password");
         db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",department,"DRIVE-"+department,"委托验收部门");
+        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",department,managerId);
+        UUID managerRole=role("DRIVE","DEPARTMENT_MANAGER");
+        assign(context(managerId,1),managerId,List.of(Sql.map("roleId",managerRole,"departmentId",department)));
+        db.update("INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by) VALUES(?,?,?,'DEPARTMENT_MANAGER',CURRENT_TIMESTAMP,'委托验收',?)",
+                UUID.randomUUID(),department,managerId,admin.userId());
+        Actor manager=login(managerId.toString(),"test-password");
         var folderBody=Sql.map("zone","DEPARTMENT_SHARED","departmentId",department,"name","委托验收目录");
         UUID folder=(UUID)driveAccess.folder(context("DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1),folderBody).get("id");
-        var body=Sql.map("departmentId",department,"folderId",folder,"roleId",role("DRIVE","DEPARTMENT_MANAGER"),
+        var query=Map.of("folderId",folder.toString());
+        assertEquals(false,driveDocuments.documents(manager,query).get("folderCanUpload"));
+        var body=Sql.map("departmentId",department,"folderId",folder,"roleId",managerRole,
                 "allowedActions",List.of("UPLOAD","FOLDER_MANAGE"),"reason","委托验收");
         var create=context(driveIt,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_DELEGATION",1);
         UUID delegation=(UUID)driveAccess.delegate(create,body).get("id");
         assertEquals("ACTIVE",db.required("SELECT state FROM drive.delegation WHERE id=?",delegation).get("state"));
+        assertEquals(true,driveDocuments.documents(manager,query).get("folderCanUpload"));
+        assertEquals(false,driveDocuments.documents(driveIt,query).get("folderCanUpload"));
         var staffRevoke=context(staff,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",1);
         assertEquals(403,assertThrows(ApiFault.class,()->driveAccess.revokeDelegation(staffRevoke,delegation)).status);
         var stale=context(driveIt,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",2);
@@ -150,6 +162,7 @@ class SystemAdministratorIntegrationTest {
         assertEquals("ACTIVE",db.required("SELECT state FROM drive.delegation WHERE id=?",delegation).get("state"));
         var revoke=context(driveIt,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",1);
         assertEquals("REVOKED",driveAccess.revokeDelegation(revoke,delegation).get("state"));
+        assertEquals(false,driveDocuments.documents(login(managerId.toString(),"test-password"),query).get("folderCanUpload"));
         assertEquals(2,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id IN (?,?) AND record_kind='BUSINESS_EVENT' AND result='SUCCEEDED'",create.request(),revoke.request()));
     }
     /** 公盘员工能选择尚未建立共享目录的有效部门，人员名册仍受管理权限限制。 */

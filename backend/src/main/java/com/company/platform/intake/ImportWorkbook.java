@@ -134,6 +134,8 @@ public final class ImportWorkbook {
             String stylesRel=meeting?"<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>":"";
             put(zip,"xl/_rels/workbook.xml.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"+stylesRel+"</Relationships>");
             StringBuilder sheet=new StringBuilder("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+            boolean meetingTemplate=meeting&&marker.startsWith("IMS-MEETING-1:");
+            if(meetingTemplate)sheet.append("<sheetViews><sheetView workbookViewId=\"0\" topLeftCell=\"A2\"><selection activeCell=\"A2\" sqref=\"A2\"/></sheetView></sheetViews>");
             if(meeting){
                 // 关闭自动数值转换，手工键入带前导零的员工工号也能保留文本。
                 put(zip,"xl/styles.xml",MEETING_STYLES);
@@ -142,7 +144,12 @@ public final class ImportWorkbook {
             }
             sheet.append("<sheetData>");
             int headerRow=type.equals("EMPLOYEE")?1:2;
-            if(headerRow==2)appendRow(sheet,1,List.of(marker));
+            if(headerRow==2){
+                // 会议识别码用于导入校验，隐藏技术行并保留旧模板的行号契约。
+                StringBuilder markerRow=new StringBuilder();
+                appendRow(markerRow,1,List.of(marker));
+                sheet.append(meetingTemplate?markerRow.toString().replace("<row ","<row hidden=\"1\" "):markerRow);
+            }
             appendRow(sheet,headerRow,displayHeaders(type,columns));
             for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
             put(zip,"xl/worksheets/sheet1.xml",sheet.append("</sheetData></worksheet>").toString());zip.finish();return bytes.toByteArray();

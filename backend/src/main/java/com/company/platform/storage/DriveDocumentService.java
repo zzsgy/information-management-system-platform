@@ -76,6 +76,9 @@ public class DriveDocumentService {
         // 仅对当前页补充人员及目录信息；单文件授权不能顺带公开未授权的目录名。
         parameters.add(actor.userId());
         var rows=db.rows(prefix+", listed AS (SELECT d.*,v.id AS version_id,v.version_no,o.media_type,o.byte_size,o.sha256"+where+" ORDER BY d.updated_at DESC,d.id LIMIT ? OFFSET ?) SELECT p.*,u.name AS uploaded_by_name,CASE WHEN drive.can_folder(?,p.folder_id,'VIEW') THEN f.name END AS folder_name FROM listed p JOIN iam.user_account u ON u.id=p.uploaded_by JOIN drive.folder f ON f.id=p.folder_id ORDER BY p.updated_at DESC,p.id",parameters.toArray());
-        return Sql.map("items",rows.stream().map(row->{var item=Sql.view(row,"id,folder_id,folder_name,publishing_department_id,uploaded_by,uploaded_by_name,name,current_version_id,status,row_version,collaboration_enabled,created_at,updated_at");item.put("currentVersion",Sql.map("id",row.get("version_id"),"versionNo",row.get("version_no"),"mediaType",row.get("media_type"),"byteSize",row.get("byte_size"),"sha256",row.get("sha256")));return item;}).toList(),"page",page,"pageSize",size,"total",total,"hasNext",(long)page*size<total);
+        // 刷新文件列表时重取已打开目录的上传权，避免页面沿用委托变更前的判断。
+        boolean folderCanUpload=folder!=null&&Boolean.TRUE.equals(db.required(
+                "SELECT drive.can_folder(?,?,'UPLOAD') AS allowed",actor.userId(),folder).get("allowed"));
+        return Sql.map("items",rows.stream().map(row->{var item=Sql.view(row,"id,folder_id,folder_name,publishing_department_id,uploaded_by,uploaded_by_name,name,current_version_id,status,row_version,collaboration_enabled,created_at,updated_at");item.put("currentVersion",Sql.map("id",row.get("version_id"),"versionNo",row.get("version_no"),"mediaType",row.get("media_type"),"byteSize",row.get("byte_size"),"sha256",row.get("sha256")));return item;}).toList(),"page",page,"pageSize",size,"total",total,"hasNext",(long)page*size<total,"folderCanUpload",folderCanUpload);
     }
 }
