@@ -33,11 +33,11 @@ public class DriveAccessService {
             UUID id=UUID.randomUUID();db.update("INSERT INTO drive.folder(id,parent_id,zone,department_id,folder_level,name,name_key) VALUES(?,?,?,?,?,?,?)",id,parent,zone,department,parent==null?"TOP":"CHILD",name,Normalizer.normalize(name,Normalizer.Form.NFKC).toLowerCase(Locale.ROOT));return folderView(id);
         },this::folderView);
     }
-    /** 创建真实部门负责人角色委托；内容动作分别委托，不因可读自动取得写权。 */
+    /** IT 配置部门负责人委托只写权限记录；委托内的文件操作仍执行各自的存储保护。 */
     public Map<String,Object> delegate(Commands.Context ctx,Map<String,Object> body) {
         Inputs.only(body,"departmentId","folderId","roleId","allowedActions","reason");Inputs.text(body,"reason",1000);
         UUID folder=Inputs.uuid(body.get("folderId")),department=Inputs.uuid(body.get("departmentId")),role=Inputs.uuid(body.get("roleId"));List<String> actions=actions(body.get("allowedActions"));
-        return commands.run(ctx,body,"DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_DELEGATION",()->{it(ctx.actor());protection.requireWritable("DRIVE","CREATE_DELEGATION");},()->{
+        return commands.run(ctx,body,"DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_DELEGATION",()->it(ctx.actor()),()->{
             var target=db.required("SELECT * FROM drive.folder WHERE id=? AND state='ACTIVE' FOR SHARE",folder);
             if(!department.equals(target.get("department_id"))||!"TOP".equals(target.get("folder_level"))) throw ApiFault.denied();
             db.required("SELECT id FROM iam.role WHERE id=? AND module='DRIVE' AND code='DEPARTMENT_MANAGER' AND status='ACTIVE' FOR SHARE",role);
@@ -73,7 +73,7 @@ public class DriveAccessService {
     }
     /** IT撤销委托即阻断全部依赖动作；相关个人与负责人会话同步失效。 */
     public Map<String,Object> revokeDelegation(Commands.Context ctx,UUID id) {
-        return commands.run(ctx,Map.of(),"DRIVE_DELEGATION",id,"REVOKE_DELEGATION",()->{it(ctx.actor());protection.requireWritable("DRIVE","REVOKE_DELEGATION");},()->{
+        return commands.run(ctx,Map.of(),"DRIVE_DELEGATION",id,"REVOKE_DELEGATION",()->it(ctx.actor()),()->{
             var before=db.required("SELECT * FROM drive.delegation WHERE id=?",id);
             var affected=db.rows("SELECT subject_id AS id FROM drive.resource_grant WHERE delegation_id=? AND state='ACTIVE' UNION SELECT user_id AS id FROM iam.user_role WHERE role_id=? AND department_id=? AND state='ACTIVE' ORDER BY id",id,before.get("role_id"),before.get("department_id"));
             // 先按稳定顺序锁相关账号，再锁委托；与最终交付/检测提交的账号→授权锁顺序一致。

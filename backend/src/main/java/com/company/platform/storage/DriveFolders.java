@@ -12,7 +12,7 @@ public class DriveFolders {
     public Map<String,Object> change(Commands.Context ctx,UUID id,Map<String,Object> body,String action) {
         Inputs.only(body,action.equals("RENAME_FOLDER")?new String[]{"name","reason"}:new String[]{"reason"});Inputs.text(body,"reason",1000);
         String name=action.equals("RENAME_FOLDER")?Inputs.text(body,"name",128):null;if(name!=null)DriveLifecycle.name(body);
-        return commands.run(ctx,body,"FOLDER",id,action,()->{authorize(ctx.actor(),id);protection.requireWritable("DRIVE",action);},()->{
+        return commands.run(ctx,body,"FOLDER",id,action,()->authorize(ctx.actor(),id,action),()->{
             var row=db.required("SELECT * FROM drive.folder WHERE id=? FOR UPDATE",id);Commands.version(ctx,row);
             switch(action){
                 case "RENAME_FOLDER"->{active(row);db.update("UPDATE drive.folder SET name=?,name_key=? WHERE id=?",name,DriveLifecycle.nameKey(name),id);}
@@ -36,7 +36,18 @@ public class DriveFolders {
         List<Object> parameters=new ArrayList<>(Arrays.asList(args));parameters.add(size);parameters.add((page-1)*size);
         return Sql.map("items",db.rows("SELECT f.*,deleted_at<=CURRENT_TIMESTAMP-interval '30 days' AS retention_elapsed"+where+" ORDER BY deleted_at DESC,id LIMIT ? OFFSET ?",parameters.toArray()).stream().map(r->Sql.view(r,"id,parent_id,name,zone,department_id,state,row_version,deleted_at,retention_elapsed")).toList(),"page",page,"pageSize",size,"total",total,"hasNext",(long)page*size<total);
     }
-    private void authorize(Actor actor,UUID id){actor.require("DRIVE.ACCESS");var row=db.required("SELECT * FROM drive.folder WHERE id=?",id);if("TOP".equals(row.get("folder_level"))){if(!it(actor))throw ApiFault.denied();}else if(policy.managerDelegation(actor,policy.ancestors((UUID)row.get("parent_id")),"FOLDER_MANAGE")==null)throw ApiFault.denied();}
+    /** IT 的顶层目录配置只更新目录记录；永久清理与委托下的子目录操作仍检查存储保护。 */
+    private void authorize(Actor actor,UUID id,String action){
+        actor.require("DRIVE.ACCESS");
+        var row=db.required("SELECT * FROM drive.folder WHERE id=?",id);
+        if("TOP".equals(row.get("folder_level"))){
+            if(!it(actor))throw ApiFault.denied();
+            if(!"PURGE_FOLDER".equals(action))return;
+        }else if(policy.managerDelegation(actor,policy.ancestors((UUID)row.get("parent_id")),"FOLDER_MANAGE")==null){
+            throw ApiFault.denied();
+        }
+        protection.requireWritable("DRIVE",action);
+    }
     private boolean it(Actor actor){return actor.systemAdministrator() || actor.actions().contains("DRIVE.ROLES_MANAGE")&&actor.roles().stream().anyMatch(r->"DRIVE".equals(r.get("module"))&&"IT_ADMIN".equals(r.get("code")));}
     private Map<String,Object> view(UUID id){return Sql.view(db.required("SELECT * FROM drive.folder WHERE id=?",id),"id,parent_id,name,zone,department_id,state,row_version,deleted_at");}
     private void active(Map<String,Object> row){if(!"ACTIVE".equals(row.get("state")))throw ApiFault.conflict("目录不在正常状态");}

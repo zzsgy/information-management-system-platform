@@ -2,6 +2,7 @@ package com.company.platform;
 
 import com.company.platform.archive.*;
 import com.company.platform.storage.DriveAccessService;
+import com.company.platform.storage.DriveFolders;
 import com.company.platform.workflow.OrganizationDuties;
 import com.company.platform.workflow.PersonnelContinuity;
 import org.junit.jupiter.api.*;
@@ -29,6 +30,7 @@ class SystemAdministratorIntegrationTest {
     @Autowired ArchiveAuthority archive;
     @Autowired ArchiveCatalogService catalog;
     @Autowired DriveAccessService driveAccess;
+    @Autowired DriveFolders driveFolders;
     @Autowired OrganizationDuties organizationDuties;
     @Autowired PersonnelContinuity continuity;
     private Actor admin;
@@ -90,8 +92,8 @@ class SystemAdministratorIntegrationTest {
         assertThrows(ApiFault.class,()->identity.background(subject.sessionId()));
         assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id=? AND record_kind='BUSINESS_EVENT' AND action='ASSIGN_ROLES' AND module='ARCHIVE'",ctx.request()));
     }
-    /** 即使隔离库没有写保护适配器，公盘 IT 也能登记顶层目录，普通员工仍受授权约束。 */
-    @Test @Transactional void driveItCanCreateTopLevelDirectoryWithoutStorageProtection() {
+    /** 顶层目录的行政维护不依赖存储保护；子目录与永久清理仍执行保护检查。 */
+    @Test @Transactional void driveItCanMaintainTopLevelDirectoryWithoutStorageProtection() {
         UUID employee=person();
         assign(context(employee,1),employee,List.of(Sql.map("roleId",role("PLATFORM","MEMBER")),
                 Sql.map("roleId",role("DRIVE","IT_ADMIN"))));
@@ -105,12 +107,50 @@ class SystemAdministratorIntegrationTest {
         assertEquals(1,db.count("SELECT count(*) FROM drive.folder WHERE id=? AND parent_id IS NULL",folder));
         assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id=? AND record_kind='BUSINESS_EVENT' AND action='CREATE_FOLDER'",adminContext.request()));
 
+        var reason=Sql.map("reason","隔离验收");
+        var renamed=driveFolders.change(context(driveIt,"test-password","FOLDER",folder,"RENAME_FOLDER",1),folder,
+                Sql.map("name","更名后的公盘目录","reason","隔离验收"),"RENAME_FOLDER");
+        assertEquals("更名后的公盘目录",renamed.get("name"));
+        var recycled=driveFolders.change(context(driveIt,"test-password","FOLDER",folder,"RECYCLE_FOLDER",2),folder,reason,"RECYCLE_FOLDER");
+        assertEquals("RECYCLED",recycled.get("state"));
+        var purge=context(driveIt,"test-password","FOLDER",folder,"PURGE_FOLDER",3);
+        assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->driveFolders.change(purge,folder,reason,"PURGE_FOLDER")).code);
+        var restored=driveFolders.change(context(driveIt,"test-password","FOLDER",folder,"RESTORE_FOLDER",3),folder,reason,"RESTORE_FOLDER");
+        assertEquals("ACTIVE",restored.get("state"));
+
         var child=Sql.map("parentId",folder.toString(),"zone","DEPARTMENT_SHARED","departmentId",department.toString(),"name","子目录");
         var childContext=context("DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
         assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->driveAccess.folder(childContext,child)).code);
-        Actor staff=login(person().toString(),"test-password");
+        UUID staffId=person();
+        assign(context(staffId,1),staffId,List.of(Sql.map("roleId",role("DRIVE","STAFF"))));
+        Actor staff=login(staffId.toString(),"test-password");
         var staffContext=context(staff,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
         assertEquals(403,assertThrows(ApiFault.class,()->driveAccess.folder(staffContext,body)).status);
+        var staffRecycle=context(staff,"test-password","FOLDER",folder,"RECYCLE_FOLDER",4);
+        assertEquals(403,assertThrows(ApiFault.class,()->driveFolders.change(staffRecycle,folder,reason,"RECYCLE_FOLDER")).status);
+    }
+    /** 委托建立与撤销只写管理记录，仍要求 IT 权限和正确的委托版本。 */
+    @Test @Transactional void driveItCanConfigureDelegationWithoutStorageProtection() {
+        UUID operator=person(),staffId=person(),department=UUID.randomUUID();
+        assign(context(operator,1),operator,List.of(Sql.map("roleId",role("DRIVE","IT_ADMIN"))));
+        assign(context(staffId,1),staffId,List.of(Sql.map("roleId",role("DRIVE","STAFF"))));
+        Actor driveIt=login(operator.toString(),"test-password"),staff=login(staffId.toString(),"test-password");
+        db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",department,"DRIVE-"+department,"委托验收部门");
+        var folderBody=Sql.map("zone","DEPARTMENT_SHARED","departmentId",department,"name","委托验收目录");
+        UUID folder=(UUID)driveAccess.folder(context("DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1),folderBody).get("id");
+        var body=Sql.map("departmentId",department,"folderId",folder,"roleId",role("DRIVE","DEPARTMENT_MANAGER"),
+                "allowedActions",List.of("UPLOAD","FOLDER_MANAGE"),"reason","委托验收");
+        var create=context(driveIt,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_DELEGATION",1);
+        UUID delegation=(UUID)driveAccess.delegate(create,body).get("id");
+        assertEquals("ACTIVE",db.required("SELECT state FROM drive.delegation WHERE id=?",delegation).get("state"));
+        var staffRevoke=context(staff,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",1);
+        assertEquals(403,assertThrows(ApiFault.class,()->driveAccess.revokeDelegation(staffRevoke,delegation)).status);
+        var stale=context(driveIt,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",2);
+        assertEquals(409,assertThrows(ApiFault.class,()->driveAccess.revokeDelegation(stale,delegation)).status);
+        assertEquals("ACTIVE",db.required("SELECT state FROM drive.delegation WHERE id=?",delegation).get("state"));
+        var revoke=context(driveIt,"test-password","DRIVE_DELEGATION",delegation,"REVOKE_DELEGATION",1);
+        assertEquals("REVOKED",driveAccess.revokeDelegation(revoke,delegation).get("state"));
+        assertEquals(2,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id IN (?,?) AND record_kind='BUSINESS_EVENT' AND result='SUCCEEDED'",create.request(),revoke.request()));
     }
     /** 公盘员工能选择尚未建立共享目录的有效部门，人员名册仍受管理权限限制。 */
     @Test @Transactional void driveSharedFilterUsesActiveOrganizationDepartments() {
