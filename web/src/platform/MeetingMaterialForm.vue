@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { computed, ref } from "vue";
 import RichTextEditor from "./RichTextEditor.vue";
 import { formattedText } from "./formattedText";
 import { api } from "./api";
@@ -36,6 +36,18 @@ function addRow() {
 const error = ref("");
 const busy = ref(false);
 const saved = ref(false);
+const checkedRows = ref(false);
+const subjectLabel = computed(() => props.kind === "TOPICS" ? "议题" : "具体事宜");
+/** 先保留界面行号，再忽略空行，确保提示能对应到原表。 */
+const filledRows = computed(() => rows.value
+  .map((row, index) => ({ row, number: index + 1 }))
+  .filter(({ row }) => row.subject.trim() || row.expected.trim() || row.departmentId || row.support?.trim()));
+const rowErrors = computed(() => filledRows.value.flatMap(({ row, number }) => {
+  const missing = [];
+  if (!row.subject.trim()) missing.push(subjectLabel.value);
+  if (!row.expected.trim()) missing.push("期望结果 / 验收标准");
+  return missing.length ? [`第 ${number} 行请填写「${missing.join("」和「")}」`] : [];
+}));
 
 /** 空材料保持待提交，已填写的行沿用字段校验。 */
 function collect() {
@@ -46,22 +58,11 @@ function collect() {
       throw new Error(materialLabels[props.kind] + "正文或格式超过长度限制");
     return { kind: props.kind, ...content };
   }
-  const entries = rows.value.filter(
-    (row) =>
-      row.subject.trim() ||
-      row.expected.trim() ||
-      row.departmentId ||
-      row.support?.trim(),
-  );
-  if (entries.some((row) => !row.subject.trim() || !row.expected.trim())) {
-    throw new Error(
-      materialLabels[props.kind] + "中已填写的行必须填写事项和期望结果",
-    );
-  }
+  const entries = filledRows.value;
   return entries.length
     ? {
         kind: props.kind,
-        rows: entries.map(({ subject, expected, departmentId, category, support }) => ({
+        rows: entries.map(({ row: { subject, expected, departmentId, category, support } }) => ({
           subject,
           expected,
           ...(props.kind === "COORDINATION" ? { departmentId, category, support } : {}),
@@ -75,6 +76,8 @@ async function submit() {
   error.value = "";
   saved.value = false;
   try {
+    checkedRows.value = true;
+    if (rowErrors.value.length) return;
     const material = collect();
     if (!material) throw new Error("请填写材料后提交");
     await api("/meetings/" + props.meetingId + "/materials", {
@@ -129,9 +132,9 @@ async function submit() {
             <tr>
               <th scope="col">序号</th>
               <th v-if="kind === 'COORDINATION'" scope="col">事项类别</th>
-              <th scope="col">{{ kind === "TOPICS" ? "议题" : "具体事宜" }}</th>
-              <th v-if="kind === 'COORDINATION'" scope="col">需协调或配合内容</th>
-              <th scope="col">期望结果 / 验收标准</th>
+              <th scope="col">{{ subjectLabel }} <small>必填</small></th>
+              <th v-if="kind === 'COORDINATION'" scope="col">需协调或配合内容 <small>选填</small></th>
+              <th scope="col">期望结果 / 验收标准 <small>必填</small></th>
               <th scope="col">发起部门</th>
               <th scope="col">发起人</th>
               <th v-if="kind === 'COORDINATION'" scope="col">
@@ -229,6 +232,9 @@ async function submit() {
       <small v-if="saved" role="status">已提交</small>
     </div>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    <div v-if="checkedRows && rowErrors.length" class="form-error" role="alert">
+      <div v-for="message in rowErrors" :key="message">{{ message }}</div>
+    </div>
   </section>
 </template>
 
@@ -253,7 +259,7 @@ async function submit() {
   font-size: 13px;
 }
 .material-table.coordination {
-  min-width: 935px;
+  min-width: 1100px;
 }
 .material-table :is(th, td) {
   padding: 9px 8px;
@@ -294,7 +300,8 @@ async function submit() {
   width: 30%;
 }
 .material-table.coordination .row-expected {
-  width: 24%;
+  /* 三个正文列平分固定信息列之外的空间。 */
+  width: auto;
 }
 .material-table :is(textarea, select) {
   display: block;

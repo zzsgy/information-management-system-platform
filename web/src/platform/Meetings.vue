@@ -52,8 +52,6 @@ const roomName = ref(""),
   enabled = ref(true),
   roomId = ref("");
 const detailRevision = ref(0);
-const detailDialog = ref<HTMLDialogElement>();
-watch(detailDialog, (dialog) => dialog?.showModal(), { flush: "post" });
 
 const declineInput = ref<HTMLTextAreaElement>();
 const cancelInput = ref<HTMLTextAreaElement>();
@@ -77,7 +75,8 @@ async function openCancellation() {
 const liveDecision =
   useTemplateRef<InstanceType<typeof MeetingLiveDecision>>("liveDecision");
 
-async function closeDetail() {
+/** 通过页面返回入口离开前，先保存尚未提交的会中决议。 */
+async function returnToList() {
   if (busy.value) return;
   busy.value = true;
   try {
@@ -179,11 +178,6 @@ watch(
     try {
       options.value ??= await api<MeetingOptions>("/meetings/options");
       if (!current) return;
-      if (meetingId.value && !results.value) {
-        results.value = await api<Page<MeetingSummary>>(
-          "/meetings?page=" + page.value,
-        );
-      }
       if (current && !creating.value) await refresh();
     } catch (e) {
       if (current) error.value = (e as Error).message;
@@ -247,7 +241,7 @@ async function acceptMeeting(id: string) {
     true,
   );
 }
-/** 开始后留在详情查看材料，结束后在同一弹窗填写纪要。 */
+/** 开始后留在详情查看材料，结束后滚动到纪要编辑区。 */
 async function changeMeetingPhase(action: "start" | "end") {
   if (busy.value || !detail.value) return;
   const id = detail.value.id;
@@ -261,8 +255,6 @@ async function changeMeetingPhase(action: "start" | "end") {
     await api("/meetings/" + id + "/" + action, { method: "POST" });
     inform(message);
     await refresh();
-    const entry = results.value?.items.find((row) => row.id === id);
-    if (entry && detail.value?.id === id) entry.state = detail.value.state;
     if (action === "end") {
       await nextTick();
       document
@@ -351,9 +343,18 @@ function replyLabel(reply?: string) {
 <template>
   <div
     class="platform-page-content meeting-page"
-    :class="{ 'room-management': configuring, 'meeting-create': creating }"
+    :class="{ 'room-management': configuring, 'meeting-create': creating, 'meeting-detail-page': meetingId }"
   >
-    <header v-if="!creating" class="meeting-actions meeting-spread">
+    <a
+      v-if="meetingId"
+      class="meeting-detail-back"
+      href="#/meetings"
+      :aria-disabled="busy || undefined"
+      @click.prevent="returnToList"
+    >
+      <span aria-hidden="true">←</span> 返回会议列表
+    </a>
+    <header v-else-if="!creating" class="meeting-actions meeting-spread">
       <div class="meeting-page-title">
         <span v-if="!configuring" class="flow-dialog-icon" aria-hidden="true"
           ><Icon name="calendar" :size="23"
@@ -531,7 +532,7 @@ function replyLabel(reply?: string) {
     </template>
 
     <section
-      v-else-if="!creating && !itemId && !configuring && results"
+      v-else-if="!creating && !meetingId && !itemId && !configuring && results"
       class="room-panel booking-list"
       aria-label="我的会议"
     >
@@ -670,37 +671,77 @@ function replyLabel(reply?: string) {
       </form>
     </dialog>
 
-    <dialog
-      v-if="detail"
-      ref="detailDialog"
-      class="form-dialog flow-dialog meeting-detail"
-      :class="{
-        'material-table-dialog':
-          summaryTypes.length ||
-          detail.minutes?.materialTables?.length ||
-          (detail.canSubmitMaterials &&
-            formKinds.some((kind) => kind === 'TOPICS' || kind === 'COORDINATION')),
-      }"
-      aria-labelledby="meeting-detail-title"
-      @cancel.prevent="closeDetail"
-    >
-      <div class="flow-dialog-shell">
-        <header class="flow-dialog-header">
-          <span class="flow-dialog-icon" aria-hidden="true"
-            ><Icon name="calendar" :size="22"
-          /></span>
-          <h2 id="meeting-detail-title">{{ detail.subject }}</h2>
-          <button
-            type="button"
-            class="icon-button"
-            aria-label="关闭会议详情"
-            :disabled="busy"
-            @click="closeDetail"
+    <section v-if="detail" class="meeting-detail" aria-labelledby="meeting-detail-title">
+      <div class="meeting-detail-content">
+        <header class="meeting-detail-header">
+          <div class="meeting-page-title detail-heading">
+            <span class="flow-dialog-icon" aria-hidden="true">
+              <Icon name="calendar" :size="23" />
+            </span>
+            <div class="detail-title">
+              <h1 id="meeting-detail-title">{{ detail.subject }}</h1>
+              <span class="booking-badge" :data-state="detail.state">
+                {{ detail.urgent ? "紧急 · " : "" }}{{ meetingStates[detail.state] }}
+              </span>
+            </div>
+          </div>
+          <div
+            v-if="detail.canStart || detail.canEnd || detail.canEdit || detail.canReply"
+            class="meeting-actions detail-actions"
+            role="group"
+            aria-label="会议操作"
           >
-            ×
-          </button>
+            <button
+              v-if="detail.canStart"
+              type="button"
+              class="primary"
+              :disabled="busy"
+              @click="changeMeetingPhase('start')"
+            >
+              开始会议
+            </button>
+            <button
+              v-if="detail.canEnd"
+              type="button"
+              class="primary"
+              :disabled="busy"
+              @click="changeMeetingPhase('end')"
+            >
+              结束会议
+            </button>
+            <button
+              v-if="detail.canEdit"
+              type="button"
+              class="secondary"
+              :disabled="busy"
+              @click="editor = true"
+            >
+              修改安排
+            </button>
+            <button
+              v-if="detail.canEdit"
+              type="button"
+              class="secondary"
+              :disabled="busy"
+              @click="openCancellation"
+            >
+              取消会议
+            </button>
+            <template v-if="detail.canReply">
+              <button
+                class="primary"
+                :disabled="busy"
+                @click="acceptMeeting(detail.id)"
+              >
+                参加
+              </button>
+              <button class="secondary" :disabled="busy" @click="openDecline">
+                不能参加
+              </button>
+            </template>
+          </div>
         </header>
-        <div class="flow-dialog-body">
+        <div class="meeting-detail-body">
           <p
             v-if="error"
             id="meeting-detail-error"
@@ -709,11 +750,7 @@ function replyLabel(reply?: string) {
           >
             {{ error }}
           </p>
-          <section class="flow-dialog-section">
-            <p class="detail-state booking-badge" :data-state="detail.state">
-              {{ detail.urgent ? "紧急 · " : "" }}
-              {{ meetingStates[detail.state] }}
-            </p>
+          <section class="flow-dialog-section detail-overview" aria-label="会议信息">
             <dl class="detail-facts">
               <div class="detail-period">
                 <dt>预约时间</dt>
@@ -722,14 +759,6 @@ function replyLabel(reply?: string) {
                   {{ portalTime(detail.endsAt) }}
                 </dd>
               </div>
-              <div v-if="detail.actualStartedAt">
-                <dt>实际开始</dt>
-                <dd>{{ portalTime(detail.actualStartedAt) }}</dd>
-              </div>
-              <div v-if="detail.actualEndedAt">
-                <dt>实际结束</dt>
-                <dd>{{ portalTime(detail.actualEndedAt) }}</dd>
-              </div>
               <div>
                 <dt>会议室</dt>
                 <dd>{{ detail.roomName }}</dd>
@@ -737,6 +766,14 @@ function replyLabel(reply?: string) {
               <div>
                 <dt>发起人</dt>
                 <dd>{{ detail.organizerName }}</dd>
+              </div>
+              <div v-if="detail.actualStartedAt">
+                <dt>实际开始</dt>
+                <dd>{{ portalTime(detail.actualStartedAt) }}</dd>
+              </div>
+              <div v-if="detail.actualEndedAt">
+                <dt>实际结束</dt>
+                <dd>{{ portalTime(detail.actualEndedAt) }}</dd>
               </div>
             </dl>
             <RichTextView v-if="detail.description" class="meeting-text" :value="detail.description" />
@@ -789,128 +826,150 @@ function replyLabel(reply?: string) {
             </form>
           </section>
 
-          <section class="flow-dialog-section">
-            <h3>
-              受邀员工
-              <span class="booking-count"
-                >{{ detail.attendees.length }} 人</span
-              >
-            </h3>
-            <button v-if="organizer && detail.canStart" type="button" class="secondary" :disabled="busy"
-              @click="reloadDetail()">刷新提交与阅读状态</button>
-            <MeetingReading v-if="detail.readingRevision" :key="detail.id"
-              :meeting-id="detail.id" :revision="detail.readingRevision"
-              :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
-              @saved="reloadDetail" @stale="reloadDetail" />
-            <ul class="meeting-history">
-              <li
-                v-for="person in detail.attendees"
-                :key="person.userId"
-                class="booking-person"
-              >
-                <div class="booking-person-name">
-                  <span aria-hidden="true" class="booking-avatar">{{
-                    person.name.slice(-1)
-                  }}</span>
-                  <strong>{{ person.name }}</strong
-                  ><span class="booking-count">{{ person.employeeNo }}</span>
+          <div class="detail-tools">
+            <section class="flow-dialog-section detail-attendees" aria-labelledby="meeting-attendees-title">
+              <header class="meeting-actions meeting-spread">
+                <h2 id="meeting-attendees-title">
+                  受邀员工
+                  <span class="booking-count">{{ detail.attendees.length }} 人</span>
+                </h2>
+                <div v-if="(organizer && detail.canStart) || detail.readingRevision" class="meeting-actions">
+                  <button
+                    v-if="organizer && detail.canStart"
+                    type="button"
+                    class="secondary"
+                    :disabled="busy"
+                    @click="reloadDetail()"
+                  >
+                    刷新提交与阅读状态
+                  </button>
+                  <MeetingReading
+                    v-if="detail.readingRevision"
+                    :key="detail.id"
+                    :meeting-id="detail.id"
+                    :revision="detail.readingRevision"
+                    :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
+                    @saved="reloadDetail"
+                    @stale="reloadDetail"
+                  />
                 </div>
-                <template v-if="person.reply">
-                  <span>
-                    · {{ replyLabel(person.reply)
-                    }}<template
-                      v-if="
-                        person.reply === 'PENDING' &&
-                        detail.state !== 'SCHEDULED'
-                      "
-                      >（{{
-                        detail.state === "CANCELLED"
-                          ? "会议已取消"
-                          : "回复已截止"
-                      }}）</template
-                    >
-                  </span>
-                  <p v-if="person.declineReason" class="meeting-text">
-                    {{ person.declineReason }}
-                  </p>
-                </template>
-                <small v-if="person.readingRequired">
-                  {{ person.readMaterialAt ? "资料已确认阅读 · " + portalTime(person.readMaterialAt) : "会前资料待确认" }}
-                </small>
-                <template v-if="person.materialRequired && detail.materialTypes == null">
-                  <small v-if="person.materialAt"
-                    >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
-                  >
-                  <small
-                    v-else-if="
-                      detail.kind === 'WEEKLY' || person.reply !== 'DECLINED'
-                    "
-                    >未提交会前材料</small
-                  >
-                </template>
-                <div
-                  v-if="detail.materialTypes && person.materials"
-                  class="material-results"
+              </header>
+              <ul class="meeting-history">
+                <li
+                  v-for="person in detail.attendees"
+                  :key="person.userId"
+                  class="booking-person"
                 >
-                  <p
-                    v-if="
-                      (organizer || person.userId === own?.userId) &&
-                      person.reply !== 'DECLINED' &&
-                      detail.materialTypes.length > 0 &&
-                      person.materials.length < detail.materialTypes.length
-                    "
-                    class="booking-count"
-                  >
-                    未提交
-                    {{
-                      missingMaterials(detail.materialTypes, person.materials)
-                    }}
-                  </p>
-                  <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
-                    && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
-                  <details
-                    v-for="material in person.materials.filter(
-                      (entry) =>
-                        entry.kind === 'REPORT' ||
-                        !summaryTypes.includes(entry.kind),
-                    )"
-                    :key="material.kind"
-                  >
-                    <summary>
-                      {{ materialLabels[material.kind] }} ·
-                      {{ portalTime(material.submittedAt) }}
-                    </summary>
-                    <p class="booking-count">
-                      {{ material.data.author.name }} ·
-                      {{ material.data.author.department }}
-                    </p>
-                    <RichTextView
-                      v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
-                      class="meeting-text" :value="material.data.text" :html="material.data.html"
-                    />
-                    <ol v-else>
-                      <li
-                        v-for="(row, index) in material.data.rows"
-                        :key="index"
+                  <div class="booking-person-name">
+                    <span aria-hidden="true" class="booking-avatar">{{
+                      person.name.slice(-1)
+                    }}</span>
+                    <strong>{{ person.name }}</strong
+                    ><span class="booking-count">{{ person.employeeNo }}</span>
+                  </div>
+                  <template v-if="person.reply">
+                    <span>
+                      · {{ replyLabel(person.reply)
+                      }}<template
+                        v-if="
+                          person.reply === 'PENDING' &&
+                          detail.state !== 'SCHEDULED'
+                        "
+                        >（{{
+                          detail.state === "CANCELLED"
+                            ? "会议已取消"
+                            : "回复已截止"
+                        }}）</template
                       >
-                        <strong>{{ row.subject }}</strong>
-                        <p class="meeting-text">期望结果 {{ row.expected }}</p>
-                        <small v-if="row.department">{{ row.department }}</small>
-                      </li>
-                    </ol>
-                  </details>
-                </div>
-                <div v-if="person.report" class="material-results">
-                  <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
-                </div>
-                <div v-if="person.topics" class="material-results">
-                  <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
-                </div>
-              </li>
-            </ul>
-          </section>
-          <MeetingWorkbookPanel v-if="organizer" :key="detail.id" :meeting-id="detail.id"
-            :can-import="detail.canStart && !!detail.materialTypes?.length" @imported="reloadDetail" />
+                    </span>
+                    <p v-if="person.declineReason" class="meeting-text">
+                      {{ person.declineReason }}
+                    </p>
+                  </template>
+                  <small v-if="person.readingRequired">
+                    {{ person.readMaterialAt ? "资料已确认阅读 · " + portalTime(person.readMaterialAt) : "会前资料待确认" }}
+                  </small>
+                  <template v-if="person.materialRequired && detail.materialTypes == null">
+                    <small v-if="person.materialAt"
+                      >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
+                    >
+                    <small
+                      v-else-if="
+                        detail.kind === 'WEEKLY' || person.reply !== 'DECLINED'
+                      "
+                      >未提交会前材料</small
+                    >
+                  </template>
+                  <div
+                    v-if="detail.materialTypes && person.materials"
+                    class="material-results"
+                  >
+                    <p
+                      v-if="
+                        (organizer || person.userId === own?.userId) &&
+                        person.reply !== 'DECLINED' &&
+                        detail.materialTypes.length > 0 &&
+                        person.materials.length < detail.materialTypes.length
+                      "
+                      class="booking-count"
+                    >
+                      未提交
+                      {{
+                        missingMaterials(detail.materialTypes, person.materials)
+                      }}
+                    </p>
+                    <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
+                      && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
+                    <details
+                      v-for="material in person.materials.filter(
+                        (entry) =>
+                          entry.kind === 'REPORT' ||
+                          !summaryTypes.includes(entry.kind),
+                      )"
+                      :key="material.kind"
+                    >
+                      <summary>
+                        {{ materialLabels[material.kind] }} ·
+                        {{ portalTime(material.submittedAt) }}
+                      </summary>
+                      <p class="booking-count">
+                        {{ material.data.author.name }} ·
+                        {{ material.data.author.department }}
+                      </p>
+                      <RichTextView
+                        v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
+                        class="meeting-text" :value="material.data.text" :html="material.data.html"
+                      />
+                      <ol v-else>
+                        <li
+                          v-for="(row, index) in material.data.rows"
+                          :key="index"
+                        >
+                          <strong>{{ row.subject }}</strong>
+                          <p class="meeting-text">期望结果 {{ row.expected }}</p>
+                          <small v-if="row.department">{{ row.department }}</small>
+                        </li>
+                      </ol>
+                    </details>
+                  </div>
+                  <div v-if="person.report" class="material-results">
+                    <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
+                  </div>
+                  <div v-if="person.topics" class="material-results">
+                    <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
+                  </div>
+                </li>
+              </ul>
+            </section>
+            <MeetingWorkbookPanel
+              v-if="organizer"
+              :key="detail.id"
+              class="detail-workbook"
+              :meeting-id="detail.id"
+              :can-import="detail.canStart && !!detail.materialTypes?.length"
+              @imported="reloadDetail"
+            />
+          </div>
           <MeetingMaterialSummary
             v-if="summaryTypes.length && !detail.minutes"
             :types="summaryTypes"
@@ -1067,96 +1126,37 @@ function replyLabel(reply?: string) {
             </button>
           </section>
         </div>
-        <footer class="flow-dialog-footer">
-          <button
-            v-if="detail.canStart"
-            type="button"
-            class="primary"
-            :disabled="busy"
-            @click="changeMeetingPhase('start')"
-          >
-            开始会议
-          </button>
-          <button
-            v-if="detail.canEnd"
-            type="button"
-            class="primary"
-            :disabled="busy"
-            @click="changeMeetingPhase('end')"
-          >
-            结束会议
-          </button>
-          <button
-            v-if="detail.canEdit"
-            type="button"
-            class="secondary"
-            :disabled="busy"
-            @click="editor = true"
-          >
-            修改安排
-          </button>
-          <button
-            v-if="detail.canEdit"
-            type="button"
-            class="secondary"
-            :disabled="busy"
-            @click="openCancellation"
-          >
-            取消会议
-          </button>
-          <div v-if="detail.canReply" class="meeting-actions">
-            <button
-              class="primary"
-              :disabled="busy"
-              @click="acceptMeeting(detail.id)"
-            >
-              参加
-            </button>
-            <button class="secondary" :disabled="busy" @click="openDecline">
-              不能参加
-            </button>
-          </div>
-          <button
-            v-if="!detail.canEdit && !detail.canReply && !detail.canEnd"
-            type="button"
-            class="secondary"
-            :disabled="busy"
-            @click="closeDetail"
-          >
-            关闭
-          </button>
-        </footer>
       </div>
-    </dialog>
+    </section>
   </div>
 </template>
 
 <style>
-/* 新建会议页取消工作台的固定桌面最小宽度，其他业务页面沿用原布局。 */
-.platform-shell:has(.booking-create-page) {
+/* 新建与详情使用页面滚动，窄屏时让顶栏和会议内容随可用宽度重排。 */
+.platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) {
   min-width: 0;
 }
 @media (max-width: 960px) {
-  .platform-shell:has(.booking-create-page) > .topbar {
+  .platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) > .topbar {
     grid-template-columns: minmax(0, 1fr);
     gap: 8px;
   }
-  .platform-shell:has(.booking-create-page) > .topbar > * {
+  .platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) > .topbar > * {
     grid-column: 1;
     grid-row: auto;
     min-width: 0;
   }
-  .platform-shell:has(.booking-create-page) > .topbar > .account-actions {
+  .platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) > .topbar > .account-actions {
     justify-self: start;
     flex-wrap: wrap;
     white-space: normal;
   }
 }
 @media (max-width: 640px) {
-  .platform-shell:has(.booking-create-page) {
+  .platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) {
     --page-gutter: 12px;
   }
-  .platform-shell:has(.booking-create-page) > .topbar {
+  .platform-shell:has(:is(.booking-create-page, .meeting-detail-page)) > .topbar {
     position: static;
   }
 }
@@ -1170,7 +1170,7 @@ function replyLabel(reply?: string) {
   color: var(--brand);
 }
 
-.meeting-page:not(.room-management, .meeting-create) {
+.meeting-page:not(.room-management, .meeting-create, .meeting-detail-page) {
   max-width: 1180px;
   width: 100%;
   margin-inline: auto;
@@ -1314,12 +1314,6 @@ function replyLabel(reply?: string) {
   background: var(--brand-soft);
   color: var(--brand);
 }
-.meeting-detail.material-table-dialog {
-  --flow-dialog-width: 1080px;
-}
-.meeting-detail .detail-state {
-  width: fit-content;
-}
 @media (max-width: 620px) {
   .booking-row {
     grid-template-columns: minmax(0, 1fr) auto;
@@ -1436,31 +1430,111 @@ function replyLabel(reply?: string) {
   }
 }
 
-.meeting-detail {
-  --flow-dialog-width: 760px;
+.meeting-detail-page {
+  width: 100%;
+  max-width: 1440px;
+  min-width: 0;
+  margin-inline: auto;
 }
-.meeting-detail .detail-state {
+.meeting-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  justify-self: start;
+  color: var(--brand);
+  font-size: 14px;
+}
+.meeting-detail-back[aria-disabled="true"] {
   color: var(--text-secondary);
+  cursor: wait;
 }
-.meeting-detail .detail-facts {
+.meeting-detail {
+  container: meeting-detail / inline-size;
+  min-width: 0;
+}
+.meeting-detail-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 20px;
+}
+.meeting-detail-header .detail-heading {
+  flex: 1 1 280px;
+  min-width: 0;
+}
+.detail-title {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.meeting-detail-header h1 {
+  font-size: clamp(22px, 2.2vw, 30px);
+  overflow-wrap: anywhere;
+}
+.meeting-detail-body,
+.detail-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 16px;
+  align-items: start;
+}
+.meeting-detail-body > :is(.flow-dialog-section, .meeting-section),
+.detail-tools > .flow-dialog-section {
+  padding: clamp(14px, 1.5vw, 22px);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  min-width: 0;
+}
+.meeting-detail-body > .flow-dialog-section > :is(h2, h3),
+.detail-tools :is(.detail-attendees, .detail-workbook) :is(h2, h3) {
+  font-size: 16px;
+}
+.meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, .material-form) {
+  scroll-margin-block-start: 92px;
+}
+.detail-workbook :is(a, button),
+.detail-actions button,
+.detail-attendees header button {
+  white-space: nowrap;
+}
+.detail-facts {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 20px;
+  gap: 12px 24px;
   margin: 0;
-  padding: 12px 16px;
-  border-radius: 8px;
-  background: var(--surface-muted);
 }
-.meeting-detail .detail-period {
+.detail-period {
   grid-column: 1 / -1;
 }
-.meeting-detail .detail-facts dt {
+.detail-facts dt {
   color: var(--text-secondary);
   font-size: 12px;
 }
-.meeting-detail .detail-facts dd {
-  margin: 3px 0 0;
+.detail-facts dd {
+  margin: 4px 0 0;
   overflow-wrap: anywhere;
+}
+.detail-overview > .meeting-text {
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+@container meeting-detail (min-width: 820px) {
+  .detail-facts {
+    grid-template-columns: minmax(0, 2fr) repeat(2, minmax(0, 1fr));
+  }
+  .detail-period {
+    grid-column: auto;
+  }
+}
+@container meeting-detail (min-width: 980px) {
+  .detail-tools:has(.detail-workbook) {
+    grid-template-columns: minmax(0, 1fr) minmax(300px, 34%);
+  }
 }
 .meeting-page {
   display: grid;

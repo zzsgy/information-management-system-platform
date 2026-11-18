@@ -120,7 +120,7 @@ async function importMaterials() {
         >导出会议汇总</a
       >
     </div>
-    <div v-if="canImport" class="meeting-actions">
+    <div v-if="canImport" class="meeting-actions workbook-upload">
       <input
         aria-label="选择会议填报 Excel"
         type="file"
@@ -193,6 +193,12 @@ async function importMaterials() {
 </template>
 
 <style scoped>
+.workbook-upload input {
+  flex: 1 1 12rem;
+  min-width: 0;
+  width: 100%;
+  margin: 0;
+}
 .preview-list {
   max-height: 22rem;
   overflow: auto;
