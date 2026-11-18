@@ -111,6 +111,7 @@ public class TodoReminders {
 
     private Map<String,Object> due(UUID user) {
         var row=db.one("SELECT id,title,description,remind_at FROM portal.employee_todo WHERE"+DUE+" ORDER BY remind_at,id LIMIT 1",user);
+        if(row!=null)row.put("description",FormattedText.preview((String)row.get("description")));
         return Sql.map("item",row==null?null:Sql.view(row,"id,title,description,remind_at"));
     }
 }

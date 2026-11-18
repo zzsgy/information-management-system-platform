@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RichTextView from "./RichTextView.vue";
+import RichTextEditor from "./RichTextEditor.vue";
 import Icon from "../preview/PlatformIcon.vue";
 import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { api, profile, query } from "./api";
@@ -441,10 +443,7 @@ const deleteConfirm = ref(false);
             <label class="flow-inline-field"
               >标题 <input v-model="title" required maxlength="160"
             /></label>
-            <label
-              >说明（选填）
-              <textarea v-model="description" maxlength="2000" rows="3" />
-            </label>
+            <RichTextEditor v-model="description" label="说明（选填）" :limit="2000" :rows="3" />
             <label class="flow-inline-field">
               提醒时间（选填，上海时间）
               <input v-model="reminderTime" type="datetime-local" />
@@ -491,7 +490,7 @@ const deleteConfirm = ref(false);
           </section>
           <section v-if="todo.description" class="flow-dialog-section">
             <h3>待办说明</h3>
-            <p class="todo-description">{{ todo.description }}</p>
+            <RichTextView class="todo-description" :value="todo.description" />
           </section>
           <section
             v-if="
@@ -502,17 +501,11 @@ const deleteConfirm = ref(false);
             class="flow-dialog-section"
           >
             <h3>办理结果</h3>
-            <p v-if="todo.completionNote" class="todo-description">
-              完成说明 {{ todo.completionNote }}
-            </p>
-            <label
-              v-if="
-                todo.assigneeId === profile?.user.id && todo.state === 'OPEN'
-              "
-            >
-              完成说明（选填）
-              <textarea v-model="note" rows="3" maxlength="2000" />
-            </label>
+            <RichTextView v-if="todo.completionNote" class="todo-description" :value="todo.completionNote" />
+            <RichTextEditor
+              v-if="todo.assigneeId === profile?.user.id && todo.state === 'OPEN'"
+              v-model="note" label="完成说明（选填）" :rows="3" :limit="2000"
+            />
           </section>
           <p
             v-if="deleteConfirm && todo.creatorId === todo.assigneeId"

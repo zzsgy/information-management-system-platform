@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RichTextView from "./RichTextView.vue";
+import RichTextEditor from "./RichTextEditor.vue";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
@@ -168,17 +170,11 @@ const listFilters = ref(recentWeekFilters("created"));
             {{ name }}
           </option>
         </select></label
-      ><label
-        >反馈内容<textarea
-          v-model="content"
-          rows="9"
-          maxlength="1000"
-          required
-          placeholder="请描述遇到的问题、操作步骤或改进建议。"
-        />
-      </label>
+      >
+      <RichTextEditor v-model="content" label="反馈内容" :rows="8" :limit="1000" required
+        placeholder="请描述遇到的问题、操作步骤或改进建议。" />
       <p class="muted">
-        {{ content.length }} / 1000 字 · 反馈由 IT 处理，你可在此查看答复。
+        反馈由 IT 处理，你可在此查看答复。
       </p>
       <div class="portal-actions">
         <button class="primary" :disabled="busy || !content.trim()">
@@ -195,7 +191,7 @@ const listFilters = ref(recentWeekFilters("created"));
         <span>{{ detail.applicantName }}</span
         ><time>{{ portalTime(detail.createdAt) }}</time>
       </div>
-      <p class="portal-plain-text">{{ detail.content }}</p>
+      <RichTextView class="portal-plain-text" :value="detail.content" />
       <h3>处理记录</h3>
       <article
         v-for="item in detail.replies"
@@ -206,7 +202,7 @@ const listFilters = ref(recentWeekFilters("created"));
           <strong>{{ item.authorName }}</strong
           ><time>{{ portalTime(item.createdAt) }}</time>
         </div>
-        <p class="portal-plain-text">{{ item.body }}</p>
+        <RichTextView class="portal-plain-text" :value="item.body" />
       </article>
       <p v-if="!detail.replies.length" class="muted">
         反馈已收到，等待 IT 处理。
@@ -215,14 +211,8 @@ const listFilters = ref(recentWeekFilters("created"));
         v-if="manage && detail.state !== 'RESOLVED'"
         @submit.prevent="respond"
       >
+        <RichTextEditor v-model="reply" label="回复员工" :rows="5" :limit="2000" required />
         <label
-          >回复员工<textarea
-            v-model="reply"
-            rows="5"
-            maxlength="2000"
-            required
-          /></label
-        ><label
           >办理结果<select v-model="replyState">
             <option value="PROCESSING">继续处理中</option>
             <option value="RESOLVED">已办结</option>

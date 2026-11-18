@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import RichTextView from "./RichTextView.vue";
+import RichTextEditor from "./RichTextEditor.vue";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
@@ -196,15 +198,7 @@ const listFilters = ref(recentWeekFilters("published"));
           </select></label
         >
       </div>
-      <label
-        >正文<textarea
-          v-model="form.body"
-          rows="12"
-          maxlength="10000"
-          required
-          placeholder="请输入公告正文，段落和换行将按原样展示。"
-        />
-      </label>
+      <RichTextEditor v-model="form.body" label="正文" :rows="10" :limit="10000" required placeholder="请输入公告正文" />
       <div class="portal-form-grid">
         <label
           >展示开始<input
@@ -254,7 +248,7 @@ const listFilters = ref(recentWeekFilters("published"));
         <div class="portal-letter-content">
           <p class="portal-letter-label">{{ selected.category }}</p>
           <h1>{{ selected.title }}</h1>
-          <div class="portal-letter-body">{{ selected.body }}</div>
+          <RichTextView class="portal-letter-body" :value="selected.body" />
           <div class="portal-letter-signature">
             <p>{{ selected.publisherDepartment }}</p>
             <time>{{
