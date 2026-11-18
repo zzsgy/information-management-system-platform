@@ -28,6 +28,7 @@ import {
   type PasswordPromptOptions,
 } from "./api";
 import Workspace from "./Workspace.vue";
+import AppearanceSettings from "./AppearanceSettings.vue";
 import WorkspaceSidebar from "./WorkspaceSidebar.vue";
 import ServiceHealthNotice from "./ServiceHealthNotice.vue";
 /** 首页扩展页面仅在访问时加载，员工不下载全部内容管理表单。 */
@@ -692,6 +693,7 @@ onUnmounted(() => {
         <button class="primary">搜索</button>
       </form>
       <div class="account-actions">
+        <AppearanceSettings />
         <a v-if="allowedRoute !== 'home'" class="workspace-back" href="#/home">
           <Icon name="home" :size="16" aria-hidden="true" />
           返回工作台

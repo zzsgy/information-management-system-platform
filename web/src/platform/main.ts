@@ -6,6 +6,9 @@ import "./portal.css";
 // 全平台共用品牌、控件密度和桌面布局；业务组件仅保留专有内容样式。
 import "./theme.css";
 import "./flowDialog.css";
+import "./appearance.css";
+import { initializeAppearance } from "./appearance";
+initializeAppearance();
 
 // 正式服务的根地址提供同一入口，旧链接仍携带原查询参数和模块路由。
 if (import.meta.env.PROD && location.pathname === "/platform.html") {

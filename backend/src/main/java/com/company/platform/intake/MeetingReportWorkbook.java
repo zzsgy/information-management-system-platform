@@ -17,7 +17,7 @@ import static com.company.platform.intake.ImportWorkbook.*;
 public final class MeetingReportWorkbook {
     private static final List<String> SHEETS = List.of("上周工作内容", "本周工作计划", "协调事宜");
     private static final List<String> HEADERS = List.of("序号", "具体事宜", "需协调 / 配合什么",
-            "期望结果 /验收标准", "填报部门", "填报人+工号", "配合部门", "责任人（唯一）", "事项类别");
+            "期望结果 /验收标准", "填报部门", "填报人+工号", "配合部门", "责任人（唯一，姓名+工号）", "事项类别");
     private static final List<String> KEYS = List.of("sequence", "subject", "support", "expected",
             "authorDepartment", "author", "department", "assignee", "category");
     private static final String NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
@@ -71,7 +71,9 @@ public final class MeetingReportWorkbook {
             put(zip, SHEET_PATH + "3.xml", worksheet(
                     "<col min=\"1\" max=\"1\" width=\"8\" customWidth=\"1\"/>"
                             + "<col min=\"2\" max=\"4\" width=\"30\" style=\"2\" customWidth=\"1\"/>"
-                            + "<col min=\"5\" max=\"9\" width=\"22\" style=\"2\" customWidth=\"1\"/>",
+                            + "<col min=\"5\" max=\"7\" width=\"22\" style=\"2\" customWidth=\"1\"/>"
+                            + "<col min=\"8\" max=\"8\" width=\"30\" style=\"2\" customWidth=\"1\"/>"
+                            + "<col min=\"9\" max=\"9\" width=\"22\" style=\"2\" customWidth=\"1\"/>",
                     coordinate.toString().replaceAll("(<c r=\"[A-I]1\")", "$1 s=\"1\""),
                     "<dataValidations count=\"3\"><dataValidation type=\"list\" allowBlank=\"1\" showErrorMessage=\"1\" sqref=\"I2:I31\">"
                             + "<formula1>\"需公司协调,需其他部门配合\"</formula1></dataValidation>"
@@ -116,6 +118,8 @@ public final class MeetingReportWorkbook {
                 var work = readCells(parts.get(paths.get(0)), shared, 2, 8);
                 var plan = readCells(parts.get(paths.get(1)), shared, 2, 8);
                 var coordination = readCells(parts.get(paths.get(2)), shared, 1001, 9);
+                // 已下载的模板仍可按旧 H 列标题导入，责任人填写要求相同。
+                if ("责任人（唯一）".equals(coordination.get("H1"))) coordination.put("H1", HEADERS.get(7));
                 for (int i = 0; i < HEADERS.size(); i++) {
                     if (!HEADERS.get(i).equals(coordination.get((char) ('A' + i) + "1")))
                         throw ApiFault.invalid("「协调事宜」表头有误，请使用当前模板");

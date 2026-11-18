@@ -1,0 +1,30 @@
+/* 通用蓝白灰为默认，各主题只替换强调色，业务状态使用独立语义色。 */
+:root, :root[data-theme="blue"] {
+  --brand: #2563eb; --brand-hover: #1d4ed8; --brand-soft: #eff6ff;
+  --ink: #243247; --text-secondary: #64748b; --muted: var(--text-secondary);
+  --canvas: #f3f5f9; --surface: #fff; --surface-muted: #f8fafc; --line: #e2e8f0;
+  --green: var(--brand); --focus-ring: color-mix(in srgb, var(--brand) 18%, transparent);
+  --success: #23744b; --success-soft: #edf8f0;
+  --warning: #986715; --warning-soft: #fff8e6;
+  --danger: #b53f3f; --danger-soft: #fff1f1;
+  color-scheme: light;
+}
+:root[data-theme="teal"] { --brand: #087f88; --brand-hover: #05646d; --brand-soft: #e8f5f5; }
+:root[data-theme="green"] { --brand: #287451; --brand-hover: #1e5d40; --brand-soft: #edf7f0; }
+:root[data-theme="violet"] { --brand: #7254b3; --brand-hover: #5d409b; --brand-soft: #f4f0fb; }
+body { background: var(--canvas); color: var(--ink); }
+:is(input, select, textarea) { background-color: var(--surface); }
+:is(input, select, textarea):focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--focus-ring); }
+:is(button, a):focus-visible { outline-color: var(--brand); }
+.platform-shell :is(.panel, .topbar, .management-sidebar), dialog { background-color: var(--surface); border-color: var(--line); }
+.platform-shell :is(.primary, button.primary), dialog .primary { background: var(--brand); border-color: var(--brand); color: white; }
+.platform-shell .primary:hover:not(:disabled), dialog .primary:hover:not(:disabled) { background: var(--brand-hover); border-color: var(--brand-hover); }
+.platform-shell :is(.secondary, .workspace-back), dialog .secondary { border-color: var(--line); }
+.platform-shell :is(.workspace-back, .management-nav-group a.active, .portal-filters .selected, .portal-tabs .selected) { background: var(--brand-soft); color: var(--brand); }
+.platform-shell :is(.text-button, .eyebrow), dialog .text-button { color: var(--brand); }
+.platform-shell :is(th, .rich-toolbar, .flow-dialog-section > summary) { background-color: var(--surface-muted); }
+.platform-shell label, dialog label { color: var(--ink); }
+.platform-shell .status-badge { color: var(--success); background: var(--success-soft); }
+.platform-shell :is(.form-error, .danger), dialog .form-error { color: var(--danger); }
+/* 已提交材料采用柔和按钮，保留本次内容是否已保存的视觉反馈。 */
+.platform-shell .material-submit.submitted-unchanged { background: var(--brand-soft); color: var(--text-secondary); border-color: var(--line); box-shadow: none; }

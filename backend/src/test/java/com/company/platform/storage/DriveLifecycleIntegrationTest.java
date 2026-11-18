@@ -122,6 +122,38 @@ class DriveLifecycleIntegrationTest {
         for(String action:List.of("EDIT","DELETE","MOVE","RESTORE","PURGE"))assertThrows(ApiFault.class,()->policy.requireDocument(staff,doc,action));
         assertThrows(ApiFault.class,()->policy.requireDocument(admin,doc,"EDIT"));assertThrows(ApiFault.class,()->policy.requireFolder(staff,folder,"FOLDER_MANAGE"));
     }
+
+    /** 本部门普通员工可完成上传和发布，祖先拒绝、跨部门和共享分区仍按对象校验。 */
+    @Test void staffCanPublishInsideOwnDepartmentUnlessExplicitlyDenied() throws Exception {
+        UUID shared=folder, otherDepartment=UUID.randomUUID(), otherInternal=UUID.randomUUID();
+        folder=UUID.randomUUID();
+        db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",
+                otherDepartment,"INT-"+otherDepartment,"隔离外部部门");
+        String otherFolderName="其他部门内部验收"+otherInternal;
+        db.update("""
+                INSERT INTO drive.folder(id,parent_id,zone,department_id,folder_level,name,name_key) VALUES
+                (?,?,'DEPARTMENT_INTERNAL',?,'CHILD','内部上传验收','内部上传验收'),
+                (?,NULL,'DEPARTMENT_INTERNAL',?,'TOP',?,?)
+                """,folder,shared,department,otherInternal,otherDepartment,otherFolderName,otherFolderName);
+        var query=Map.of("folderId",folder.toString(),"space","OWN_INTERNAL");
+        assertEquals(true,documents.documents(staff,query).get("folderCanUpload"));
+        assertEquals(false,documents.documents(staff,Map.of("folderId",shared.toString())).get("folderCanUpload"));
+        assertEquals(403,assertThrows(ApiFault.class,()->policy.requireFolder(staff,otherInternal,"UPLOAD")).status);
+        assertEquals(403,assertThrows(ApiFault.class,()->policy.requireFolder(staff,folder,"FOLDER_MANAGE")).status);
+
+        byte[] content=Files.readAllBytes(Path.of(System.getenv("IMS_DRIVE_TEST_PDF")));
+        UUID approved=upload(staff,content);
+        var published=documents.publish(staff,Sql.map("folderId",folder.toString(),"uploadSessionId",approved.toString(),
+                "name","本部门员工上传.pdf"),UUID.randomUUID(),UUID.randomUUID());
+        assertEquals(staff.userId(),db.required("SELECT uploaded_by FROM drive.document WHERE id=?",published.get("id")).get("uploaded_by"));
+
+        db.update("""
+                INSERT INTO drive.resource_grant(id,subject_id,resource_type,resource_id,action,effect,delegation_id,granted_by)
+                VALUES(?,?,'FOLDER',?,'UPLOAD','DENY',?,?)
+                """,UUID.randomUUID(),staff.userId(),shared,delegation,leader.userId());
+        assertEquals(false,documents.documents(staff,query).get("folderCanUpload"));
+        assertEquals(403,assertThrows(ApiFault.class,()->upload(staff,content)).status);
+    }
     /** 同操作号不会重复增加版本，异参重用和并发旧版本不能覆盖现有文档。 */
     @Test void renameUsesExpectedVersionAndStableOperation() throws Exception {
         UUID doc=published();var ctx=context(leader,"DRIVE_DOCUMENT",doc,"EDIT",1);var body=Sql.map("name","已更名.pdf","reason","验收重命名");
