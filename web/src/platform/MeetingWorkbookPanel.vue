@@ -12,6 +12,9 @@ import {
 interface WorkbookPreview {
   preview: string;
   errors: string[];
+  newInvitee: boolean;
+  employeeNo: string;
+  name: string;
   materials: {
     key: string;
     rows: number[];
@@ -25,6 +28,7 @@ interface WorkbookPreview {
       expected?: string;
       support?: string;
       department?: string;
+      assigneeName?: string;
       category?: CoordinationCategory;
     }[];
   }[];
@@ -82,7 +86,7 @@ async function importMaterials() {
   busy.value = true;
   error.value = "";
   try {
-    const result = await api<{ imported: number; skipped: number }>(
+    const result = await api<{ imported: number; skipped: number; inviteeAdded: boolean }>(
       path + "import",
       {
         method: "POST",
@@ -94,6 +98,7 @@ async function importMaterials() {
       },
     );
     message.value =
+      (result.inviteeAdded ? "已新增受邀员工。 " : "") +
       "已导入 " + result.imported + " 项，保留原填报 " + result.skipped + " 项";
     preview.value = undefined;
     emit("imported");
@@ -139,7 +144,11 @@ async function importMaterials() {
         </button>
       </div>
     </header>
+    <p v-if="canImport" class="booking-count">每份 Excel 填报一人。请在「协调事宜」F2 填写姓名和工号，即使没有协调事宜也要填写。</p>
     <template v-if="preview">
+      <p v-if="preview.newInvitee">
+        确认导入后将新增受邀员工 {{ preview.name }} · {{ preview.employeeNo }}
+      </p>
       <ul v-if="preview.errors.length" class="form-error" role="alert">
         <li v-for="problem in preview.errors" :key="problem">{{ problem }}</li>
       </ul>
@@ -164,6 +173,7 @@ async function importMaterials() {
                   line.support,
                   line.expected,
                   line.department,
+                  line.assigneeName && "责任人 " + line.assigneeName,
                 ]
                   .filter(Boolean)
                   .join("\n")

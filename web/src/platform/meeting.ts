@@ -138,7 +138,7 @@ export const materialLabels = {
   REPORT: "上周工作内容",
   WEEKLY_PLAN: "本周工作计划",
   TOPICS: "会议议题",
-  COORDINATION: "部门协调事宜",
+  COORDINATION: "协调事宜",
 } as const;
 /** 用于填写事项及按类汇总，旧事项按部门配合展示。 */
 export const coordinationLabels = {
@@ -154,11 +154,13 @@ export interface MaterialRow {
   support?: string;
   departmentId?: string | null;
   department?: string;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
 }
 /** 调用本场事项结论接口和展示纪要所需的字段。 */
 export interface CoordinationResult {
   key: string;
-  conclusion: string;
+  conclusion: string | null;
   assigneeId: string | null;
   assigneeName: string | null;
   dueAt: string | null;
@@ -172,6 +174,7 @@ export interface MeetingMaterial {
   data: {
     html?: string;
     text?: string;
+    source?: "EXCEL";
     rows?: MaterialRow[];
     author: { name: string; department: string };
   };

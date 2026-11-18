@@ -22,6 +22,7 @@ import {
   meetingStates,
   type MeetingDetail,
   type MeetingItem,
+  type MeetingMaterial,
   type MeetingOptions,
   type MeetingRoom,
   type MeetingSummary,
@@ -46,7 +47,6 @@ const decline = ref(false),
   returning = ref(false),
   returnReason = ref("");
 const report = ref(""),
-  topics = ref(""),
   feedback = ref("");
 const roomName = ref(""),
   enabled = ref(true),
@@ -101,7 +101,7 @@ watch(roomDialog, (dialog) => dialog?.showModal(), { flush: "post" });
 function closeRoom() {
   if (!busy.value) roomEditing.value = false;
 }
-const materialOrder: MaterialKind[] = ["REPORT", "WEEKLY_PLAN", "TOPICS", "COORDINATION"];
+const materialOrder: MaterialKind[] = ["REPORT", "WEEKLY_PLAN", "COORDINATION"];
 const formKinds = computed(() =>
   materialOrder.filter((kind) => detail.value?.materialTypes?.includes(kind)),
 );
@@ -115,7 +115,7 @@ const organizer = computed(() => detail.value?.organizerId === profile.value?.us
 const summaryTypes = computed<MaterialKind[]>(() =>
   detail.value?.shareAll === true ||
   detail.value?.organizerId === profile.value?.user.id
-    ? (detail.value?.materialTypes ?? []).filter((kind) => kind === "TOPICS" || kind === "COORDINATION")
+    ? (detail.value?.materialTypes ?? []).filter((kind) => kind === "COORDINATION")
     : [],
 );
 const submissions = computed(
@@ -130,7 +130,6 @@ async function refresh() {
     const record = await api<MeetingDetail>("/meetings/" + meetingId.value);
     detail.value = record;
     report.value = own.value?.report ?? "";
-    topics.value = own.value?.topics ?? "";
     replyReason.value = own.value?.declineReason ?? "";
     if (detailRevision.value === 0) {
       const kind = params.value.get("material");
@@ -321,10 +320,11 @@ function timeRange(start: string, end: string) {
 
 function missingMaterials(
   types: MaterialKind[],
-  submitted: { kind: MaterialKind }[],
+  submitted: MeetingMaterial[],
 ) {
+  const imported = submitted.some((entry) => entry.data.source === "EXCEL");
   return types
-    .filter((kind) => !submitted.some((entry) => entry.kind === kind))
+    .filter((kind) => !(imported && kind === "COORDINATION") && !submitted.some((entry) => entry.kind === kind))
     .map((kind) => materialLabels[kind])
     .join("、");
 }
@@ -826,7 +826,7 @@ function replyLabel(reply?: string) {
               :key="detail.id"
               class="detail-workbook"
               :meeting-id="detail.id"
-              :can-import="detail.canStart && !!detail.materialTypes?.length"
+              :can-import="detail.canStart && !!formKinds.length"
               @imported="reloadDetail"
             />
           </section>
@@ -908,27 +908,26 @@ function replyLabel(reply?: string) {
                   v-if="detail.materialTypes && person.materials"
                   class="material-results"
                 >
+                  <small v-if="person.materials.some((entry) => entry.data.source === 'EXCEL')">Excel 已提交</small>
                   <p
                     v-if="
                       (organizer || person.userId === own?.userId) &&
                       person.reply !== 'DECLINED' &&
-                      detail.materialTypes.length > 0 &&
-                      person.materials.length < detail.materialTypes.length
+                      missingMaterials(formKinds, person.materials)
                     "
                     class="booking-count"
                   >
                     未提交
                     {{
-                      missingMaterials(detail.materialTypes, person.materials)
+                      missingMaterials(formKinds, person.materials)
                     }}
                   </p>
-                  <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
-                    && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
+                  <small v-else-if="(organizer || person.userId === own?.userId) && formKinds.length
+                    && !person.materials.some((entry) => entry.data.source === 'EXCEL')">会前材料已提交</small>
                   <details
                     v-for="material in person.materials.filter(
                       (entry) =>
-                        entry.kind === 'REPORT' ||
-                        !summaryTypes.includes(entry.kind),
+                        entry.kind !== 'TOPICS',
                     )"
                     :key="material.kind"
                   >
@@ -952,6 +951,7 @@ function replyLabel(reply?: string) {
                         <strong>{{ row.subject }}</strong>
                         <p class="meeting-text">期望结果 {{ row.expected }}</p>
                         <small v-if="row.department">{{ row.department }}</small>
+                        <small v-if="row.assigneeName"> · 会前填报责任人 {{ row.assigneeName }}</small>
                       </li>
                     </ol>
                   </details>
@@ -959,18 +959,15 @@ function replyLabel(reply?: string) {
                 <div v-if="person.report" class="material-results">
                   <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
                 </div>
-                <div v-if="person.topics" class="material-results">
-                  <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
-                </div>
               </li>
             </ul>
           </section>
           <MeetingMaterialSummary
-            v-if="summaryTypes.length && !detail.minutes"
+            v-if="summaryTypes.length && (!detail.minutes || detail.canWriteMinutes)"
             :types="summaryTypes"
             :submissions="submissions"
             :results="detail.coordinationResults"
-            :editing="detail.canEnd && options
+            :editing="(detail.canEnd || detail.canWriteMinutes) && options
               ? { meetingId: detail.id, departments: options.departments, trackFollowUp: detail.trackFollowUp }
               : undefined"
             @saved="reloadDetail"
@@ -978,7 +975,7 @@ function replyLabel(reply?: string) {
           <section
             v-if="
               detail.canSubmitMaterials &&
-              detail.materialTypes?.length &&
+              formKinds.length &&
               detail.materialAuthor &&
               options
             "
@@ -1002,18 +999,17 @@ function replyLabel(reply?: string) {
             @submit.prevent="
               act(
                 '/meetings/' + detail.id + '/materials',
-                { report, topics },
+                { report },
                 '会前材料已保存',
                 'PUT',
               )
             "
           >
-            <h3>会前汇报与议题</h3>
+            <h3>会前汇报</h3>
             <RichTextEditor v-model="report" label="汇报信息" :rows="4" :limit="4000" />
-            <RichTextEditor v-model="topics" label="会议议题" :rows="4" :limit="4000" />
             <button
               class="primary"
-              :disabled="busy || (!report.trim() && !topics.trim())"
+              :disabled="busy || !report.trim()"
             >
               提交材料
             </button>
@@ -1032,7 +1028,7 @@ function replyLabel(reply?: string) {
           <MeetingMinutes
             v-if="detail.canWriteMinutes && options"
             id="meeting-minutes-editor"
-            :key="detailRevision"
+            :key="detail.id"
             :meeting="detail"
             :departments="options.departments"
             @saved="minutesSaved"

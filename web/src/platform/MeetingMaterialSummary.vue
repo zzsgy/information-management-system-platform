@@ -24,44 +24,31 @@ const emit = defineEmits<{ saved: [] }>();
 /** 保存的协调结论按冻结后的会前材料行匹配。 */
 const tables = computed(() => {
   const results = new Map(props.results?.map((row) => [row.key, row]));
-  const rows = (kind: MaterialKind) =>
-    props.submissions
-      .filter((entry) => entry.kind === kind)
+  if (!props.types.includes("COORDINATION")) return [];
+  const items = props.submissions
+      .filter((entry) => entry.kind === "COORDINATION")
       .flatMap(({ data, attendeeId }, materialIndex) =>
         (data.rows ?? []).map((row, index) => {
           const key = (attendeeId ?? materialIndex) + ":" + index;
           return { ...row, key, author: data.author, result: results.get(key) };
         }),
       );
-  const tables = [];
-  if (props.types.includes("TOPICS"))
-    tables.push({
-      heading: "会议议题汇总",
-      coordination: false,
-      rows: rows("TOPICS"),
-    });
-  if (props.types.includes("COORDINATION")) {
-    const items = rows("COORDINATION");
-    tables.push(
+  return [
       {
         heading: coordinationLabels.COMPANY,
-        coordination: true,
         rows: items.filter((row) => row.category === "COMPANY"),
       },
       {
         heading: coordinationLabels.DEPARTMENT,
-        coordination: true,
         rows: items.filter((row) => row.category !== "COMPANY"),
       },
-    );
-  }
-  return tables;
+  ];
 });
 </script>
 
 <template>
   <section
-    v-for="{ heading, coordination, rows } in tables"
+    v-for="{ heading, rows } in tables"
     :key="heading"
     class="flow-dialog-section"
   >
@@ -77,20 +64,20 @@ const tables = computed(() => {
       :aria-label="heading"
     >
       <table
-        :class="{ conclusions: coordination && (editing || results?.length) }"
+        :class="{ conclusions: editing || results?.length }"
       >
         <thead>
           <tr>
             <th scope="col">序号</th>
-            <th scope="col">{{ coordination ? "事项" : "议题" }}</th>
-            <th v-if="coordination" scope="col">需协调或配合内容</th>
+            <th scope="col">事项</th>
+            <th scope="col">需协调或配合内容</th>
             <th scope="col">期望结果 / 验收标准</th>
             <th scope="col">填报部门</th>
             <th scope="col">填报人</th>
-            <th v-if="coordination" scope="col">配合部门</th>
-            <template v-if="coordination && (editing || results?.length)">
+            <th scope="col">配合部门</th>
+            <th scope="col">责任人（唯一）</th>
+            <template v-if="editing || results?.length">
               <th scope="col">会议结论</th>
-              <th scope="col">唯一责任人</th>
               <th scope="col">截止时间</th>
               <th v-if="editing" scope="col">操作</th>
             </template>
@@ -100,20 +87,23 @@ const tables = computed(() => {
           <tr v-for="(row, index) in rows" :key="row.key">
             <th scope="row">{{ index + 1 }}</th>
             <td>{{ row.subject }}</td>
-            <td v-if="coordination">{{ row.support }}</td>
+            <td>{{ row.support }}</td>
             <td>{{ row.expected }}</td>
             <td>{{ row.author.department }}</td>
             <td>{{ row.author.name }}</td>
-            <td v-if="coordination">{{ row.department }}</td>
-            <template v-if="coordination && (editing || results?.length)">
+            <td>{{ row.department }}</td>
+            <td>{{ row.result?.assigneeName ?? row.assigneeName }}</td>
+            <template v-if="editing || results?.length">
               <td>{{ row.result?.conclusion }}</td>
-              <td>{{ row.result?.assigneeName }}</td>
               <td>{{ row.result?.dueAt ? dateTime(row.result.dueAt) : "" }}</td>
               <td v-if="editing">
                 <MeetingCoordinationResult
                   :row-key="row.key"
                   :subject="row.subject"
                   :initial="row.result"
+                  :department-id="row.departmentId"
+                  :assignee-id="row.assigneeId"
+                  :assignee-name="row.assigneeName"
                   :meeting-id="editing.meetingId"
                   :departments="editing.departments"
                   :track-follow-up="editing.trackFollowUp"

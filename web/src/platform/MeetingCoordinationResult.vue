@@ -2,6 +2,7 @@
 import { reactive, ref, watch } from "vue";
 import { api } from "./api";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
+import MeetingDepartmentAssignee from "./MeetingDepartmentAssignee.vue";
 import {
   meetingDateInput,
   meetingInstant,
@@ -14,6 +15,9 @@ const props = defineProps<{
   rowKey: string;
   subject: string;
   initial?: CoordinationResult;
+  departmentId?: string | null;
+  assigneeId?: string | null;
+  assigneeName?: string | null;
   trackFollowUp: boolean;
   departments: MeetingOption[];
 }>();
@@ -35,8 +39,8 @@ watch(dialog, (value) => value?.showModal(), { flush: "post" });
 function edit() {
   const current = props.initial;
   draft.conclusion = current?.conclusion ?? "";
-  draft.assigneeId = current?.assigneeId ?? "";
-  draft.assigneeName = current?.assigneeName ?? "";
+  draft.assigneeId = current?.assigneeId ?? props.assigneeId ?? "";
+  draft.assigneeName = current?.assigneeName ?? props.assigneeName ?? "";
   draft.dueAt = current?.dueAt ? meetingDateInput(current.dueAt) : "";
   draft.followUp = current?.followUp ?? false;
   error.value = "";
@@ -70,29 +74,38 @@ async function save() {
 
 <template>
   <button type="button" class="secondary" @click="edit">
-    {{ initial ? "修改结论" : "记录结论" }}
+    编辑协调结果
   </button>
   <dialog
     v-if="open"
     ref="dialog"
     class="flow-dialog"
-    aria-label="记录事项结论"
+    aria-label="编辑协调结果"
     @cancel.prevent="!busy && (open = false)"
   >
     <form @submit.prevent="save">
-      <header class="flow-dialog-header"><h2>记录事项结论</h2></header>
+      <header class="flow-dialog-header"><h2>编辑协调结果</h2></header>
       <div class="flow-dialog-body">
         <p>{{ subject }}</p>
         <label
           >会议结论
           <textarea
             v-model="draft.conclusion"
-            required
+            :required="draft.followUp"
             maxlength="3000"
             rows="4"
           />
         </label>
-        <div class="meeting-actions">
+        <label v-if="departmentId">
+          责任人（唯一）
+          <MeetingDepartmentAssignee
+            v-model="draft.assigneeId"
+            :department-id="departmentId"
+            :selected-name="draft.assigneeName"
+            label="责任人（唯一）"
+          />
+        </label>
+        <div v-else class="meeting-actions">
           <span>唯一责任人 {{ draft.assigneeName || "未选择" }}</span>
           <MeetingPeoplePicker
             :departments="departments"
@@ -142,7 +155,7 @@ async function save() {
         >
           取消
         </button>
-        <button type="submit" class="primary" :disabled="busy">保存结论</button>
+        <button type="submit" class="primary" :disabled="busy || (!!assigneeId && !draft.assigneeId)">保存</button>
       </footer>
     </form>
   </dialog>

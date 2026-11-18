@@ -2,6 +2,7 @@ package com.company.platform.meeting;
 
 import com.company.platform.*;
 import com.company.platform.intake.ImportWorkbook;
+import com.company.platform.intake.MeetingReportWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.util.HtmlUtils;
@@ -18,14 +19,9 @@ public class MeetingWorkbooks {
     /** 导出截止时间与会议页面使用同一时区。 */
     private static final DateTimeFormatter EXPORT_TIME =
             DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm").withZone(ZoneId.of("Asia/Shanghai"));
-    /** 行分组与会前材料的一位员工、一类记录对应。 */
-    private record Group(Map<String, Object> attendee, String kind, List<Integer> lines,
-                         List<Map<String, Object>> entries) {
-        String key() { return attendee.get("id") + ":" + kind; }
-    }
-
-    /** 已通过材料校验的预检组，保留原行号和文件变更预览。 */
-    private record Prepared(Group group, Map<String, Object> payload, Map<String, Object> preview) {}
+    /** 一份填报表的一个可独立覆盖的材料栏目。 */
+    private record Prepared(String kind, List<Integer> rows, Map<String, Object> payload,
+                            List<Map<String, Object>> entries) {}
 
     private final MeetingBookings bookings;
     private final Sql db;
@@ -44,7 +40,7 @@ public class MeetingWorkbooks {
             MeetingBookings.requireNotStarted(meeting);
             if (meeting.get("cancelled_at") != null || meeting.get("material_types") == null || columns.size() == 1)
                 throw ApiFault.invalid("本场会议当前未征集可导入的材料");
-            return ImportWorkbook.meetingWorkbook("会议填报", marker(id), columns, List.of());
+            return MeetingReportWorkbook.template(id);
         }
         columns.addAll(1, List.of("name|填报人", "departmentName|填报部门"));
         if (types(meeting).contains("COORDINATION")) {
@@ -55,7 +51,7 @@ public class MeetingWorkbooks {
                 exportRows(id, meeting));
     }
 
-    /** 会前预检并按当前冲突选择导入，预检和提交之间的材料变更须重新预检。 */
+    /** 按一位填报人归档。新增邀请与材料写入一起提交，预检只返回待确认变化。 */
     @Transactional
     public Map<String, Object> importMaterials(Actor actor, UUID id, UUID request, Map<String, Object> body) {
         Inputs.only(body, "file", "preview", "overwrite");
@@ -66,114 +62,121 @@ public class MeetingWorkbooks {
         } catch (IllegalArgumentException invalid) {
             throw ApiFault.invalid("会议 Excel 文件编码无效");
         }
+        if (body.containsKey("preview")) bookings.lockWorkbookImport(actor);
         var meeting = bookings.owned(actor, id);
         MeetingBookings.requireNotStarted(meeting);
-        var columns = columns(meeting);
-        if (meeting.get("material_types") == null || columns.size() == 1)
+        if (meeting.get("material_types") == null || columns(meeting).size() == 1)
             throw ApiFault.invalid("本场会议未开启可导入的材料征集");
-        var rows = ImportWorkbook.readMeeting(bytes, marker(id), columns);
-        var invitees = new HashMap<String, Map<String, Object>>();
-        for (var attendee : bookings.attendees(id)) {
-            if (MeetingBookings.eligibleForMaterials(meeting, attendee))
-                invitees.put(Objects.toString(attendee.get("employee_no")), attendee);
-        }
+        var report = MeetingReportWorkbook.read(bytes, id);
+        var author = resolveEmployee(report.author(), "「协调事宜」F2 的填报人");
+        var user = (UUID) author.get("user_id");
+        if (user.equals(actor.userId())) throw ApiFault.invalid("会议发起人不能作为本场受邀员工导入");
+        var invite = db.one("SELECT id,reply,removed_at FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=?", id, user);
+        boolean newInvitee = invite == null || invite.get("removed_at") != null;
+        if (!newInvitee && "DECLINED".equals(invite.get("reply")))
+            throw ApiFault.invalid("该员工已拒绝本场会议，请先确认其参会安排");
+
         var errors = new ArrayList<String>();
-        var groups = new LinkedHashMap<String, Group>();
-        for (var row : rows) {
-            try {
-                collectRow(row, invitees, groups);
-            } catch (ApiFault fault) {
-                errors.add("第 " + row.number() + " 行：" + fault.getMessage());
-            }
-        }
-        var existing = new HashMap<String, Object>();
-        for (var material : meetingMaterials(id))
-            existing.put(material.get("attendee_id") + ":" + material.get("kind"), material.get("payload"));
         var prepared = new ArrayList<Prepared>();
-        var snapshot = new LinkedHashMap<String, Object>();
-        for (var group : groups.values()) {
+        prepareText(prepared, errors, meeting, author, "REPORT", report.work());
+        prepareText(prepared, errors, meeting, author, "WEEKLY_PLAN", report.plan());
+        var lines = new ArrayList<Integer>();
+        var entries = new ArrayList<Map<String, Object>>();
+        for (var row : report.coordination()) {
             try {
-                var payload = preparedPayload(group, meeting);
-                Object current = existing.get(group.key());
-                snapshot.put(group.key(), current);
-                prepared.add(new Prepared(group, payload, Sql.map(
-                        "key", group.key(), "rows", group.lines(), "kind", group.kind(),
-                        "employeeNo", group.attendee().get("employee_no"), "name", group.attendee().get("name"),
-                        "conflict", current != null, "content", group.entries())));
+                var values = row.values();
+                if (values.containsKey("author") && !user.equals(resolveEmployee(
+                        Inputs.text(values, "author", 128), "填报人").get("user_id")))
+                    throw ApiFault.invalid("同一份表只能填写一位员工");
+                if (values.containsKey("authorDepartment") && !author.get("department").equals(values.get("authorDepartment")))
+                    throw ApiFault.invalid("填报部门与员工档案不一致");
+                if (values.keySet().stream().allMatch(Set.of("author", "authorDepartment")::contains)) continue;
+                if (!types(meeting).contains("COORDINATION")) throw ApiFault.invalid("本场会议未征集协调事宜");
+                entries.add(coordination(values));
+                lines.add(row.number());
             } catch (ApiFault fault) {
-                errors.add("第 " + group.lines() + " 行：" + fault.getMessage());
+                errors.add("「协调事宜」第 " + row.number() + " 行：" + fault.getMessage());
             }
         }
+        if (entries.size() > 30) errors.add("「协调事宜」最多填写 30 条");
+        else if (!entries.isEmpty()) prepared.add(new Prepared("COORDINATION", lines,
+                bookings.addMaterialAuthor(Sql.map("rows", entries), author), entries));
+        if (prepared.isEmpty() && errors.isEmpty()) errors.add("请至少填写一项本场会议征集的材料");
+
+        var current = new HashMap<String, Object>();
+        if (invite != null) {
+            for (var row : db.rows("SELECT kind,payload::text AS payload FROM portal.meeting_material WHERE attendee_id=?",
+                    invite.get("id"))) current.put((String) row.get("kind"), row.get("payload"));
+        }
+        var snapshot = new LinkedHashMap<String, Object>();
+        snapshot.put("user", user);
+        snapshot.put("invitation", invite);
+        for (var group : prepared) snapshot.put(group.kind(), current.get(group.kind()));
         String preview = Crypto.hash(Crypto.hash(file) + Crypto.json(snapshot));
         if (!body.containsKey("preview")) {
-            return Sql.map("preview", preview, "errors", errors, "materials", prepared.stream().map(Prepared::preview).toList());
+            return Sql.map("preview", preview, "errors", errors, "newInvitee", newInvitee,
+                    "employeeNo", author.get("employee_no"), "name", author.get("name"),
+                    "materials", prepared.stream().map(group -> Sql.map(
+                            "key", group.kind(), "rows", group.rows(), "kind", group.kind(),
+                            "employeeNo", author.get("employee_no"), "name", author.get("name"),
+                            "conflict", current.containsKey(group.kind()), "content", group.entries())).toList());
         }
         if (!preview.equals(Inputs.text(body, "preview", 64))) throw ApiFault.conflict("填报内容已变化，请重新预览");
         if (!errors.isEmpty() || prepared.isEmpty()) throw ApiFault.invalid("请修正文件中的问题后重新预览");
-        if (!(body.getOrDefault("overwrite", List.of()) instanceof List<?> overwrite)
-                || !snapshot.keySet().containsAll(overwrite))
+        var kinds = prepared.stream().map(Prepared::kind).toList();
+        if (!(body.getOrDefault("overwrite", List.of()) instanceof List<?> overwrite) || !kinds.containsAll(overwrite))
             throw ApiFault.invalid("覆盖选项须对应预览中的材料");
+        UUID attendeeId = newInvitee ? bookings.inviteWorkbookEmployee(actor, id, meeting, user) : (UUID) invite.get("id");
         int imported = 0;
-        for (var entry : prepared) {
-            var group = entry.group();
-            if (existing.containsKey(group.key()) && !overwrite.contains(group.key())) continue;
-            bookings.storeMaterial((UUID) group.attendee().get("id"), group.kind(), entry.payload());
+        for (var group : prepared) {
+            if (current.containsKey(group.kind()) && !overwrite.contains(group.kind())) continue;
+            group.payload().put("source", "EXCEL");
+            bookings.storeMaterial(attendeeId, group.kind(), group.payload());
             imported++;
         }
-        if (imported > 0) bookings.event(actor, request, id, "MEETING_MATERIALS_IMPORT");
-        return Sql.map("imported", imported, "skipped", prepared.size() - imported);
+        if (imported > 0 || newInvitee) bookings.event(actor, request, id, "MEETING_MATERIALS_IMPORT");
+        return Sql.map("imported", imported, "skipped", prepared.size() - imported, "inviteeAdded", newInvitee);
     }
 
-    /** 将同一工号的多行议题按原顺序汇总，正文每人每栏只允许填一处。 */
-    private void collectRow(ImportWorkbook.Row row, Map<String, Map<String, Object>> invitees, Map<String, Group> groups) {
-        var values = row.values();
-        var attendee = invitees.get(values.get("employeeNo"));
-        if (attendee == null) throw ApiFault.invalid("工号须对应本次参加或尚未回复的受邀员工");
-        if (values.size() == 1) throw ApiFault.invalid("请填写至少一项材料");
-        if (values.containsKey("report")) addGroup(groups, attendee, "REPORT", row.number(), Sql.map("text", values.get("report")));
-        if (values.containsKey("plan")) addGroup(groups, attendee, "WEEKLY_PLAN", row.number(), Sql.map("text", values.get("plan")));
-        if (values.containsKey("topic") || values.containsKey("topicExpected")) {
-            var topic = bookings.structuredRow("TOPICS", Sql.map("subject", values.get("topic"), "expected", values.get("topicExpected")));
-            addGroup(groups, attendee, "TOPICS", row.number(), topic);
-        }
-        if (List.of("category", "coord", "support", "expected", "department").stream().anyMatch(values::containsKey)) {
-            String category = switch (Objects.toString(values.get("category"), "")) {
-                case "需公司协调" -> "COMPANY";
-                case "需其他部门配合" -> "DEPARTMENT";
-                default -> throw ApiFault.invalid("事项类别请填写「需公司协调」或「需其他部门配合」");
-            };
-            UUID department = null;
-            if (values.containsKey("department")) {
-                Object value = values.get("department");
-                var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", value, value);
-                if (matches.size() != 1) throw ApiFault.invalid("找不到唯一的配合部门，请填写部门编码");
-                department = (UUID) matches.getFirst().get("id");
-            }
-            var coordination = bookings.structuredRow("COORDINATION", Sql.map("category", category,
-                    "subject", values.get("coord"), "support", values.get("support"), "expected", values.get("expected"),
-                    "departmentId", department == null ? null : department.toString()));
-            addGroup(groups, attendee, "COORDINATION", row.number(), coordination);
+    /** 精确匹配工号，姓名复核避免材料归错员工。 */
+    private Map<String, Object> resolveEmployee(String value, String field) {
+        var match = java.util.regex.Pattern.compile("^(.+?)[\\s+＋（(]+([A-Za-z0-9-]{1,64})[）)]?$").matcher(value.strip());
+        if (!match.matches()) throw ApiFault.invalid(field + "请填写姓名和工号，例如 张三 BLK27001");
+        var employee = bookings.workbookEmployee(match.group(2));
+        if (employee == null || !match.group(1).strip().equals(employee.get("name")))
+            throw ApiFault.invalid(field + "的姓名或工号与有效员工档案不符");
+        return employee;
+    }
+
+    /** 在预检中保留工作表名称和正文单元格，便于员工退回修正。 */
+    private void prepareText(List<Prepared> prepared, List<String> errors, Map<String, Object> meeting,
+            Map<String, Object> author, String kind, String text) {
+        if (text == null) return;
+        var value = Sql.map("text", text);
+        try {
+            if (!types(meeting).contains(kind)) throw ApiFault.invalid("本场会议未征集此材料");
+            prepared.add(new Prepared(kind, List.of(2), bookings.structuredPayload(value, kind, meeting, author), List.of(value)));
+        } catch (ApiFault fault) {
+            errors.add("「" + ("REPORT".equals(kind) ? "上周工作内容" : "本周工作计划") + "」A2：" + fault.getMessage());
         }
     }
 
-    /** 保存原表行号，便于定位同一作者的一组材料。 */
-    private static void addGroup(Map<String, Group> groups, Map<String, Object> attendee, String kind, int line,
-            Map<String, Object> value) {
-        var group = groups.computeIfAbsent(attendee.get("id") + ":" + kind,
-                key -> new Group(attendee, kind, new ArrayList<>(), new ArrayList<>()));
-        group.lines().add(line);
-        group.entries().add(value);
+    /** 将 Excel 部门与责任人转换为线上材料校验接受的员工标识。 */
+    private Map<String, Object> coordination(Map<String, Object> values) {
+        String category = switch (Objects.toString(values.get("category"), "")) {
+            case "需公司协调" -> "COMPANY";
+            case "需其他部门配合" -> "DEPARTMENT";
+            default -> throw ApiFault.invalid("请选择事项类别「需公司协调」或「需其他部门配合」");
+        };
+        String department = Inputs.text(values, "department", 128);
+        var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", department, department);
+        if (matches.size() != 1) throw ApiFault.invalid("请填写有效且唯一的配合部门名称或编码");
+        var assignee = resolveEmployee(Inputs.text(values, "assignee", 128), "责任人");
+        return bookings.structuredRow("COORDINATION", Sql.map("category", category, "subject", values.get("subject"),
+                "support", values.get("support"), "expected", values.get("expected"),
+                "departmentId", matches.getFirst().get("id").toString(), "personId", assignee.get("user_id").toString()));
     }
 
-    /** 把表格数据转换为线上保存入口使用的业务结构。 */
-    private Map<String, Object> preparedPayload(Group group, Map<String, Object> meeting) {
-        if (Set.of("REPORT", "WEEKLY_PLAN").contains(group.kind())) {
-            if (group.entries().size() != 1) throw ApiFault.invalid("同一人同一栏目只需填写一次");
-            return bookings.structuredPayload(group.entries().getFirst(), group.kind(), meeting, group.attendee());
-        }
-        if (group.entries().size() > 30) throw ApiFault.invalid("同一人同一类事项最多 30 条");
-        return bookings.addMaterialAuthor(Sql.map("rows", group.entries()), group.attendee());
-    }
 
     /** 汇总导出沿用提交时的姓名和部门，协调结论按原事项行关联。 */
     private List<Map<String, Object>> exportRows(UUID id, Map<String, Object> meeting) {
@@ -189,24 +192,21 @@ public class MeetingWorkbooks {
                     author.put("REPORT".equals(material.get("kind")) ? "report" : "plan", value(payload, "text"));
                     output.add(author);
                 }
-                case "TOPICS", "COORDINATION" -> {
+                case "TOPICS" -> { }
+                case "COORDINATION" -> {
                     int index = 0;
                     for (var row : payload.path("rows")) {
                         var line = new LinkedHashMap<>(author);
-                        if ("TOPICS".equals(material.get("kind"))) {
-                            line.put("topic", value(row, "subject"));
-                            line.put("topicExpected", value(row, "expected"));
-                        } else {
-                            line.put("category", "COMPANY".equals(value(row, "category")) ? "需公司协调" : "需其他部门配合");
-                            line.put("coord", value(row, "subject"));
-                            for (String field : List.of("support", "expected", "department")) line.put(field, value(row, field));
-                            var result = results.get(material.get("attendee_id") + ":" + index);
-                            if (result != null) {
-                                line.put("conclusion", result.get("conclusion"));
-                                line.put("assignee", result.get("assigneeName"));
-                                if (result.get("dueAt") instanceof String dueAt)
-                                    line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
-                            }
+                        line.put("category", "COMPANY".equals(value(row, "category")) ? "需公司协调" : "需其他部门配合");
+                        line.put("coord", value(row, "subject"));
+                        for (String field : List.of("support", "expected", "department")) line.put(field, value(row, field));
+                        var result = results.get(material.get("attendee_id") + ":" + index);
+                        line.put("assignee", result != null && result.get("assigneeName") != null
+                                ? result.get("assigneeName") : value(row, "assigneeName"));
+                        if (result != null) {
+                            line.put("conclusion", result.get("conclusion"));
+                            if (result.get("dueAt") instanceof String dueAt)
+                                line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
                         }
                         output.add(line);
                         index++;
@@ -217,10 +217,9 @@ public class MeetingWorkbooks {
         }
         if (meeting.get("material_types") == null) {
             for (var attendee : bookings.attendees(id)) {
-                if (attendee.get("report") == null && attendee.get("topics") == null) continue;
+                if (attendee.get("report") == null) continue;
                 output.add(Sql.map("employeeNo", attendee.get("employee_no"), "name", attendee.get("name"),
-                        "report", FormattedText.preview(Objects.toString(attendee.get("report"), "")),
-                        "topic", FormattedText.preview(Objects.toString(attendee.get("topics"), ""))));
+                        "report", FormattedText.preview(Objects.toString(attendee.get("report"), ""))));
             }
         }
         Object savedMinutes = meeting.get("minutes");
@@ -257,18 +256,14 @@ public class MeetingWorkbooks {
         var types = types(meeting);
         if (types.contains("REPORT")) columns.add("report|上周工作内容");
         if (types.contains("WEEKLY_PLAN")) columns.add("plan|本周工作计划");
-        if (types.contains("TOPICS")) columns.addAll(List.of("topic|会议议题", "topicExpected|议题期望结果"));
         if (types.contains("COORDINATION")) columns.addAll(List.of("category|事项类别（需公司协调／需其他部门配合）",
                 "coord|协调或配合事项", "support|需要协调或配合的内容", "expected|期望结果或验收标准", "department|配合部门"));
         return columns;
     }
 
     private static List<?> types(Map<String, Object> meeting) {
-        return meeting.get("material_types") instanceof List<?> types ? types : List.of("REPORT", "TOPICS");
+        return meeting.get("material_types") instanceof List<?> types ? types : List.of("REPORT");
     }
-
-    /** 模板绑定本场会议，避免同字段的其他会议表格误导入。 */
-    private static String marker(UUID id) { return "IMS-MEETING-1:" + id; }
 
     private static String value(JsonNode node, String field) { return node.path(field).asText(""); }
 }

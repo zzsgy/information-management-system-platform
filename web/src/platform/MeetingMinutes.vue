@@ -2,7 +2,6 @@
 import { computed, reactive, ref } from "vue";
 import { api } from "./api";
 import RichTextEditor from "./RichTextEditor.vue";
-import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
 import {
   meetingDateInput,
@@ -23,7 +22,6 @@ const minutes = reactive({
   decisions: draft?.decisions ?? "",
   noteReaderIds: draft?.noteReaderIds ?? [],
   shareReports: draft?.sharedSummaries?.REPORT ?? false,
-  shareTopics: draft?.sharedSummaries?.TOPICS ?? false,
   shareCoordination: draft?.sharedSummaries?.COORDINATION ?? false,
 });
 const readerSearch = ref("");
@@ -90,12 +88,6 @@ async function save(submit: boolean) {
 <template>
   <form class="meeting-section minutes-panel" @submit.prevent="save(publish)">
     <h2>会议纪要底稿</h2>
-    <MeetingMaterialSummary
-      v-if="draft?.materialTables && meeting.materialTypes"
-      :types="meeting.materialTypes"
-      :submissions="draft.materialTables"
-      :results="meeting.coordinationResults"
-    />
     <RichTextEditor v-model="minutes.materialsText" label="会前材料汇总" :rows="7" :limit="4100000" />
     <RichTextEditor v-model="minutes.decisions" label="会议决议" :rows="3" :limit="12000"
       :required="publish && !meeting.coordinationResults?.length" />
@@ -135,22 +127,13 @@ async function save(submit: boolean) {
         />向所有受邀员工共享工作汇报
       </label>
       <label
-        v-if="meeting.materialTypes?.includes('TOPICS')"
-        class="minutes-check"
-      >
-        <input
-          v-model="minutes.shareTopics"
-          type="checkbox"
-        />向所有受邀员工共享会议议题汇总
-      </label>
-      <label
         v-if="meeting.materialTypes?.includes('COORDINATION')"
         class="minutes-check"
       >
         <input
           v-model="minutes.shareCoordination"
           type="checkbox"
-        />向所有受邀员工共享部门协调事宜汇总
+        />向所有受邀员工共享协调事宜汇总
       </label>
     </fieldset>
     <template v-if="meeting.trackFollowUp">

@@ -125,7 +125,7 @@ public class MeetingController {
         return saved(meeting, r);
     }
 
-    /** 只有发起人可在会中保存本次会议的事项结论。 */
+    /** 只有发起人可在开会后、纪要发布前调整本场的事项结果。 */
     @PutMapping("/meetings/{id}/coordination")
     public Map<String, Object> coordination(@PathVariable String id, @RequestBody Map<String, Object> body,
             HttpServletRequest r) {

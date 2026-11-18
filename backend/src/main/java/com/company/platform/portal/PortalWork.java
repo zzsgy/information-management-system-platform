@@ -235,7 +235,9 @@ public class PortalWork {
                 CROSS JOIN LATERAL (
                     SELECT CASE WHEN m.material_types IS NULL THEN
                              a.material_required AND (m.kind='WEEKLY' OR a.reply<>'DECLINED') AND a.material_at IS NULL
-                           ELSE count(*) FILTER (WHERE x.submitted_at IS NULL)>0 END AS missing,
+                           ELSE count(*) FILTER (WHERE k.kind NOT IN ('TOPICS','COORDINATION') AND x.submitted_at IS NULL)>0
+                             OR (count(*) FILTER (WHERE k.kind='COORDINATION' AND x.submitted_at IS NULL)>0
+                                 AND count(*) FILTER (WHERE x.payload->>'source'='EXCEL')=0) END AS missing,
                            GREATEST(a.material_at,max(x.submitted_at)) AS latest_at
                     FROM unnest(m.material_types) k(kind)
                     LEFT JOIN portal.meeting_material x ON x.attendee_id=a.id AND x.kind=k.kind

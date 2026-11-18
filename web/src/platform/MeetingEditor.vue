@@ -252,17 +252,18 @@ async function save() {
         >
           <h3>会议流程</h3>
           <div v-if="!original" class="booking-options">
-            <label
+            <template
               v-for="(label, kind) in materialLabels"
               :key="kind"
-              class="booking-check"
             >
+              <label v-if="kind !== 'TOPICS'" class="booking-check">
               <input
                 v-model="materialTypes"
                 type="checkbox"
                 :value="kind"
               />征集{{ kind === "REPORT" ? "工作汇报" : kind === "WEEKLY_PLAN" ? "本周计划" : label }}
-            </label>
+              </label>
+            </template>
             <label v-if="data.kind === 'ORDINARY'" class="booking-check">
               <input v-model="data.trackFollowUp" type="checkbox" />跟踪会后反馈
             </label>

@@ -186,11 +186,11 @@ public class MeetingBookings {
         boolean urgent = flag(body, "urgent", false);
         Set<String> types = null;
         if (body.containsKey("materialTypes")) {
-            if (!(body.get("materialTypes") instanceof List<?> values) || values.size()>4)
+            if (!(body.get("materialTypes") instanceof List<?> values) || values.size()>3)
                 throw ApiFault.invalid("请选择有效的会前材料类型");
             types = new LinkedHashSet<>();
             for (Object value : values)
-                if (!types.add(materialKind(value)))
+                if (!types.add(Inputs.choice(value, "REPORT", "WEEKLY_PLAN", "COORDINATION")))
                     throw ApiFault.invalid("会前材料类型不能重复");
         }
         boolean collect = weekly || (types == null ? flag(body, "collectMaterials", false) : !types.isEmpty());
@@ -342,41 +342,42 @@ public class MeetingBookings {
         db.update("UPDATE portal.meeting_booking SET live_decisions=? WHERE id=?", decisions, id);
     }
 
-    /** 发起人在会中保存一条结论；所引用的会前事项已随开会冻结。 */
+    /** 发起人可在会议开始后、纪要发布前调整事项结论和责任人。 */
     @Transactional
     public void saveCoordination(Actor actor, UUID id, Map<String, Object> body) {
         Inputs.only(body, "key", "conclusion", "assigneeId", "dueAt", "followUp");
         String key = Inputs.text(body, "key", 48);
-        String conclusion = Inputs.text(body, "conclusion", 3000);
+        String conclusion = optional(body, "conclusion", 3000);
         UUID assignee = Inputs.nullableUuid(body.get("assigneeId"));
         Instant due = body.get("dueAt") == null ? null : inputTime(body.get("dueAt"));
         boolean followUp = flag(body, "followUp", false);
         identity.lockActor(actor);
         var meeting = owned(actor, id);
-        if (meeting.get("actual_started_at") == null || meeting.get("actual_ended_at") != null)
-            throw ApiFault.conflict("只有进行中的会议可以记录事项结论");
-        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null))
-            throw ApiFault.invalid("生成会后待办须开启反馈跟踪并填写责任人和截止时间");
-        String subject = null;
+        if (meeting.get("actual_started_at") == null || meeting.get("minutes_published_at") != null)
+            throw ApiFault.conflict("只能在会议开始后、纪要发布前修改协调事宜");
+        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null || conclusion == null))
+            throw ApiFault.invalid("生成会后待办须开启反馈跟踪并填写结论、责任人和截止时间");
+        tools.jackson.databind.JsonNode source = null;
         for (var table : minuteTables(id)) {
             if (!"COORDINATION".equals(table.get("kind"))) continue;
             var rows = Crypto.JSON.valueToTree(table.get("data")).path("rows");
             for (int index = 0; index < rows.size(); index++) {
                 if (key.equals(table.get("attendeeId") + ":" + index))
-                    subject = rows.get(index).path("subject").asText();
+                    source = rows.get(index);
             }
         }
-        if (subject == null) throw ApiFault.invalid("未找到本次会议的协调事项");
+        if (source == null) throw ApiFault.invalid("未找到本次会议的协调事项");
+        if (source.hasNonNull("assigneeId") && assignee == null) throw ApiFault.invalid("请选择一名责任人");
         Object assigneeName = null;
         if (assignee != null) {
-            employee(assignee);
-            assigneeName = db.required("SELECT name FROM iam.user_account WHERE id=?", assignee).get("name");
+            UUID department = source.hasNonNull("departmentId") ? UUID.fromString(source.path("departmentId").asText()) : null;
+            assigneeName = coordinationAssignee(assignee, department).get("name");
         }
         var results = new ArrayList<Map<String, Object>>();
         for (var result : coordinationResults(meeting)) {
             if (!key.equals(result.get("key"))) results.add(result);
         }
-        results.add(Sql.map("key", key, "subject", subject, "conclusion", conclusion, "assigneeId", assignee,
+        results.add(Sql.map("key", key, "subject", source.path("subject").asText(), "conclusion", conclusion, "assigneeId", assignee,
                 "assigneeName", assigneeName, "dueAt", due == null ? null : due.toString(), "followUp", followUp));
         db.update("UPDATE portal.meeting_booking SET coordination_results=?::jsonb WHERE id=?", Crypto.json(results), id);
     }
@@ -469,10 +470,10 @@ public class MeetingBookings {
     /** 每个作者的材料版本依据内容和提交时间，排除已移出会议的员工。 */
     private List<Map<String, Object>> readingMaterials(UUID meeting) {
         return db.rows("""
-                SELECT a.user_id, md5(jsonb_build_array(a.report, a.topics, a.material_at,
+                SELECT a.user_id, md5(jsonb_build_array(a.report, NULL::text, a.material_at,
                     jsonb_agg(jsonb_build_array(m.kind,m.submitted_at,m.payload) ORDER BY m.kind))::text) AS revision
-                FROM portal.meeting_attendee a LEFT JOIN portal.meeting_material m ON m.attendee_id=a.id
-                WHERE a.meeting_id=? AND a.removed_at IS NULL AND (m.kind IS NOT NULL OR a.material_at IS NOT NULL)
+                FROM portal.meeting_attendee a LEFT JOIN portal.meeting_material m ON m.attendee_id=a.id AND m.kind<>'TOPICS'
+                WHERE a.meeting_id=? AND a.removed_at IS NULL AND (m.kind IS NOT NULL OR a.report IS NOT NULL)
                 GROUP BY a.id ORDER BY a.user_id
                 """, meeting);
     }
@@ -557,11 +558,25 @@ public class MeetingBookings {
             entry.put("category", category);
             String support = optional(row, "support", 1000);
             if (support != null) entry.put("support", support);
-            if (department != null) entry.put("department", db.required(
-                    "SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department).get("name"));
+            if (department == null) throw ApiFault.invalid("请选择配合部门");
+            var partner = db.one("SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department);
+            if (partner == null) throw ApiFault.invalid("请选择有效的配合部门");
+            UUID assignee = Inputs.nullableUuid(row.get("personId"));
+            if (assignee == null) throw ApiFault.invalid("请选择配合部门的一名责任人");
+            entry.put("department", partner.get("name"));
             entry.put("departmentId", department);
+            entry.put("assigneeId", assignee);
+            entry.put("assigneeName", coordinationAssignee(assignee, department).get("name"));
         }
         return entry;
+    }
+
+    /** 线上填报、Excel 导入与发起人修改共用配合部门的在职员工范围。 */
+    private Map<String, Object> coordinationAssignee(UUID assignee, UUID department) {
+        var person = db.one("SELECT name FROM iam.user_account WHERE id=? AND " + ACTIVE_EMPLOYEE
+                + " AND (?::uuid IS NULL OR department_id=?)", assignee, department, department);
+        if (person == null) throw ApiFault.invalid("责任人须为配合部门的有效员工");
+        return person;
     }
 
     /** 作者取所归属的受邀员工，代填后仍显示外地填报人的姓名和部门。 */
@@ -626,6 +641,32 @@ public class MeetingBookings {
                 JOIN iam.user_account u ON u.id=a.user_id
                 WHERE a.meeting_id=? AND a.removed_at IS NULL ORDER BY u.name,u.id
                 """, id);
+    }
+
+    /** 只按工号匹配代填人员及责任人，姓名用于复核。 */
+    Map<String, Object> workbookEmployee(String employeeNo) {
+        return db.one("SELECT u.id AS user_id,u.name,u.employee_no,d.name AS department FROM iam.user_account u"
+                + " JOIN iam.department d ON d.id=u.department_id AND d.status='ACTIVE'"
+                + " WHERE upper(u.employee_no)=upper(?) AND u.status='ACTIVE' AND NOT u.it_shared_account", employeeNo);
+    }
+
+    /** 确认导入与预约改期使用相同锁顺序。预览阶段不新增邀请。 */
+    void lockWorkbookImport(Actor actor) {
+        reservationLock();
+        identity.lockActor(actor);
+    }
+
+    /** Excel 新增受邀人员沿用会前邀请校验和通知，出席回复仍由员工办理。 */
+    UUID inviteWorkbookEmployee(Actor actor, UUID id, Map<String, Object> meeting, UUID user) {
+        validatePeople(actor, Set.of(user));
+        if (db.count("SELECT count(*) FROM portal.meeting_attendee WHERE meeting_id=? AND removed_at IS NULL", id) >= 500)
+            throw ApiFault.invalid("本场会议的受邀员工已达 500 人");
+        if (!Boolean.TRUE.equals(meeting.get("urgent")))
+            checkPeople(id, Set.of(user), time(meeting, "starts_at"), time(meeting, "ends_at"));
+        invite(id, user, true);
+        db.update("UPDATE portal.meeting_booking SET row_version=row_version+1 WHERE id=?", id);
+        notify(id, null, user, "MEETING_INVITED", "会议邀请 " + meeting.get("subject"));
+        return (UUID) db.required("SELECT id FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=?", id, user).get("id");
     }
 
     /** 纪要只共享议题与协调事项，汇报仍通过纪要正文发布。 */

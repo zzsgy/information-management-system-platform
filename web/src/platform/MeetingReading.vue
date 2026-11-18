@@ -20,7 +20,6 @@ const reports = computed(() =>
   props.otherAttendees.filter(
     (person) =>
       person.report ||
-      person.topics ||
       person.materials?.some(
         ({ kind }) => kind === "REPORT" || kind === "WEEKLY_PLAN",
       ),
@@ -29,7 +28,7 @@ const reports = computed(() =>
 const agenda = computed(() =>
   props.otherAttendees.flatMap((person) =>
     (person.materials ?? []).filter(
-      ({ kind }) => kind === "TOPICS" || kind === "COORDINATION",
+      ({ kind }) => kind === "COORDINATION",
     ),
   ),
 );
@@ -94,7 +93,6 @@ async function confirm() {
           </template>
         </template>
         <RichTextView v-if="person.report" :value="person.report" />
-        <RichTextView v-if="person.topics" :value="person.topics" />
       </section>
       <MeetingMaterialSummary
         v-if="agenda.length"

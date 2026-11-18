@@ -174,6 +174,10 @@ public final class ImportWorkbook {
     }
     /** 包内文件不释放到磁盘；每项 20MiB、总量 32MiB、最多 128 项。 */
     static Map<String,byte[]> parts(Path path) throws Exception {
+        return parts(path, List.of());
+    }
+    /** 特定业务可声明其完整工作表清单，其他导入仍按原台账结构校验。 */
+    static Map<String,byte[]> parts(Path path, List<String> expectedSheets) throws Exception {
         Map<String,byte[]> entries=new HashMap<>();long total=0;
         try(ZipFile zip=new ZipFile(path.toFile())){var iterator=zip.entries();while(iterator.hasMoreElements()){
             ZipEntry entry=iterator.nextElement();String name=entry.getName();
@@ -188,7 +192,10 @@ public final class ImportWorkbook {
         }}
         if(!entries.keySet().containsAll(Set.of("[Content_Types].xml","xl/workbook.xml","xl/worksheets/sheet1.xml")))throw new IOException("missing XLSX parts");
         List<Element> sheets=elements(xml(entries.get("xl/workbook.xml")),"sheet");
-        if(sheets.size()!=1&&!(sheets.size()==2&&sheets.get(0).getAttribute("name").equals("档案汇总表")&&sheets.get(1).getAttribute("name").equals("部门及档案负责人")&&entries.containsKey("xl/worksheets/sheet2.xml")))throw new IOException("unsupported worksheets");
+        if (!expectedSheets.isEmpty()) {
+            if (!sheets.stream().map(sheet -> sheet.getAttribute("name")).toList().equals(expectedSheets))
+                throw new IOException("unsupported worksheets");
+        } else if(sheets.size()!=1&&!(sheets.size()==2&&sheets.get(0).getAttribute("name").equals("档案汇总表")&&sheets.get(1).getAttribute("name").equals("部门及档案负责人")&&entries.containsKey("xl/worksheets/sheet2.xml")))throw new IOException("unsupported worksheets");
         String types=new String(entries.get("[Content_Types].xml"),StandardCharsets.UTF_8);if(!types.contains("spreadsheetml.sheet.main+xml")||types.contains("macroEnabled"))throw new IOException("not XLSX");return entries;
     }
     /** 禁用外部实体、DOCTYPE 和 XInclude，不读取外部文件或网络。 */

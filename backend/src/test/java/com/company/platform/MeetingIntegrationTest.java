@@ -3,7 +3,6 @@ package com.company.platform;
 import com.company.platform.meeting.MeetingBookings;
 import com.company.platform.meeting.MeetingFollowUp;
 import com.company.platform.meeting.MeetingWorkbooks;
-import com.company.platform.intake.ImportWorkbook;
 import com.company.platform.portal.PortalWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +14,11 @@ import org.springframework.test.context.DynamicPropertySource;
 
 import java.time.Instant;
 import java.util.*;
+import java.io.*;
+import java.nio.charset.StandardCharsets;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
+import java.util.zip.ZipOutputStream;
 
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -179,7 +183,7 @@ class MeetingIntegrationTest {
     @Test
     void delayedStartClosesPendingTasksAndOrdinaryMeetingRequiresMinutes() {
         var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
-        body.put("materialTypes", List.of("TOPICS", "COORDINATION"));
+        body.put("materialTypes", List.of("REPORT", "COORDINATION"));
         UUID id = bookings.create(organizer, request(), body);
         // 只调整预约时刻以模拟推迟，状态变化和实际时间仍由业务接口写入。
         db.update("UPDATE portal.meeting_booking SET starts_at=clock_timestamp()-interval '1 minute' WHERE id=?", id);
@@ -233,13 +237,13 @@ class MeetingIntegrationTest {
     void meetingNotesAndSummaryTablesAreFilteredOnTheServer() {
         var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
         body.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
-        body.put("materialTypes", List.of("TOPICS", "COORDINATION"));
+        body.put("materialTypes", List.of("COORDINATION"));
         UUID id = bookings.create(organizer, request(), body);
-        db.update("UPDATE portal.meeting_booking SET share_all=NULL WHERE id=?", id);
+        db.update("UPDATE portal.meeting_booking SET share_all=NULL,material_types='{TOPICS,COORDINATION}' WHERE id=?", id);
         var material = Map.of("subject", "待讨论事项", "expected", "明确要求");
         bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED", "materials", List.of(
                 Map.of("kind", "TOPICS", "rows", List.of(material)),
-                Map.of("kind", "COORDINATION", "rows", List.of(material)))));
+                Map.of("kind", "COORDINATION", "rows", List.of(ownedCoordination(material))))));
         assertEquals(409, assertThrows(ApiFault.class,
                 () -> bookings.saveLiveNotes(organizer, id, Map.of("notes", "还没开始"))).status);
         bookings.start(organizer, id, request());
@@ -300,9 +304,9 @@ class MeetingIntegrationTest {
         for (boolean share : List.of(false, true)) {
             var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
             body.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
-            body.put("materialTypes", List.of("REPORT", "TOPICS"));
+            body.put("materialTypes", List.of("REPORT"));
             UUID id = bookings.create(organizer, request(), body);
-            db.update("UPDATE portal.meeting_booking SET share_all=NULL WHERE id=?", id);
+            db.update("UPDATE portal.meeting_booking SET share_all=NULL,material_types='{REPORT,TOPICS}' WHERE id=?", id);
             bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED", "materials", List.of(
                     Map.of("kind", "REPORT", "html", "<strong>工作汇报正文</strong>", "text", "工作汇报正文"),
                     Map.of("kind", "TOPICS", "rows", List.of(Map.of("subject", "私人议题", "expected", "协调"))))));
@@ -327,7 +331,7 @@ class MeetingIntegrationTest {
         for (boolean share : List.of(false, true)) {
             var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
             body.put("attendeeIds", List.of(employee.userId().toString(), secondAttendee.userId().toString()));
-            body.put("materialTypes", List.of("REPORT", "TOPICS", "COORDINATION"));
+            body.put("materialTypes", List.of("REPORT", "WEEKLY_PLAN", "COORDINATION"));
             body.put("trackFollowUp", true);
             if (share) body.put("shareAll", true);
             UUID id = bookings.create(organizer, request(), body);
@@ -335,8 +339,7 @@ class MeetingIntegrationTest {
             Map<String, String> material = Map.of("subject", "会前事项", "expected", "协调");
             bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED", "materials", List.of(
                     Map.of("kind", "REPORT", "html", "<strong>会前汇报</strong>", "text", "会前汇报"),
-                    Map.of("kind", "TOPICS", "rows", List.of(material)),
-                    Map.of("kind", "COORDINATION", "rows", List.of(material)))));
+                    Map.of("kind", "COORDINATION", "rows", List.of(ownedCoordination(material))))));
             var submitted = attendee(secondAttendee, id, employee);
             assertEquals(share, submitted.containsKey("materials"));
             assertEquals(share, submitted.containsKey("reply"));
@@ -356,7 +359,7 @@ class MeetingIntegrationTest {
             assertEquals("通过", minutes.get("decisions"));
             assertEquals(share, minutes.containsKey("notes"));
             assertEquals(share, minutes.containsKey("materialsText"));
-            assertEquals(share ? 2 : 0, ((List<?>) minutes.get("materialTables")).size());
+            assertEquals(share ? 1 : 0, ((List<?>) minutes.get("materialTables")).size());
             assertEquals(share ? 1 : 0, values(detail, "items").size());
             UUID item = (UUID) values(bookings.detail(organizer, id), "items").getFirst().get("id");
             followUp.feedback(outsider, item, request(), Map.of("feedback", "已落实"));
@@ -374,7 +377,7 @@ class MeetingIntegrationTest {
     @Test
     void attendeeKeepsOneTaskFromInvitationThroughMultipleFeedbackItems() {
         var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
-        body.put("materialTypes", List.of("REPORT", "TOPICS", "COORDINATION"));
+        body.put("materialTypes", List.of("REPORT", "WEEKLY_PLAN", "COORDINATION"));
         body.put("trackFollowUp", true);
         UUID id = bookings.create(organizer, request(), body);
         String entry = "#/meetings?id=" + id;
@@ -412,11 +415,11 @@ class MeetingIntegrationTest {
 
     /** 覆盖表格冲突、按人确认阅读与从会中结论分派会后反馈。 */
     @Test
-    void importedMaterialsReadingAndCoordinationWorkThroughPublishing() {
+    void importedMaterialsReadingAndCoordinationWorkThroughPublishing() throws IOException {
         var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
         booking.put("subject", "周报");
         booking.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
-        booking.put("materialTypes", List.of("REPORT", "COORDINATION"));
+        booking.put("materialTypes", List.of("REPORT", "WEEKLY_PLAN", "COORDINATION"));
         booking.put("shareAll", true);
         booking.put("trackFollowUp", true);
         UUID id = bookings.create(organizer, request(), booking);
@@ -428,14 +431,19 @@ class MeetingIntegrationTest {
         assertNotNull(attendee(organizer, id, outsider).get("readMaterialAt"));
         assertFalse(attendee(employee, id, outsider).containsKey("readMaterialAt"));
 
-        String employeeNo = attendee(organizer, id, employee).get("employeeNo").toString();
-        var columns = List.of("employeeNo|工号", "report|上周工作内容", "category|事项类别（需公司协调／需其他部门配合）",
-                "coord|协调或配合事项", "support|需要协调或配合的内容", "expected|期望结果或验收标准", "department|配合部门");
-        String marker = "IMS-MEETING-1:" + id;
-        byte[] workbook = ImportWorkbook.meetingWorkbook("会议填报", marker, columns, List.of(
-                Map.of("employeeNo", employeeNo, "report", "线下冲突内容", "category", "需公司协调",
-                        "coord", "协调合同", "expected", "确认合同", "support", "确定条款")));
-        String file = Base64.getEncoder().encodeToString(workbook);
+        byte[] template = workbooks.download(organizer, id, true);
+        String departmentCode = db.required("SELECT code FROM iam.department WHERE id=?", department).get("code").toString();
+        var wrongAuthor = filledWorkbook(template, "错误归属", "", Map.of("F", "姓名不符 " +
+                attendee(organizer, id, employee).get("employeeNo")));
+        assertEquals(400, assertThrows(ApiFault.class, () -> workbooks.importMaterials(organizer, id, request(),
+                Map.of("file", wrongAuthor))).status);
+        var outsideDepartment = ownedCoordination(Map.of("subject", "测试事项", "expected", "测试结果"));
+        outsideDepartment.put("personId", admin.userId().toString());
+        assertEquals(400, assertThrows(ApiFault.class, () -> bookings.materials(employee, id, request(),
+                Map.of("kind", "COORDINATION", "rows", List.of(outsideDepartment)))).status);
+        String file = filledWorkbook(template, "线下冲突内容", "", Map.of(
+                "B", "协调合同", "C", "确定条款", "D", "确认合同", "F", employeeLabel(employee),
+                "G", departmentCode, "H", employeeLabel(employee), "I", "需公司协调"));
         assertEquals(404, assertThrows(ApiFault.class, () -> workbooks.download(employee, id, false)).status);
         var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
         assertEquals(List.of(), preview.get("errors"));
@@ -455,6 +463,23 @@ class MeetingIntegrationTest {
                 Map.of("file", file, "preview", overwrite.get("preview"), "overwrite", List.of(reportKey))).get("imported"));
         assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("线下冲突内容"));
 
+        // 只有 F2 和两段正文也能识别未受邀员工，预览阶段不写入或修改参会回复。
+        Actor remoteEmployee = person();
+        String remoteFile = filledWorkbook(template, "外地工作", "外地计划", Map.of("F", employeeLabel(remoteEmployee)));
+        var remote = workbooks.importMaterials(organizer, id, request(), Map.of("file", remoteFile));
+        assertEquals(true, remote.get("newInvitee"));
+        assertEquals(2, values(bookings.detail(organizer, id), "attendees").size());
+        assertEquals(true, workbooks.importMaterials(organizer, id, request(),
+                Map.of("file", remoteFile, "preview", remote.get("preview"))).get("inviteeAdded"));
+        var remoteAttendee = attendee(organizer, id, remoteEmployee);
+        assertEquals("PENDING", remoteAttendee.get("reply"));
+        assertEquals(2, values(remoteAttendee, "materials").size());
+        assertTrue(remoteAttendee.toString().contains("外地计划"));
+        assertTrue(remoteAttendee.toString().contains("EXCEL"));
+        assertEquals(false, workbooks.importMaterials(organizer, id, request(), Map.of("file", remoteFile)).get("newInvitee"));
+        bookings.reply(remoteEmployee, id, request(), Map.of("decision", "ACCEPTED"));
+        assertFalse(hasPending(remoteEmployee, id));
+
         // 未阅读和未交材料都不阻止发起人开会。
         bookings.start(organizer, id, request());
         var materials = values(attendee(organizer, id, employee), "materials");
@@ -465,10 +490,57 @@ class MeetingIntegrationTest {
         assertEquals(404, assertThrows(ApiFault.class, () -> bookings.saveCoordination(employee, id, conclusion)).status);
         bookings.saveCoordination(organizer, id, conclusion);
         bookings.end(organizer, id, request());
-        followUp.saveMinutes(organizer, id, request(), 3, Map.of("publish", true));
-        var assigned = values(bookings.detail(employee, id), "items").getFirst();
+        conclusion.put("assigneeId", outsider.userId().toString());
+        bookings.saveCoordination(organizer, id, conclusion);
+        int version = ((Number) bookings.detail(organizer, id).get("rowVersion")).intValue();
+        followUp.saveMinutes(organizer, id, request(), version, Map.of("publish", true));
+        var assigned = values(bookings.detail(outsider, id), "items").getFirst();
         assertEquals("协调合同\n签订补充协议", assigned.get("content"));
+        assertEquals(outsider.userId(), assigned.get("assigneeId"));
+        assertEquals(409, assertThrows(ApiFault.class, () -> bookings.saveCoordination(organizer, id, conclusion)).status);
         assertTrue(workbooks.download(organizer, id, false).length > 0);
+    }
+
+    private Map<String, Object> ownedCoordination(Map<String, String> material) {
+        var row = new HashMap<String, Object>(material);
+        row.put("departmentId", department.toString());
+        row.put("personId", employee.userId().toString());
+        return row;
+    }
+
+    private String employeeLabel(Actor actor) {
+        return db.required("SELECT name||' '||employee_no AS label FROM iam.user_account WHERE id=?",
+                actor.userId()).get("label").toString();
+    }
+
+    /** 使用发起人下载的真实模板，只替换员工可填写的正文和协调行。 */
+    private static String filledWorkbook(byte[] template, String report, String plan, Map<String, String> values)
+            throws IOException {
+        var filled = new ByteArrayOutputStream();
+        try (var source = new ZipInputStream(new ByteArrayInputStream(template));
+             var target = new ZipOutputStream(filled)) {
+            for (ZipEntry part; (part = source.getNextEntry()) != null;) {
+                String xml = new String(source.readAllBytes(), StandardCharsets.UTF_8);
+                if (part.getName().equals("xl/worksheets/sheet1.xml") && !report.isEmpty())
+                    xml = xml.replace("<c r=\"A2\" s=\"2\"/>", cell("A2", report));
+                if (part.getName().equals("xl/worksheets/sheet2.xml") && !plan.isEmpty())
+                    xml = xml.replace("<c r=\"A2\" s=\"2\"/>", cell("A2", plan));
+                if (part.getName().equals("xl/worksheets/sheet3.xml")) {
+                    int end = xml.indexOf("</row>", xml.indexOf("<row r=\"2\">"));
+                    String cells = new TreeMap<>(values).entrySet().stream().map(entry -> cell(entry.getKey() + "2",
+                            entry.getValue())).collect(java.util.stream.Collectors.joining());
+                    xml = xml.substring(0, end) + cells + xml.substring(end);
+                }
+                target.putNextEntry(new ZipEntry(part.getName()));
+                target.write(xml.getBytes(StandardCharsets.UTF_8));
+                target.closeEntry();
+            }
+        }
+        return Base64.getEncoder().encodeToString(filled.toByteArray());
+    }
+
+    private static String cell(String coordinate, String value) {
+        return "<c r=\"" + coordinate + "\" t=\"inlineStr\"><is><t>" + value + "</t></is></c>";
     }
 
     private Map<String, Object> attendeeTask(Actor actor, String entry) {

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
 import RichTextEditor from "./RichTextEditor.vue";
+import MeetingDepartmentAssignee from "./MeetingDepartmentAssignee.vue";
 import { formattedText } from "./formattedText";
 import { api } from "./api";
 import { vNumbered } from "./meetingNumbered";
@@ -27,7 +28,7 @@ const narrative = ref(formattedText(
 ));
 let nextRowId = 0;
 function makeRow(values: MaterialRow = { subject: "", expected: "" }) {
-  return { departmentId: null, category: "DEPARTMENT", support: "", ...values, rowId: nextRowId++ };
+  return { departmentId: null, category: "DEPARTMENT", support: "", ...values, assigneeId: values.assigneeId ?? "", rowId: nextRowId++ };
 }
 const rows = ref(props.existing?.data.rows?.map(makeRow) ?? [makeRow()]);
 function addRow() {
@@ -39,9 +40,9 @@ const busy = ref(false);
 const contentSignature = computed(() => JSON.stringify(
   props.kind === "REPORT" || props.kind === "WEEKLY_PLAN"
     ? narrative.value
-    : rows.value.map(({ subject, expected, departmentId, category, support }) => ({
+    : rows.value.map(({ subject, expected, departmentId, category, support, assigneeId }) => ({
         subject, expected,
-        ...(props.kind === "COORDINATION" ? { departmentId, category, support } : {}),
+        ...(props.kind === "COORDINATION" ? { departmentId, category, support, assigneeId } : {}),
       })),
 ));
 const submittedSignature = ref(props.existing ? contentSignature.value : null);
@@ -58,6 +59,10 @@ const rowErrors = computed(() => filledRows.value.flatMap(({ row, number }) => {
   const missing = [];
   if (!row.subject.trim()) missing.push(subjectLabel.value);
   if (!row.expected.trim()) missing.push("期望结果 / 验收标准");
+  if (props.kind === "COORDINATION") {
+    if (!row.departmentId) missing.push("配合部门");
+    if (!row.assigneeId) missing.push("责任人（唯一）");
+  }
   return missing.length ? [`第 ${number} 行请填写「${missing.join("」和「")}」`] : [];
 }));
 
@@ -74,10 +79,10 @@ function collect() {
   return entries.length
     ? {
         kind: props.kind,
-        rows: entries.map(({ row: { subject, expected, departmentId, category, support } }) => ({
+        rows: entries.map(({ row: { subject, expected, departmentId, category, support, assigneeId } }) => ({
           subject,
           expected,
-          ...(props.kind === "COORDINATION" ? { departmentId, category, support } : {}),
+          ...(props.kind === "COORDINATION" ? { departmentId, category, support, personId: assigneeId } : {}),
         })),
       }
     : null;
@@ -138,6 +143,7 @@ async function submit() {
             <col class="row-author" />
             <col class="row-author" />
             <col v-if="kind === 'COORDINATION'" class="row-partner" />
+            <col v-if="kind === 'COORDINATION'" class="row-partner" />
             <col class="row-actions" />
           </colgroup>
           <thead>
@@ -150,8 +156,9 @@ async function submit() {
               <th scope="col">发起部门</th>
               <th scope="col">发起人</th>
               <th v-if="kind === 'COORDINATION'" scope="col">
-                配合部门 <small>选填</small>
+                配合部门 <small>必填</small>
               </th>
+              <th v-if="kind === 'COORDINATION'" scope="col">责任人（唯一） <small>必填</small></th>
               <th scope="col">操作</th>
             </tr>
           </thead>
@@ -196,6 +203,7 @@ async function submit() {
                 <select
                   v-model="row.departmentId"
                   :aria-label="'配合部门 第 ' + (index + 1) + ' 行'"
+                  @change="row.assigneeId = ''; row.assigneeName = null"
                 >
                   <option :value="null">未选择</option>
                   <option
@@ -206,6 +214,14 @@ async function submit() {
                     {{ department.name }}
                   </option>
                 </select>
+              </td>
+              <td v-if="kind === 'COORDINATION'">
+                <MeetingDepartmentAssignee
+                  v-model="row.assigneeId"
+                  :department-id="row.departmentId"
+                  :selected-name="row.assigneeName"
+                  :label="'责任人（唯一） 第 ' + (index + 1) + ' 行'"
+                />
               </td>
               <td>
                 <button
@@ -219,7 +235,7 @@ async function submit() {
               </td>
             </tr>
             <tr v-if="!rows.length">
-              <td :colspan="kind === 'COORDINATION' ? 9 : 6">
+              <td :colspan="kind === 'COORDINATION' ? 10 : 6">
                 点击「新增行」开始填写。
               </td>
             </tr>
@@ -292,7 +308,7 @@ async function submit() {
 }
 .material-table.coordination {
   /* 窄屏只在表格区域横向滚动，给三个正文列都预留输入宽度。 */
-  min-width: 1160px;
+  min-width: 1320px;
 }
 .material-table :is(th, td) {
   padding: 9px 8px;
@@ -337,7 +353,7 @@ async function submit() {
 .material-table:not(.coordination) .row-expected {
   width: 30%;
 }
-.material-table :is(textarea, select) {
+.material-table :is(textarea, select), .material-table :deep(select) {
   display: block;
   width: 100%;
   min-width: 0;
