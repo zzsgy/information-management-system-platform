@@ -25,7 +25,7 @@ enum DriveSpace {
             }
             case OTHER_DEPARTMENT_SHARED -> {
                 parameters.add(actor.user().get("departmentId"));
-                yield " AND f.zone='DEPARTMENT_SHARED' AND f.department_id<>?";
+                yield " AND f.zone='DEPARTMENT_SHARED' AND f.department_id IS DISTINCT FROM ?::uuid";
             }
         };
     }

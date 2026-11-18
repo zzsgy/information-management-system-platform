@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import EmptyState from "./EmptyState.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { api, query, profile, dateTime, type Page } from "./api";
+import { api, query, profile, dateTime, type Department, type Page } from "./api";
 import Icon from "../preview/PlatformIcon.vue";
 import DriveFilePanel from "./DriveFilePanel.vue";
 import DriveRecycle from "./DriveRecycle.vue";
@@ -15,7 +15,6 @@ import { isDrivePreviewable } from "./drivePreview";
 /** 只接收服务端已投影的业务目录，不保存存储键或实体路径。 */
 interface Folder {
   departmentId: string;
-  /** 所属部门的正式名称，独立于目录名称。 */ departmentName?: string | null;
   parentId: string | null;
   rowVersion: number;
   canManage: boolean;
@@ -77,9 +76,9 @@ const defaultSpace = profile.value?.user.departmentId
     ? "OWN_INTERNAL"
     : "COMPANY_SHARED",
   space = ref(keyword.value ? "ALL" : defaultSpace);
-/** 跨部门共享的筛选项来自本人可见的共享目录。 */
+/** 共享部门使用新增员工同源的组织目录，文件和目录仍按公盘权限筛选。 */
 const sharedDepartment = ref(""),
-  sharedDepartments = ref<{ id: string; name: string }[]>([]);
+  sharedDepartments = ref<Pick<Department, "id" | "name">[]>([]);
 const uploadRange = recentDateRange(7);
 const uploader = ref(""),
   folderName = ref(""),
@@ -142,18 +141,17 @@ async function open(folder: Folder | null) {
     folders.value = data.items;
     moreFolders.value = data.hasNext;
     if (!folder && space.value === "OTHER_DEPARTMENT_SHARED" && !sharedDepartment.value) {
-      // 部门选项需要覆盖所有可见共享目录，文件列表仍按页读取。
-      const options = new Map<string, string>();
-      let result = data;
+      const options: typeof sharedDepartments.value = [];
       for (let number = 1; ; number++) {
-        for (const item of result.items)
-          options.set(item.departmentId, item.departmentName || item.name);
-        if (!result.hasNext) break;
-        result = await listFolders(undefined, number + 1);
+        const result = await api<Page<{ selector: Pick<Department, "id" | "name"> }>>(
+          `/admin/departments?${query({ projection: "SELECTOR", purpose: "DRIVE_SHARED_FILTER", page: number, pageSize: 100 })}`,
+        );
         if (current !== generation || !alive) return;
+        options.push(...result.items.map((item) => item.selector));
+        if (!result.hasNext) break;
       }
-      sharedDepartments.value = [...options]
-        .map(([id, name]) => ({ id, name }))
+      sharedDepartments.value = options
+        .filter((department) => department.id !== profile.value?.user.departmentId)
         .sort((a, b) => a.name.localeCompare(b.name, "zh-CN"));
     }
     await load();
@@ -205,6 +203,28 @@ function managementChanged(
     );
   }
   void open(selected.value);
+}
+/** 顶层目录可能建在任意部门的分区，创建后清除原空间和部门限制。 */
+function revealCreatedFolder(folder: Pick<Folder, "name">) {
+  space.value = "ALL";
+  changeSpace();
+  notice.value = `目录「${folder.name}」已创建。`;
+}
+/** 按新目录的部门和分区读取已授权的目录摘要，再使用常规目录入口。 */
+async function openCreatedFolder(created: Pick<Folder, "id" | "name" | "departmentId" | "zone">) {
+  management.value = false;
+  const current = generation;
+  try {
+    const result = await api<Page<Folder>>(
+      `/drive/folders?${query({ space: "ALL", departmentId: created.departmentId, zone: created.zone })}`,
+    );
+    if (current !== generation || !alive) return;
+    const folder = result.items.find((item) => item.id === created.id);
+    if (folder) enter(folder);
+    else error.value = `已创建「${created.name}」，当前账号无法查看该目录。`;
+  } catch (failure) {
+    if (current === generation && alive) error.value = (failure as Error).message;
+  }
 }
 /** 查询参数编码后提交，关键字不会拼接为路径或SQL。 */
 async function load() {
@@ -693,6 +713,8 @@ onUnmounted(() => {
     :folder="selected || undefined"
     @close="management = false"
     @changed="managementChanged"
+    @root-created="revealCreatedFolder"
+    @open-folder="openCreatedFolder"
   />
   <DocumentReader
     v-if="reading"

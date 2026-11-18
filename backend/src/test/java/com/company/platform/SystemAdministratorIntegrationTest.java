@@ -112,6 +112,25 @@ class SystemAdministratorIntegrationTest {
         var staffContext=context(staff,"test-password","DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
         assertEquals(403,assertThrows(ApiFault.class,()->driveAccess.folder(staffContext,body)).status);
     }
+    /** 公盘员工能选择尚未建立共享目录的有效部门，人员名册仍受管理权限限制。 */
+    @Test @Transactional void driveSharedFilterUsesActiveOrganizationDepartments() {
+        UUID employee=person(),active=UUID.randomUUID(),disabled=UUID.randomUUID();
+        String prefix="公盘筛选验收"+active;
+        db.update("INSERT INTO iam.department(id,code,name,status) VALUES(?,?,?,'ACTIVE'),(?,?,?,'DISABLED')",
+                active,"FILTER-"+active,prefix,disabled,"FILTER-"+disabled,prefix+"停用");
+        assign(context(employee,1),employee,List.of(Sql.map("roleId",role("PLATFORM","MEMBER")),Sql.map("roleId",role("DRIVE","STAFF"))));
+        Actor staff=login(employee.toString(),"test-password"),outsider=login(person().toString(),"test-password");
+        var options=Map.of("projection","SELECTOR","purpose","DRIVE_SHARED_FILTER","keyword",prefix);
+
+        var rows=(List<?>)directory.departments(staff,options).get("items");
+        assertEquals(1,rows.size());
+        var selected=(Map<?,?>)((Map<?,?>)rows.getFirst()).get("selector");
+        assertEquals(active,selected.get("id"));
+        assertEquals(prefix,selected.get("name"));
+        assertEquals(403,assertThrows(ApiFault.class,()->directory.departments(outsider,options)).status);
+        assertEquals(403,assertThrows(ApiFault.class,()->directory.departments(staff,Map.of())).status);
+        assertEquals(403,assertThrows(ApiFault.class,()->directory.users(staff,options)).status);
+    }
     /** 模块管理员可继续办理公盘及档案业务，管理中心角色及组织配置需平台 IT 任职。 */
     @Test @Transactional void moduleAdministratorsKeepBusinessActionsWithoutCentralConfiguration() {
         UUID employee=person();

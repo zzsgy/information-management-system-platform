@@ -41,9 +41,12 @@ const props = defineProps<{
   emit = defineEmits<{
     close: [];
     changed: [folder?: { id: string; name: string; rowVersion: number } | null];
+    rootCreated: [folder: Folder];
+    openFolder: [folder: Folder];
   }>(),
   ask = inject<(title: string) => Promise<string | null>>("askPassword")!;
 const options = ref<Options>(),
+  createdFolder = ref<Folder>(),
   grants = ref<Grant[]>([]),
   delegations = ref<Delegation[]>([]),
   error = ref(""),
@@ -128,11 +131,14 @@ async function run(
   try {
     const password = await ask("确认公盘管理配置");
     if (!password) return;
-    const result = await mutate<{
-      id: string;
-      name: string;
-      rowVersion: number;
-    }>(path, method, body, id, type, action, password, version);
+    const result = await mutate<Folder>(path, method, body, id, type, action, password, version);
+    if (action === "CREATE_FOLDER" && !props.folder) {
+      createdFolder.value = result;
+      newFolderName.value = "";
+      notice.value = "";
+      emit("rootCreated", result);
+      return;
+    }
     notice.value = "配置已保存。";
     if (action === "RECYCLE_FOLDER") {
       emit("close");
@@ -250,7 +256,7 @@ onMounted(load);
               {{
                 folder
                   ? "子目录沿用当前目录的分区与所属部门。"
-                  : "目录名称将显示在公盘侧栏，便于员工查找资料。"
+                  : "创建后可在公盘「全部可见」空间的「浏览目录」中找到。"
               }}
             </p>
             <div class="field-row create-fields">
@@ -282,6 +288,17 @@ onMounted(load);
               >
             </div>
             <div class="form-actions">
+              <template v-if="createdFolder">
+                <span class="created-folder" role="status">已创建「{{ createdFolder.name }}」</span>
+                <button
+                  type="button"
+                  class="secondary"
+                  :disabled="busy"
+                  @click="emit('openFolder', createdFolder)"
+                >
+                  查看目录
+                </button>
+              </template>
               <button class="primary" :disabled="busy">
                 <Icon name="plus" :size="16" />创建目录
               </button>
@@ -681,6 +698,12 @@ onMounted(load);
   margin: 18px -22px -20px;
   border-top: 1px solid var(--line);
   background: #fafcfd;
+}
+.created-folder {
+  align-self: center;
+  margin-right: auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .choices {
   display: grid;

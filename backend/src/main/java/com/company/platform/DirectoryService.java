@@ -67,6 +67,8 @@ public class DirectoryService {
         boolean full = !"SELECTOR".equals(query.get("projection"));
         if (full)
             actor.require("PLATFORM.DEPARTMENTS_MANAGE");
+        else if ("DRIVE_SHARED_FILTER".equals(query.get("purpose")))
+            actor.require("DRIVE.ACCESS");
         else
             selector(actor, query.get("purpose"));
         StringBuilder where = new StringBuilder(" WHERE true");
@@ -86,7 +88,7 @@ public class DirectoryService {
         return result;
     }
 
-    /** 个人选择用途不能自行授予权限；本批只开放已有管理动作对应的最小选择器。 */
+    /** 人员选择器限对应的管理动作；公盘资料筛选只使用部门选择器。 */
     private void selector(Actor actor, String purpose) {
         switch (Objects.toString(purpose, "")) {
             case "ACCOUNT_ADMIN" -> actor.require("PLATFORM.USERS_MANAGE");
