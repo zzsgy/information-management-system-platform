@@ -119,9 +119,9 @@ async function submit() {
         >
           <colgroup>
             <col class="row-number" />
-            <col v-if="kind === 'COORDINATION'" class="row-partner" />
-            <col class="row-subject" />
-            <col v-if="kind === 'COORDINATION'" class="row-expected" />
+            <col v-if="kind === 'COORDINATION'" class="row-category" />
+            <col />
+            <col v-if="kind === 'COORDINATION'" />
             <col class="row-expected" />
             <col class="row-author" />
             <col class="row-author" />
@@ -259,12 +259,14 @@ async function submit() {
   font-size: 13px;
 }
 .material-table.coordination {
-  min-width: 1100px;
+  /* 窄屏只在表格区域横向滚动，给三个正文列都预留输入宽度。 */
+  min-width: 1160px;
 }
 .material-table :is(th, td) {
   padding: 9px 8px;
   text-align: left;
   vertical-align: middle;
+  white-space: normal;
   overflow-wrap: anywhere;
 }
 .material-table :is(th, td) + :is(th, td) {
@@ -283,6 +285,7 @@ async function submit() {
 }
 .material-table thead small {
   font-weight: 400;
+  white-space: nowrap;
 }
 .material-table .row-number {
   width: 48px;
@@ -290,18 +293,17 @@ async function submit() {
 .material-table .row-author {
   width: 86px;
 }
+.material-table .row-category {
+  width: 176px;
+}
 .material-table .row-partner {
-  width: 140px;
+  width: 156px;
 }
 .material-table .row-actions {
   width: 54px;
 }
-.material-table .row-expected {
+.material-table:not(.coordination) .row-expected {
   width: 30%;
-}
-.material-table.coordination .row-expected {
-  /* 三个正文列平分固定信息列之外的空间。 */
-  width: auto;
 }
 .material-table :is(textarea, select) {
   display: block;
