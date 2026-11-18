@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from "vue";
 import { api } from "./api";
-import { vNumbered } from "./meetingNumbered";
+import RichTextEditor from "./RichTextEditor.vue";
 import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
 import {
@@ -45,6 +45,9 @@ const items = ref(
 const busy = ref(false),
   error = ref("");
 const publish = ref(false);
+/** 现场勾选的协调结论在纪要发布时生成待办。 */
+const coordinationTasks = computed(() =>
+  props.meeting.coordinationResults?.filter((result) => result.followUp).length ?? 0);
 
 function addItem() {
   items.value.push({
@@ -60,7 +63,8 @@ async function save(submit: boolean) {
   busy.value = true;
   error.value = "";
   try {
-    if (submit && !minutes.decisions.trim()) throw Error("请填写会议决议");
+    if (submit && !minutes.decisions.trim() && !props.meeting.coordinationResults?.length)
+      throw Error("请填写会议决议");
     await api("/meetings/" + props.meeting.id + "/minutes", {
       method: "PUT",
       headers: { "X-Expected-Version": String(props.meeting.rowVersion) },
@@ -90,19 +94,11 @@ async function save(submit: boolean) {
       v-if="draft?.materialTables && meeting.materialTypes"
       :types="meeting.materialTypes"
       :submissions="draft.materialTables"
+      :results="meeting.coordinationResults"
     />
-    <label>
-      会前材料汇总
-      <textarea v-numbered v-model="minutes.materialsText" rows="7" />
-    </label>
-    <label
-      >会议决议<textarea v-numbered
-        v-model="minutes.decisions"
-        :required="publish"
-        maxlength="12000"
-        rows="3"
-      />
-    </label>
+    <RichTextEditor v-model="minutes.materialsText" label="会前材料汇总" :rows="7" :limit="4100000" />
+    <RichTextEditor v-model="minutes.decisions" label="会议决议" :rows="3" :limit="12000"
+      :required="publish && !meeting.coordinationResults?.length" />
     <fieldset v-if="meeting.shareAll == null" class="meeting-fieldset">
       <legend>发布后的共享范围</legend>
       <details v-if="minutes.notes" class="minutes-readers">
@@ -164,7 +160,8 @@ async function save(submit: boolean) {
           添加事项
         </button>
       </div>
-      <p v-if="!items.length">
+      <p v-if="coordinationTasks">已有 {{ coordinationTasks }} 条事项结论将在发布时生成会后待办。</p>
+      <p v-else-if="!items.length">
         点击「添加事项」填写内容、责任人和期限。纪要发布后，责任人将收到反馈待办。
       </p>
       <fieldset
@@ -173,14 +170,7 @@ async function save(submit: boolean) {
         class="meeting-fieldset"
       >
         <legend>事项 {{ index + 1 }}</legend>
-        <label
-          >事项内容<textarea v-numbered
-            v-model="item.content"
-            required
-            maxlength="4000"
-            rows="2"
-          />
-        </label>
+        <RichTextEditor v-model="item.content" label="事项内容" :limit="4000" :rows="2" required />
         <div class="meeting-form-row">
           <div>
             <p>
@@ -238,9 +228,9 @@ async function save(submit: boolean) {
       <template v-else>
         <span>{{
           meeting.trackFollowUp
-            ? items.length
+            ? items.length + coordinationTasks
               ? "本次将分派 " +
-                items.length +
+                (items.length + coordinationTasks) +
                 " 项会后待办，发布后纪要和待办将锁定。"
               : "本次未添加会后待办，发布后不会向成员发送反馈待办。"
             : "发布纪要后会议自动办结。"

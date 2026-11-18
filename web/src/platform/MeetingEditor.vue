@@ -1,8 +1,8 @@
 <script setup lang="ts">
+import RichTextEditor from "./RichTextEditor.vue";
 import { computed, onMounted, onUnmounted, reactive, ref } from "vue";
 import { api, profile } from "./api";
 import Icon from "../preview/PlatformIcon.vue";
-import { vNumbered } from "./meetingNumbered";
 import MeetingTimeField from "./MeetingTimeField.vue";
 import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
 import {
@@ -213,7 +213,7 @@ async function save() {
               v-model="data.endsAt"
               :minimum="endMinimum"
             />
-            <label :class="{ 'booking-wide': original || !options.canWeekly }"
+        <label class="booking-wide"
               >会议室
               <select v-model="data.roomId" required>
                 <option value="" disabled>请选择会议室</option>
@@ -236,32 +236,13 @@ async function save() {
                 <option value="OTHER">其他地点</option>
               </select>
             </label>
-            <label v-if="!original && options.canWeekly"
-              >会议类型
-              <select v-model="data.kind">
-                <option value="ORDINARY">普通会议</option>
-                <option value="WEEKLY">周会</option>
-              </select>
-            </label>
-            <label
+            <RichTextEditor
               v-if="!original || data.roomId === 'OTHER'"
-              class="booking-wide"
-            >
-              <span
-                >会议说明
-                <small v-if="data.roomId !== 'OTHER'">选填</small></span
-              >
-              <textarea
-                v-numbered
-                v-model="data.description"
-                maxlength="2000"
-                :rows="original ? 2 : 4"
-                :required="data.roomId === 'OTHER'"
-                :placeholder="
-                  data.roomId === 'OTHER' ? '请填写具体会议地点' : undefined
-                "
-              />
-            </label>
+              v-model="data.description" class="booking-wide" label="会议说明"
+              :limit="2000" :rows="original ? 2 : 4"
+              :required="data.roomId === 'OTHER'"
+              :placeholder="data.roomId === 'OTHER' ? '请填写具体会议地点' : '选填'"
+            />
           </div>
         </section>
 
@@ -280,7 +261,7 @@ async function save() {
                 v-model="materialTypes"
                 type="checkbox"
                 :value="kind"
-              />征集{{ label }}
+              />征集{{ kind === "REPORT" ? "工作汇报" : kind === "WEEKLY_PLAN" ? "本周计划" : label }}
             </label>
             <label v-if="data.kind === 'ORDINARY'" class="booking-check">
               <input v-model="data.trackFollowUp" type="checkbox" />跟踪会后反馈
@@ -289,7 +270,7 @@ async function save() {
               <input v-model="data.urgent" type="checkbox" />紧急会议
             </label>
           </div>
-          <div class="booking-sharing">
+          <div v-if="!original" class="booking-sharing">
             <label class="booking-check">
               <input
                 v-model="data.shareAll"
@@ -299,11 +280,8 @@ async function save() {
             <p>共享后，受邀员工可查看彼此的回复、会前材料、会中决议、纪要和会后反馈。</p>
           </div>
           <div class="booking-flow-hints">
-            <p v-if="!original && materialTypes.includes('WEEKLY_PLAN')">
-              受邀员工须先填写本周计划，才能提交并参加。
-            </p>
-            <p v-else-if="!original && materialTypes.length">
-              选中的会前材料将发给所有受邀员工。
+            <p v-if="!original && materialTypes.length">
+              受邀员工可先回复参会，并在会议开始前提交勾选的材料。
             </p>
             <p>会议结束后须填写并发布纪要。</p>
           </div>

@@ -1,79 +1,126 @@
 <script setup lang="ts">
 import { computed } from "vue";
+import { dateTime } from "./api";
+import MeetingCoordinationResult from "./MeetingCoordinationResult.vue";
 import {
-  materialLabels,
+  coordinationLabels,
+  type CoordinationResult,
   type MaterialKind,
   type MeetingMaterial,
+  type MeetingOption,
 } from "./meeting";
 
 const props = defineProps<{
   types: MaterialKind[];
   submissions: MeetingMaterial[];
+  results?: CoordinationResult[];
+  editing?: {
+    meetingId: string;
+    departments: MeetingOption[];
+    trackFollowUp: boolean;
+  };
 }>();
-
-/** 按材料类型汇总，使用提交时保存的填写人和部门。 */
-const tables = computed(() =>
-  (["TOPICS", "COORDINATION"] as const)
-    .filter((kind) => props.types.includes(kind))
-    .map((kind) => ({
-      kind,
-      rows: props.submissions
-        .filter((entry) => entry.kind === kind)
-        .flatMap(({ data }) =>
-          (data.rows ?? []).map((row) => ({ ...row, author: data.author })),
-        ),
-    })),
-);
+const emit = defineEmits<{ saved: [] }>();
+/** 保存的协调结论按冻结后的会前材料行匹配。 */
+const tables = computed(() => {
+  const results = new Map(props.results?.map((row) => [row.key, row]));
+  const rows = (kind: MaterialKind) =>
+    props.submissions
+      .filter((entry) => entry.kind === kind)
+      .flatMap(({ data, attendeeId }, materialIndex) =>
+        (data.rows ?? []).map((row, index) => {
+          const key = (attendeeId ?? materialIndex) + ":" + index;
+          return { ...row, key, author: data.author, result: results.get(key) };
+        }),
+      );
+  const tables = [];
+  if (props.types.includes("TOPICS"))
+    tables.push({
+      heading: "会议议题汇总",
+      coordination: false,
+      rows: rows("TOPICS"),
+    });
+  if (props.types.includes("COORDINATION")) {
+    const items = rows("COORDINATION");
+    tables.push(
+      {
+        heading: coordinationLabels.COMPANY,
+        coordination: true,
+        rows: items.filter((row) => row.category === "COMPANY"),
+      },
+      {
+        heading: coordinationLabels.DEPARTMENT,
+        coordination: true,
+        rows: items.filter((row) => row.category !== "COMPANY"),
+      },
+    );
+  }
+  return tables;
+});
 </script>
 
 <template>
   <section
-    v-for="{ kind, rows } in tables"
-    :key="kind"
+    v-for="{ heading, coordination, rows } in tables"
+    :key="heading"
     class="flow-dialog-section"
   >
     <h3>
-      {{ materialLabels[kind] }}汇总
-      <span class="summary-count">{{ rows.length }} 条</span>
+      {{ heading }} <small>{{ rows.length }} 条</small>
     </h3>
-    <p v-if="!rows.length" class="summary-count">暂无提交</p>
+    <p v-if="!rows.length">无事项</p>
     <div
       v-else
       class="summary-scroll"
       tabindex="0"
       role="region"
-      :aria-label="materialLabels[kind] + '汇总区域'"
+      :aria-label="heading"
     >
       <table
-        :class="{ coordination: kind === 'COORDINATION' }"
-        :aria-label="materialLabels[kind] + '汇总'"
+        :class="{ conclusions: coordination && (editing || results?.length) }"
       >
         <thead>
           <tr>
             <th scope="col">序号</th>
-            <th scope="col">{{ kind === "TOPICS" ? "议题" : "具体事宜" }}</th>
-            <th scope="col">
-              {{
-                kind === "TOPICS"
-                  ? "需公司协调什么 / 期望结果"
-                  : "需对方做什么 / 期望结果"
-              }}
-            </th>
-            <th scope="col">发起部门</th>
-            <th scope="col">发起人</th>
-            <th v-if="kind === 'COORDINATION'" scope="col">配合部门</th>
-            <th v-if="kind === 'COORDINATION'" scope="col">配合人</th>
+            <th scope="col">{{ coordination ? "事项" : "议题" }}</th>
+            <th v-if="coordination" scope="col">需协调或配合内容</th>
+            <th scope="col">期望结果 / 验收标准</th>
+            <th scope="col">填报部门</th>
+            <th scope="col">填报人</th>
+            <th v-if="coordination" scope="col">配合部门</th>
+            <template v-if="coordination && (editing || results?.length)">
+              <th scope="col">会议结论</th>
+              <th scope="col">唯一责任人</th>
+              <th scope="col">截止时间</th>
+              <th v-if="editing" scope="col">操作</th>
+            </template>
           </tr>
         </thead>
         <tbody>
-          <tr v-for="(row, index) in rows" :key="index">
+          <tr v-for="(row, index) in rows" :key="row.key">
             <th scope="row">{{ index + 1 }}</th>
             <td>{{ row.subject }}</td>
+            <td v-if="coordination">{{ row.support }}</td>
             <td>{{ row.expected }}</td>
             <td>{{ row.author.department }}</td>
             <td>{{ row.author.name }}</td>
-            <td v-if="kind === 'COORDINATION'">{{ row.department }}</td>
-            <td v-if="kind === 'COORDINATION'">{{ row.person }}</td>
+            <td v-if="coordination">{{ row.department }}</td>
+            <template v-if="coordination && (editing || results?.length)">
+              <td>{{ row.result?.conclusion }}</td>
+              <td>{{ row.result?.assigneeName }}</td>
+              <td>{{ row.result?.dueAt ? dateTime(row.result.dueAt) : "" }}</td>
+              <td v-if="editing">
+                <MeetingCoordinationResult
+                  :row-key="row.key"
+                  :subject="row.subject"
+                  :initial="row.result"
+                  :meeting-id="editing.meetingId"
+                  :departments="editing.departments"
+                  :track-follow-up="editing.trackFollowUp"
+                  @saved="emit('saved')"
+                />
+              </td>
+            </template>
           </tr>
         </tbody>
       </table>
@@ -82,9 +129,8 @@ const tables = computed(() =>
 </template>
 
 <style scoped>
-.summary-count {
+small {
   color: var(--text-secondary);
-  font-size: 13px;
   font-weight: 400;
 }
 .summary-scroll {
@@ -94,13 +140,12 @@ const tables = computed(() =>
 }
 table {
   width: 100%;
-  min-width: 620px;
+  min-width: 630px;
   border-collapse: collapse;
-  table-layout: fixed;
   font-size: 13px;
 }
-table.coordination {
-  min-width: 870px;
+table.conclusions {
+  min-width: 1070px;
 }
 thead,
 tbody th {
@@ -114,19 +159,16 @@ td {
   overflow-wrap: anywhere;
   white-space: pre-wrap;
 }
+th {
+  min-width: 52px;
+}
+td:last-child button {
+  white-space: nowrap;
+}
 :is(th, td) + :is(th, td) {
   border-left: 1px solid var(--line);
 }
 tbody tr {
   border-top: 1px solid var(--line);
-}
-thead th:nth-child(1) {
-  width: 48px;
-}
-thead th:is(:nth-child(4), :nth-child(5), :nth-child(6), :nth-child(7)) {
-  width: 95px;
-}
-thead th:nth-child(3) {
-  width: 32%;
 }
 </style>

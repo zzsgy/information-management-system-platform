@@ -42,6 +42,27 @@ public final class ImportWorkbook {
     }
     /** 解析当前模板；编号和日期应使用文本格式以保留前导零及日历日期。 */
     public static List<Row> read(Path path,String type) {
+        return read(path, type, VERSION + ":" + type, headers(type));
+    }
+
+    /** 复用受限 XLSX 解析，会议标识和本场启用的中文列由调用方给定。 */
+    public static List<Row> readMeeting(byte[] bytes, String marker, List<String> columns) {
+        if (bytes.length == 0 || bytes.length > 4 * 1024 * 1024) throw ApiFault.invalid("会议 Excel 文件须在 4 MB 以内");
+        try {
+            Path temporary = Files.createTempFile("ims-meeting-import-", ".xlsx");
+            try {
+                Files.write(temporary, bytes);
+                return read(temporary, "MEETING", marker, columns);
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+        } catch (IOException failure) {
+            throw ApiFault.protection();
+        }
+    }
+
+    /** 使用同一工作簿结构检测、列校验和行号解析。 */
+    private static List<Row> read(Path path,String type,String marker,List<String> columns) {
         try {
             Map<String,byte[]> entries=parts(path);
             List<String> shared=new ArrayList<>();
@@ -51,7 +72,7 @@ public final class ImportWorkbook {
             List<Element> rows=elements(xml(entries.get("xl/worksheets/sheet1.xml")),"row");
             if(rows.size()>1002)throw ApiFault.invalid("每批台账最多 1000 行");
             boolean employee=type.equals("EMPLOYEE"), headerSeen=false;
-            List<String> columns=headers(type);List<Row> result=new ArrayList<>();int last=0,headerRow=2;
+            List<Row> result=new ArrayList<>();int last=0,headerRow=2;
             for(Element row:rows){
                 int number=Inputs.integer(row.getAttribute("r"),0,1,1002);if(number<=last)throw ApiFault.invalid("行号重复或乱序");last=number;
                 var cells=new TreeMap<Integer,String>();
@@ -66,7 +87,7 @@ public final class ImportWorkbook {
                     if(value.length()>20000)throw ApiFault.invalid("单元格超过长度上限");cells.put(column,value.trim());
                 }
                 if(number==1){
-                    if(Objects.equals(cells.get(1),VERSION+":"+type)&&cells.size()==1)continue;
+                    if(Objects.equals(cells.get(1),marker)&&cells.size()==1)continue;
                     if(!employee)throw ApiFault.invalid("模板版本或类型不匹配");
                     headerRow=1;
                 }
@@ -94,23 +115,55 @@ public final class ImportWorkbook {
     /** 生成文本工作簿；模拟数据测试复用同一编码实现。 */
     public static byte[] workbook(String type,List<Map<String,Object>> data){
         if(data.size()>1000)throw ApiFault.invalid("台账超过 1000 行");
+        return workbook(type, "导入台账", VERSION + ":" + type, headers(type), data);
+    }
+
+    /** 会议填报与汇总共用文本工作簿编码，列由发起人本场选项确定。 */
+    public static byte[] meetingWorkbook(String sheet, String marker, List<String> columns, List<Map<String, Object>> data) {
+        return workbook("MEETING", sheet, marker, columns, data);
+    }
+
+    /** 将业务数据按固定列顺序写为文本单元格。 */
+    private static byte[] workbook(String type,String sheetName,String marker,List<String> columns,List<Map<String,Object>> data){
         try(var bytes=new ByteArrayOutputStream();var zip=new ZipOutputStream(bytes)){
-            put(zip,"[Content_Types].xml","<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>");
+            boolean meeting=type.equals("MEETING");
+            String stylesType=meeting?"<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>":"";
+            put(zip,"[Content_Types].xml","<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"+stylesType+"</Types>");
             put(zip,"_rels/.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");
-            put(zip,"xl/workbook.xml","<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"导入台账\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
-            put(zip,"xl/_rels/workbook.xml.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>");
-            StringBuilder sheet=new StringBuilder("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>");
+            put(zip,"xl/workbook.xml","<workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\""+sheetName+"\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>");
+            String stylesRel=meeting?"<Relationship Id=\"rId2\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles\" Target=\"styles.xml\"/>":"";
+            put(zip,"xl/_rels/workbook.xml.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"+stylesRel+"</Relationships>");
+            StringBuilder sheet=new StringBuilder("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
+            if(meeting){
+                // 关闭自动数值转换，手工键入带前导零的员工工号也能保留文本。
+                put(zip,"xl/styles.xml",MEETING_STYLES);
+                sheet.append("<cols><col min=\"1\" max=\"").append(columns.size())
+                        .append("\" width=\"30\" style=\"1\" customWidth=\"1\"/></cols>");
+            }
+            sheet.append("<sheetData>");
             int headerRow=type.equals("EMPLOYEE")?1:2;
-            List<String> columns=headers(type);
-            if(headerRow==2)appendRow(sheet,1,List.of(VERSION+":"+type));
+            if(headerRow==2)appendRow(sheet,1,List.of(marker));
             appendRow(sheet,headerRow,displayHeaders(type,columns));
             for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
             put(zip,"xl/worksheets/sheet1.xml",sheet.append("</sheetData></worksheet>").toString());zip.finish();return bytes.toByteArray();
         }catch(IOException failure){throw ApiFault.protection();}
     }
+    /** 会议模板将可填写列设为 Excel 内置文本格式。 */
+    private static final String MEETING_STYLES = """
+            <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+              <fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>
+              <fills count="2"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill></fills>
+              <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+              <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+              <cellXfs count="2"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+                <xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyNumberFormat="1"/></cellXfs>
+              <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+            </styleSheet>
+            """;
     /** 员工模板使用与添加表单对应的中文表头，其他类型保留原契约。 */
     private static List<String> displayHeaders(String type,List<String> columns){
-        return type.equals("EMPLOYEE")?columns.stream().map(column->column.substring(column.indexOf('|')+1)).toList():columns;
+        return Set.of("EMPLOYEE", "MEETING").contains(type)
+                ? columns.stream().map(column->column.substring(column.indexOf('|')+1)).toList():columns;
     }
     /** 包内文件不释放到磁盘；每项 20MiB、总量 32MiB、最多 128 项。 */
     static Map<String,byte[]> parts(Path path) throws Exception {

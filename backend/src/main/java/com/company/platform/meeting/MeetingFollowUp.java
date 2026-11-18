@@ -39,9 +39,10 @@ public class MeetingFollowUp {
         Inputs.only(body, "materialsText", "decisions", "notes", "noteReaderIds", "shareReports", "shareTopics", "shareCoordination", "items", "publish");
         String materials = MeetingBookings.optional(body, "materialsText", 4_100_000);
         boolean publish = MeetingBookings.flag(body, "publish", false);
-        String decisions = publish ? Inputs.text(body, "decisions", 12000) : MeetingBookings.optional(body, "decisions", 12000);
+        String decisions = MeetingBookings.optional(body, "decisions", 12000);
         String notes = MeetingBookings.optional(body, "notes", 12000);
-        var items = Inputs.objects(body.getOrDefault("items", List.of()), 200).stream().map(this::draftItem).toList();
+        var items = new ArrayList<>(Inputs.objects(body.getOrDefault("items", List.of()), 200).stream()
+                .map(this::draftItem).toList());
         identity.lockActor(actor);
         var meeting = bookings.owned(actor, id);
         MeetingBookings.checkVersion(meeting, version);
@@ -49,6 +50,15 @@ public class MeetingFollowUp {
             throw ApiFault.conflict("当前会议不能编辑纪要");
         }
         boolean trackFollowUp = Boolean.TRUE.equals(meeting.get("track_follow_up"));
+        if (publish) {
+            var coordination = bookings.coordinationResults(meeting);
+            if (decisions == null && coordination.isEmpty()) throw ApiFault.invalid("请填写会议决议");
+            for (var result : coordination) {
+                if (!Boolean.TRUE.equals(result.get("followUp"))) continue;
+                items.add(new DraftItem(result.get("subject") + "\n" + result.get("conclusion"),
+                        Inputs.uuid(result.get("assigneeId")), MeetingBookings.inputTime(result.get("dueAt"))));
+            }
+        }
         if (!trackFollowUp && !items.isEmpty()) throw ApiFault.invalid("未开启会后反馈跟踪，不能分派会后待办");
         for (var item : items) bookings.employee(item.assignee());
         var draft = Sql.map("materialsText", materials, "decisions", decisions, "notes", notes,

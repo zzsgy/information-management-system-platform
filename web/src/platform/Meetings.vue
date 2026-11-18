@@ -10,10 +10,14 @@ import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingMaterialForm from "./MeetingMaterialForm.vue";
 import MeetingMinutes from "./MeetingMinutes.vue";
 import MeetingLiveDecision from "./MeetingLiveDecision.vue";
+import MeetingReading from "./MeetingReading.vue";
+import MeetingWorkbookPanel from "./MeetingWorkbookPanel.vue";
 import { vNumbered } from "./meetingNumbered";
+import RichTextEditor from "./RichTextEditor.vue";
+import RichTextView from "./RichTextView.vue";
+import { plainPreview } from "./formattedText";
 import {
   materialLabels,
-  reportMarkup,
   type MaterialKind,
   meetingStates,
   type MeetingDetail,
@@ -98,8 +102,6 @@ watch(roomDialog, (dialog) => dialog?.showModal(), { flush: "post" });
 function closeRoom() {
   if (!busy.value) roomEditing.value = false;
 }
-const materialForms =
-  useTemplateRef<InstanceType<typeof MeetingMaterialForm>[]>("materialForms");
 const materialOrder: MaterialKind[] = ["REPORT", "WEEKLY_PLAN", "TOPICS", "COORDINATION"];
 const formKinds = computed(() =>
   materialOrder.filter((kind) => detail.value?.materialTypes?.includes(kind)),
@@ -107,6 +109,8 @@ const formKinds = computed(() =>
 const own = computed(() =>
   detail.value?.attendees.find((a) => a.userId === profile.value?.user.id),
 );
+/** Excel 和逐人提交状态由发起人查看。 */
+const organizer = computed(() => detail.value?.organizerId === profile.value?.user.id);
 
 /** 汇总只在发起人详情中显示，数据沿用详情接口已有的查看权限。 */
 const summaryTypes = computed<MaterialKind[]>(() =>
@@ -147,6 +151,15 @@ async function refresh() {
     results.value = await api<Page<MeetingSummary>>(
       "/meetings?page=" + page.value,
     );
+  }
+}
+
+/** 子表单保存后留在详情页，更新提交状态与汇总。 */
+async function reloadDetail() {
+  try {
+    await refresh();
+  } catch (e) {
+    error.value = (e as Error).message;
   }
 }
 
@@ -194,13 +207,14 @@ async function act(
   body: object,
   success: string,
   method = "POST",
+  stay = false,
 ) {
   if (busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     await api(path, { method, body: JSON.stringify(body) });
-    if (configuring.value) {
+    if (configuring.value || stay) {
       roomEditing.value = false;
       inform(success);
       await refresh();
@@ -225,28 +239,13 @@ function cancelEditor() {
 }
 
 async function acceptMeeting(id: string) {
-  if (busy.value) return;
-  let materials;
-  try {
-    materials =
-      materialForms.value?.map((form) => form.collect()).filter(Boolean) ?? [];
-  } catch (e) {
-    error.value = (e as Error).message;
-    await nextTick();
-    document
-      .getElementById("meeting-detail-error")
-      ?.scrollIntoView({ block: "nearest" });
-    return;
-  }
-  const saved = await act(
+  await act(
     "/meetings/" + id + "/reply",
-    { decision: "ACCEPTED", ...(materials.length ? { materials } : {}) },
-    materials.length ? "会前材料已提交，已回复参加" : "已回复参加",
+    { decision: "ACCEPTED" },
+    "已回复参加",
+    "POST",
+    true,
   );
-  if (!saved)
-    document
-      .getElementById("meeting-detail-error")
-      ?.scrollIntoView({ block: "nearest" });
 }
 /** 开始后留在详情查看材料，结束后在同一弹窗填写纪要。 */
 async function changeMeetingPhase(action: "start" | "end") {
@@ -457,7 +456,7 @@ function replyLabel(reply?: string) {
     <template v-else-if="item">
       <section class="room-panel task-panel meeting-section">
         <h2><Icon name="task" :size="20" /> 会后待办</h2>
-        <p class="meeting-text">{{ item.content }}</p>
+        <RichTextView class="meeting-text" :value="item.content" />
         <p>
           责任人 {{ item.assigneeName }} · 截止 {{ portalTime(item.dueAt) }} ·
           {{ item.overdue ? "逾期" : meetingStates[item.state] }}
@@ -468,7 +467,7 @@ function replyLabel(reply?: string) {
               >{{ entry.actorName }} · {{ meetingStates[entry.state] }}</strong
             >
             <small>{{ portalTime(entry.at) }}</small>
-            <p v-if="entry.text" class="meeting-text">{{ entry.text }}</p>
+            <RichTextView v-if="entry.text" class="meeting-text" :value="entry.text" />
           </li>
         </ul>
         <form
@@ -482,14 +481,7 @@ function replyLabel(reply?: string) {
             )
           "
         >
-          <label
-            >落实情况<textarea v-numbered
-              v-model="feedback"
-              required
-              maxlength="8000"
-              rows="4"
-            />
-          </label>
+          <RichTextEditor v-model="feedback" label="落实情况" :rows="4" :limit="8000" required />
           <button class="primary" :disabled="busy">提交反馈</button>
         </form>
         <div v-if="item.canReview" class="meeting-actions">
@@ -719,8 +711,7 @@ function replyLabel(reply?: string) {
           </p>
           <section class="flow-dialog-section">
             <p class="detail-state booking-badge" :data-state="detail.state">
-              {{ detail.kind === "WEEKLY" ? "周会" : "普通会议"
-              }}{{ detail.urgent ? " · 紧急" : "" }} ·
+              {{ detail.urgent ? "紧急 · " : "" }}
               {{ meetingStates[detail.state] }}
             </p>
             <dl class="detail-facts">
@@ -748,9 +739,7 @@ function replyLabel(reply?: string) {
                 <dd>{{ detail.organizerName }}</dd>
               </div>
             </dl>
-            <p v-if="detail.description" class="meeting-text">
-              {{ detail.description }}
-            </p>
+            <RichTextView v-if="detail.description" class="meeting-text" :value="detail.description" />
             <p v-if="detail.cancelReason" class="meeting-text">
               取消原因 {{ detail.cancelReason }}
             </p>
@@ -807,6 +796,12 @@ function replyLabel(reply?: string) {
                 >{{ detail.attendees.length }} 人</span
               >
             </h3>
+            <button v-if="organizer && detail.canStart" type="button" class="secondary" :disabled="busy"
+              @click="reloadDetail()">刷新提交与阅读状态</button>
+            <MeetingReading v-if="detail.readingRevision" :key="detail.id"
+              :meeting-id="detail.id" :revision="detail.readingRevision"
+              :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
+              @saved="reloadDetail" @stale="reloadDetail" />
             <ul class="meeting-history">
               <li
                 v-for="person in detail.attendees"
@@ -839,9 +834,10 @@ function replyLabel(reply?: string) {
                     {{ person.declineReason }}
                   </p>
                 </template>
-                <template
-                  v-if="person.materialRequired && detail.materialTypes == null"
-                >
+                <small v-if="person.readingRequired">
+                  {{ person.readMaterialAt ? "资料已确认阅读 · " + portalTime(person.readMaterialAt) : "会前资料待确认" }}
+                </small>
+                <template v-if="person.materialRequired && detail.materialTypes == null">
                   <small v-if="person.materialAt"
                     >已提交会前材料 · {{ portalTime(person.materialAt) }}</small
                   >
@@ -858,7 +854,8 @@ function replyLabel(reply?: string) {
                 >
                   <p
                     v-if="
-                      person.reply !== undefined &&
+                      (organizer || person.userId === own?.userId) &&
+                      person.reply !== 'DECLINED' &&
                       detail.materialTypes.length > 0 &&
                       person.materials.length < detail.materialTypes.length
                     "
@@ -869,6 +866,8 @@ function replyLabel(reply?: string) {
                       missingMaterials(detail.materialTypes, person.materials)
                     }}
                   </p>
+                  <small v-else-if="(organizer || person.userId === own?.userId) && detail.materialTypes.length
+                    && person.materials.length === detail.materialTypes.length">会前材料已提交</small>
                   <details
                     v-for="material in person.materials.filter(
                       (entry) =>
@@ -885,12 +884,10 @@ function replyLabel(reply?: string) {
                       {{ material.data.author.name }} ·
                       {{ material.data.author.department }}
                     </p>
-                    <div
-                      v-if="material.kind === 'REPORT'"
-                      class="meeting-text"
-                      v-html="reportMarkup(material.data.html ?? '')"
-                    ></div>
-                    <p v-else-if="material.kind === 'WEEKLY_PLAN'" class="meeting-text">{{ material.data.text }}</p>
+                    <RichTextView
+                      v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
+                      class="meeting-text" :value="material.data.text" :html="material.data.html"
+                    />
                     <ol v-else>
                       <li
                         v-for="(row, index) in material.data.rows"
@@ -898,28 +895,31 @@ function replyLabel(reply?: string) {
                       >
                         <strong>{{ row.subject }}</strong>
                         <p class="meeting-text">期望结果 {{ row.expected }}</p>
-                        <small v-if="row.department || row.person">{{
-                          [row.department, row.person]
-                            .filter(Boolean)
-                            .join(" · ")
-                        }}</small>
+                        <small v-if="row.department">{{ row.department }}</small>
                       </li>
                     </ol>
                   </details>
                 </div>
-                <p v-if="person.report" class="meeting-text">
-                  汇报 {{ person.report }}
-                </p>
-                <p v-if="person.topics" class="meeting-text">
-                  议题 {{ person.topics }}
-                </p>
+                <div v-if="person.report" class="material-results">
+                  <small>汇报</small><RichTextView class="meeting-text" :value="person.report" />
+                </div>
+                <div v-if="person.topics" class="material-results">
+                  <small>议题</small><RichTextView class="meeting-text" :value="person.topics" />
+                </div>
               </li>
             </ul>
           </section>
+          <MeetingWorkbookPanel v-if="organizer" :key="detail.id" :meeting-id="detail.id"
+            :can-import="detail.canStart && !!detail.materialTypes?.length" @imported="reloadDetail" />
           <MeetingMaterialSummary
             v-if="summaryTypes.length && !detail.minutes"
             :types="summaryTypes"
             :submissions="submissions"
+            :results="detail.coordinationResults"
+            :editing="detail.canEnd && options
+              ? { meetingId: detail.id, departments: options.departments, trackFollowUp: detail.trackFollowUp }
+              : undefined"
+            @saved="reloadDetail"
           />
           <section
             v-if="
@@ -932,13 +932,14 @@ function replyLabel(reply?: string) {
           >
             <MeetingMaterialForm
               v-for="kind in formKinds"
-              :key="kind"
-              ref="materialForms"
+              :key="detail.id + ':' + kind"
+              :meeting-id="detail.id"
               :id="'meeting-material-' + kind"
               :kind="kind"
               :author="detail.materialAuthor"
               :existing="own?.materials?.find((entry) => entry.kind === kind)"
               :departments="options.departments"
+              @saved="reloadDetail"
             />
           </section>
           <form
@@ -954,12 +955,8 @@ function replyLabel(reply?: string) {
             "
           >
             <h3>会前汇报与议题</h3>
-            <label
-              >汇报信息<textarea v-numbered v-model="report" rows="4" maxlength="4000" />
-            </label>
-            <label
-              >会议议题<textarea v-numbered v-model="topics" rows="4" maxlength="4000" />
-            </label>
+            <RichTextEditor v-model="report" label="汇报信息" :rows="4" :limit="4000" />
+            <RichTextEditor v-model="topics" label="会议议题" :rows="4" :limit="4000" />
             <button
               class="primary"
               :disabled="busy || (!report.trim() && !topics.trim())"
@@ -976,7 +973,7 @@ function replyLabel(reply?: string) {
           />
           <section v-else-if="detail.liveDecisions" class="flow-dialog-section">
             <h3>会议决议</h3>
-            <p class="meeting-text">{{ detail.liveDecisions }}</p>
+            <RichTextView class="meeting-text" :value="detail.liveDecisions" />
           </section>
           <MeetingMinutes
             v-if="detail.canWriteMinutes && options"
@@ -1000,28 +997,29 @@ function replyLabel(reply?: string) {
               "
               :types="detail.minutes.summaryTypes"
               :submissions="detail.minutes.materialTables"
+              :results="detail.coordinationResults"
             />
             <template v-if="detail.minutes.materialsText">
               <h3>会前材料汇总</h3>
-              <p class="meeting-text">{{ detail.minutes.materialsText }}</p>
+              <RichTextView class="meeting-text" :value="detail.minutes.materialsText" />
             </template>
             <template v-if="detail.minutes.notes">
               <h3>会议记录</h3>
-              <p class="meeting-text">{{ detail.minutes.notes }}</p>
+              <RichTextView class="meeting-text" :value="detail.minutes.notes" />
             </template>
             <template v-if="detail.minutes.summary">
               <h3>会议总结</h3>
-              <p class="meeting-text">{{ detail.minutes.summary }}</p>
+              <RichTextView class="meeting-text" :value="detail.minutes.summary" />
             </template>
             <template v-if="detail.minutes.decisions">
               <h3>会议决议</h3>
-              <p class="meeting-text">{{ detail.minutes.decisions }}</p>
+              <RichTextView class="meeting-text" :value="detail.minutes.decisions" />
             </template>
             <template v-if="detail.minutes.items?.length">
               <h3>拟分派事项</h3>
               <ul class="meeting-history">
                 <li v-for="(task, index) in detail.minutes.items" :key="index">
-                  <p class="meeting-text">{{ task.content }}</p>
+                  <RichTextView class="meeting-text" :value="task.content" />
                   <small
                     >{{ task.assigneeName }} · 截止
                     {{ portalTime(task.dueAt) }}</small
@@ -1038,9 +1036,9 @@ function replyLabel(reply?: string) {
             <ul v-if="detail.items.length" class="meeting-history">
               <li v-for="task in detail.items" :key="task.id">
                 <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{
-                  task.content
+                  plainPreview(task.content)
                 }}</a>
-                <p v-else class="meeting-text">{{ task.content }}</p>
+                <RichTextView v-else class="meeting-text" :value="task.content" />
                 <small
                   >{{ task.assigneeName
                   }}<template v-if="task.state">
@@ -1112,11 +1110,7 @@ function replyLabel(reply?: string) {
               :disabled="busy"
               @click="acceptMeeting(detail.id)"
             >
-              {{
-                detail.canSubmitMaterials && formKinds.length
-                  ? "提交并参加"
-                  : "参加"
-              }}
+              参加
             </button>
             <button class="secondary" :disabled="busy" @click="openDecline">
               不能参加

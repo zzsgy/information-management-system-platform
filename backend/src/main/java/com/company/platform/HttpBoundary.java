@@ -41,13 +41,16 @@ public class HttpBoundary extends OncePerRequestFilter {
                 boolean part=method.equals("PUT") && path.matches("/api/v1/storage/upload-sessions/[0-9a-f-]+/parts/[0-9]+");
                 // 纪要包含整场会前材料及待办，使用独立正文上限。
                 boolean minutes=method.equals("PUT") && path.matches("/api/v1/meetings/[0-9a-f-]+/minutes");
-                // 合并回复可同时携带三份材料，各项仍按原字段上限校验。
-                boolean meetingReply=method.equals("POST") && path.matches("/api/v1/meetings/[0-9a-f-]+/reply");
+                // 回复兼容旧客户端的合并提交，独立提交可携带 30 条事项正文。
+                boolean meetingMaterials=(method.equals("POST") && path.matches("/api/v1/meetings/[0-9a-f-]+/reply"))
+                        || (method.equals("PUT") && path.matches("/api/v1/meetings/[0-9a-f-]+/materials"));
                 // 千行员工表的批量拼音邮箱作为预检参数提交。
                 boolean importBatch=method.equals("POST")&&path.equals("/api/v1/imports/batches");
                 // 单机员工表专用入口接收 4 MiB XLSX 及其 Base64 包装。
                 boolean employeeWorkbook=method.equals("POST")&&path.matches("/api/v1/imports/employee-workbook/(inspect|batches)");
-                long limit=employeeWorkbook?6L*1024*1024:minutes?16L*1024*1024:part?8L*1024*1024:meetingReply?1024L*1024:importBatch?512L*1024:65536;
+                // 会议 XLSX 同样使用 4 MiB 文件与 Base64 包装的正文上限。
+                boolean meetingWorkbook=method.equals("POST")&&path.matches("/api/v1/meetings/[0-9a-f-]+/workbooks/import");
+                long limit=employeeWorkbook||meetingWorkbook?6L*1024*1024:minutes?16L*1024*1024:part?8L*1024*1024:meetingMaterials?1024L*1024:importBatch?512L*1024:65536;
                 if (request.getContentLengthLong()>limit || (request.getContentLengthLong()<0 && request.getHeader("Transfer-Encoding")!=null)) throw ApiFault.invalid("请求正文超过该接口上限");
             }
             // 托盘助手不依赖浏览器会话，仅这一条 POST 由提醒服务校验专用凭据。

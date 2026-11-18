@@ -1,7 +1,7 @@
 <script setup lang="ts">
+import RichTextEditor from "./RichTextEditor.vue";
 import { onBeforeUnmount, ref } from "vue";
 import { api } from "./api";
-import { vNumbered } from "./meetingNumbered";
 
 const props = defineProps<{
   meetingId: string;
@@ -61,17 +61,8 @@ defineExpose({ flush });
 
 <template>
   <section class="flow-dialog-section">
-    <label>
-      会议决议
-      <textarea
-        v-numbered
-        v-model="decisions"
-        rows="7"
-        maxlength="12000"
-        :disabled="disabled"
-        @input="scheduleSave"
-      />
-    </label>
+    <RichTextEditor v-model="decisions" label="会议决议" :rows="7" :limit="12000"
+      :disabled="disabled" @update:model-value="scheduleSave" />
     <p v-if="error" role="alert" class="form-error">
       {{ error }}
       <button

@@ -39,6 +39,9 @@ export interface MeetingAttendee {
   topics?: string | null;
   materialAt?: string | null;
   materials?: MeetingMaterial[];
+  /** 本人或发起人可见的会前资料阅读状态。 */
+  readingRequired?: boolean;
+  readMaterialAt?: string;
 }
 export interface MeetingItemDraft {
   content: string;
@@ -75,6 +78,10 @@ export interface MeetingDetail extends MeetingSummary {
   trackFollowUp: boolean;
   shareAll: boolean | null;
   liveDecisions?: string | null;
+  /** 员工当前仍待确认的共享资料版本。 */
+  readingRevision?: string;
+  /** 已保存的会中事项结论。 */
+  coordinationResults?: CoordinationResult[];
   rowVersion: number;
   actualStartedAt: string | null;
   actualEndedAt: string | null;
@@ -128,22 +135,39 @@ export function meetingInstant(value: string) {
 }
 
 export const materialLabels = {
-  REPORT: "工作汇报",
-  WEEKLY_PLAN: "本周计划",
+  REPORT: "上周工作内容",
+  WEEKLY_PLAN: "本周工作计划",
   TOPICS: "会议议题",
   COORDINATION: "部门协调事宜",
 } as const;
+/** 用于填写事项及按类汇总，旧事项按部门配合展示。 */
+export const coordinationLabels = {
+  COMPANY: "需公司协调",
+  DEPARTMENT: "需其他部门配合",
+} as const;
 export type MaterialKind = keyof typeof materialLabels;
+export type CoordinationCategory = keyof typeof coordinationLabels;
 export interface MaterialRow {
   subject: string;
   expected: string;
+  category?: CoordinationCategory;
+  support?: string;
   departmentId?: string | null;
-  personId?: string | null;
   department?: string;
-  person?: string;
+}
+/** 调用本场事项结论接口和展示纪要所需的字段。 */
+export interface CoordinationResult {
+  key: string;
+  conclusion: string;
+  assigneeId: string | null;
+  assigneeName: string | null;
+  dueAt: string | null;
+  followUp: boolean;
 }
 export interface MeetingMaterial {
   kind: MaterialKind;
+  /** 汇总行按受邀记录与材料内顺序关联会中结论。 */
+  attendeeId?: string;
   submittedAt: string;
   data: {
     html?: string;
@@ -151,38 +175,4 @@ export interface MeetingMaterial {
     rows?: MaterialRow[];
     author: { name: string; department: string };
   };
-}
-
-/** 只保留编辑器支持的格式。通过模板读取惰性 DOM，重建时不复制任何属性。 */
-export function reportMarkup(html: string) {
-  const source = document.createElement("template");
-  source.innerHTML = html;
-  const result = document.createElement("div");
-  const allowed = new Set([
-    "B",
-    "STRONG",
-    "I",
-    "EM",
-    "U",
-    "P",
-    "DIV",
-    "BR",
-    "UL",
-    "OL",
-    "LI",
-  ]);
-  function append(node: Node, parent: HTMLElement) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      parent.append(document.createTextNode(node.textContent ?? ""));
-    } else if (node instanceof Element) {
-      if (["SCRIPT", "STYLE", "TEMPLATE"].includes(node.tagName)) return;
-      const target = allowed.has(node.tagName)
-        ? document.createElement(node.tagName)
-        : parent;
-      if (target !== parent) parent.append(target);
-      node.childNodes.forEach((child) => append(child, target));
-    }
-  }
-  source.content.childNodes.forEach((node) => append(node, result));
-  return result.innerHTML;
 }

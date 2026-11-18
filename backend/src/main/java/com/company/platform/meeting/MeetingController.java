@@ -2,6 +2,10 @@ package com.company.platform.meeting;
 
 import com.company.platform.*;
 import jakarta.servlet.http.HttpServletRequest;
+import com.company.platform.intake.ImportWorkbook;
+import org.springframework.http.ContentDisposition;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.*;
@@ -13,13 +17,17 @@ public class MeetingController {
     private final MeetingBookings bookings;
     private final MeetingFollowUp followUp;
     private final MeetingPermissions permissions;
+    /** 发起人下载、预检和导入本次会议的 Excel 服务。 */
+    private final MeetingWorkbooks workbooks;
     private final Commands commands;
 
-    public MeetingController(MeetingBookings bookings, MeetingFollowUp followUp, MeetingPermissions permissions, Commands commands) {
+    public MeetingController(MeetingBookings bookings, MeetingFollowUp followUp, MeetingPermissions permissions,
+            Commands commands, MeetingWorkbooks workbooks) {
         this.bookings = bookings;
         this.followUp = followUp;
         this.permissions = permissions;
         this.commands = commands;
+        this.workbooks = workbooks;
     }
 
     @GetMapping("/meetings/options")
@@ -105,6 +113,44 @@ public class MeetingController {
         UUID meeting = Inputs.uuid(id);
         bookings.materials(actor(r), meeting, ApiController.requestId(r), body);
         return saved(meeting, r);
+    }
+
+    /** 本场受邀员工确认阅读；版本过期须刷新后再次确认。 */
+    @PostMapping("/meetings/{id}/reading")
+    public Map<String, Object> confirmReading(@PathVariable String id, @RequestBody Map<String, Object> body,
+            HttpServletRequest r) {
+        Inputs.only(body, "revision");
+        UUID meeting = Inputs.uuid(id);
+        bookings.confirmReading(actor(r), meeting, ApiController.requestId(r), Inputs.text(body, "revision", 64));
+        return saved(meeting, r);
+    }
+
+    /** 只有发起人可在会中保存本次会议的事项结论。 */
+    @PutMapping("/meetings/{id}/coordination")
+    public Map<String, Object> coordination(@PathVariable String id, @RequestBody Map<String, Object> body,
+            HttpServletRequest r) {
+        UUID meeting = Inputs.uuid(id);
+        bookings.saveCoordination(actor(r), meeting, body);
+        return saved(meeting, r);
+    }
+
+    /** 发起人下载会前填报模板，或导出当前材料和会中结论。 */
+    @GetMapping("/meetings/{id}/workbooks/{mode}")
+    public ResponseEntity<byte[]> workbook(@PathVariable String id, @PathVariable String mode, HttpServletRequest r) {
+        boolean template = Inputs.choice(mode, "template", "summary").equals("template");
+        byte[] workbook = workbooks.download(actor(r), Inputs.uuid(id), template);
+        return ResponseEntity.ok()
+                .header("Content-Disposition", ContentDisposition.attachment()
+                        .filename(template ? "会议填报模板.xlsx" : "会议汇总.xlsx", java.nio.charset.StandardCharsets.UTF_8)
+                        .build().toString())
+                .contentType(MediaType.parseMediaType(ImportWorkbook.MEDIA)).body(workbook);
+    }
+
+    /** 发起人会前预检或确认导入，发现行错误或预检失效时不写入。 */
+    @PostMapping("/meetings/{id}/workbooks/import")
+    public Map<String, Object> importWorkbook(@PathVariable String id, @RequestBody Map<String, Object> body,
+            HttpServletRequest r) {
+        return ok(workbooks.importMaterials(actor(r), Inputs.uuid(id), ApiController.requestId(r), body), r);
     }
 
     @PutMapping("/meetings/{id}/minutes")

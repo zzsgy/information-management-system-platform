@@ -2,6 +2,8 @@ package com.company.platform;
 
 import com.company.platform.meeting.MeetingBookings;
 import com.company.platform.meeting.MeetingFollowUp;
+import com.company.platform.meeting.MeetingWorkbooks;
+import com.company.platform.intake.ImportWorkbook;
 import com.company.platform.portal.PortalWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,6 +36,7 @@ class MeetingIntegrationTest {
     @Autowired IdentityService identity;
     @Autowired MeetingBookings bookings;
     @Autowired MeetingFollowUp followUp;
+    @Autowired MeetingWorkbooks workbooks;
     @Autowired PortalWork portal;
 
     private Actor admin, organizer, employee, outsider;
@@ -271,10 +274,9 @@ class MeetingIntegrationTest {
         body.put("materialTypes", List.of("WEEKLY_PLAN"));
         UUID id = bookings.create(organizer, request(), body);
         assertTrue(hasPending(employee, id));
-        assertEquals(400, assertThrows(ApiFault.class,
-                () -> bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"))).status);
-        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED", "materials",
-                List.of(Map.of("kind", "WEEKLY_PLAN", "text", "1. 完成排期"))));
+        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"));
+        assertTrue(hasPending(employee, id));
+        bookings.materials(employee, id, request(), Map.of("kind", "WEEKLY_PLAN", "text", "1. 完成排期"));
         assertFalse(hasPending(employee, id));
         assertEquals("WEEKLY_PLAN", values(attendee(organizer, id, employee), "materials").getFirst().get("kind"));
         assertEquals(409, assertThrows(ApiFault.class,
@@ -406,6 +408,67 @@ class MeetingIntegrationTest {
                 Map.of("decision", "RETURNED", "reason", "继续补充"));
         assertEquals("HANDLING", attendeeTask(employee, entry).get("category"));
         assertEquals(taskId, attendeeTask(employee, entry).get("id"));
+    }
+
+    /** 覆盖表格冲突、按人确认阅读与从会中结论分派会后反馈。 */
+    @Test
+    void importedMaterialsReadingAndCoordinationWorkThroughPublishing() {
+        var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        booking.put("subject", "周报");
+        booking.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
+        booking.put("materialTypes", List.of("REPORT", "COORDINATION"));
+        booking.put("shareAll", true);
+        booking.put("trackFollowUp", true);
+        UUID id = bookings.create(organizer, request(), booking);
+        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"));
+        bookings.materials(employee, id, request(), Map.of("kind", "REPORT", "text", "线上内容"));
+        assertNull(bookings.detail(employee, id).get("readingRevision"));
+        String reportRevision = bookings.detail(outsider, id).get("readingRevision").toString();
+        bookings.confirmReading(outsider, id, request(), reportRevision);
+        assertNotNull(attendee(organizer, id, outsider).get("readMaterialAt"));
+        assertFalse(attendee(employee, id, outsider).containsKey("readMaterialAt"));
+
+        String employeeNo = attendee(organizer, id, employee).get("employeeNo").toString();
+        var columns = List.of("employeeNo|工号", "report|上周工作内容", "category|事项类别（需公司协调／需其他部门配合）",
+                "coord|协调或配合事项", "support|需要协调或配合的内容", "expected|期望结果或验收标准", "department|配合部门");
+        String marker = "IMS-MEETING-1:" + id;
+        byte[] workbook = ImportWorkbook.meetingWorkbook("会议填报", marker, columns, List.of(
+                Map.of("employeeNo", employeeNo, "report", "线下冲突内容", "category", "需公司协调",
+                        "coord", "协调合同", "expected", "确认合同", "support", "确定条款")));
+        String file = Base64.getEncoder().encodeToString(workbook);
+        assertEquals(404, assertThrows(ApiFault.class, () -> workbooks.download(employee, id, false)).status);
+        var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
+        assertEquals(List.of(), preview.get("errors"));
+        assertEquals(true, values(preview, "materials").getFirst().get("conflict"));
+        var imported = workbooks.importMaterials(organizer, id, request(), Map.of("file", file, "preview", preview.get("preview")));
+        assertEquals(1, imported.get("imported"));
+        assertEquals(1, imported.get("skipped"));
+        assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("线上内容"));
+        assertNull(attendee(organizer, id, outsider).get("readMaterialAt"));
+        assertEquals(409, assertThrows(ApiFault.class,
+                () -> bookings.confirmReading(outsider, id, request(), reportRevision)).status);
+        assertEquals(409, assertThrows(ApiFault.class, () -> workbooks.importMaterials(organizer, id, request(),
+                Map.of("file", file, "preview", preview.get("preview")))).status);
+        var overwrite = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
+        String reportKey = values(overwrite, "materials").getFirst().get("key").toString();
+        assertEquals(1, workbooks.importMaterials(organizer, id, request(),
+                Map.of("file", file, "preview", overwrite.get("preview"), "overwrite", List.of(reportKey))).get("imported"));
+        assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("线下冲突内容"));
+
+        // 未阅读和未交材料都不阻止发起人开会。
+        bookings.start(organizer, id, request());
+        var materials = values(attendee(organizer, id, employee), "materials");
+        String key = materials.stream().filter(row -> row.get("kind").equals("COORDINATION"))
+                .findFirst().orElseThrow().get("attendeeId") + ":0";
+        var conclusion = Sql.map("key", key, "conclusion", "签订补充协议", "assigneeId", employee.userId().toString(),
+                "dueAt", Instant.now().plusSeconds(7200).toString(), "followUp", true);
+        assertEquals(404, assertThrows(ApiFault.class, () -> bookings.saveCoordination(employee, id, conclusion)).status);
+        bookings.saveCoordination(organizer, id, conclusion);
+        bookings.end(organizer, id, request());
+        followUp.saveMinutes(organizer, id, request(), 3, Map.of("publish", true));
+        var assigned = values(bookings.detail(employee, id), "items").getFirst();
+        assertEquals("协调合同\n签订补充协议", assigned.get("content"));
+        assertTrue(workbooks.download(organizer, id, false).length > 0);
     }
 
     private Map<String, Object> attendeeTask(Actor actor, String entry) {

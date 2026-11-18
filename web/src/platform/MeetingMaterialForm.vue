@@ -1,105 +1,57 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { ref } from "vue";
+import RichTextEditor from "./RichTextEditor.vue";
+import { formattedText } from "./formattedText";
 import { api } from "./api";
 import { vNumbered } from "./meetingNumbered";
 import {
   materialLabels,
-  reportMarkup,
+  coordinationLabels,
   type MaterialKind,
   type MaterialRow,
   type MeetingMaterial,
   type MeetingOption,
-  type MeetingPerson,
 } from "./meeting";
 
 const props = defineProps<{
+  meetingId: string;
   kind: MaterialKind;
   author: { name: string; department: string };
   existing?: MeetingMaterial;
   departments: MeetingOption[];
 }>();
-const editor = ref<HTMLElement>();
-const weeklyPlan = ref(props.existing?.data.text ?? "");
+const emit = defineEmits<{ saved: [] }>();
+const editor = ref<InstanceType<typeof RichTextEditor>>();
+const narrative = ref(formattedText(
+  props.existing?.data.text ?? "", props.existing?.data.html ?? "",
+));
 let nextRowId = 0;
 function makeRow(values: MaterialRow = { subject: "", expected: "" }) {
-  return { departmentId: null, personId: null, ...values, rowId: nextRowId++ };
+  return { departmentId: null, category: "DEPARTMENT", support: "", ...values, rowId: nextRowId++ };
 }
 const rows = ref(props.existing?.data.rows?.map(makeRow) ?? [makeRow()]);
 function addRow() {
   rows.value.push(makeRow());
 }
-const people = ref<MeetingPerson[]>([]);
 const error = ref("");
-onMounted(() => {
-  if (editor.value)
-    editor.value.innerHTML = reportMarkup(props.existing?.data.html ?? "");
-});
+const busy = ref(false);
+const saved = ref(false);
 
-/** 使用现有员工目录分页补齐下拉，配合人可按行内所选部门过滤。 */
-watch(
-  () => props.kind,
-  async (kind, _, onCleanup) => {
-    if (kind !== "COORDINATION") return;
-    const controller = new AbortController();
-    onCleanup(() => controller.abort());
-    try {
-      const result: MeetingPerson[] = [];
-      for (let page = 1; ; page++) {
-        const data = await api<{ items: MeetingPerson[]; hasNext: boolean }>(
-          "/meetings/people?page=" + page,
-          { signal: controller.signal },
-        );
-        result.push(...data.items);
-        if (!data.hasNext) break;
-      }
-      if (!controller.signal.aborted) people.value = result;
-    } catch (e) {
-      if (!controller.signal.aborted) error.value = (e as Error).message;
-    }
-  },
-  { immediate: true },
-);
-
-const tools = [
-  ["bold", "加粗"],
-  ["italic", "斜体"],
-  ["underline", "下划线"],
-  ["insertUnorderedList", "项目列表"],
-  ["insertOrderedList", "编号列表"],
-];
-function format(command: string) {
-  editor.value?.focus();
-  document.execCommand(command);
-}
-function paste(event: ClipboardEvent) {
-  document.execCommand(
-    "insertText",
-    false,
-    event.clipboardData?.getData("text/plain") ?? "",
-  );
-}
 /** 空材料保持待提交，已填写的行沿用字段校验。 */
 function collect() {
-  if (props.kind === "WEEKLY_PLAN") {
-    if (!weeklyPlan.value.trim()) throw new Error("请先填写本周计划，再提交并参加");
-    return { kind: props.kind, text: weeklyPlan.value };
-  }
-  if (props.kind === "REPORT") {
-    const text = editor.value?.innerText.trim();
-    return text
-      ? {
-          kind: props.kind,
-          html: reportMarkup(editor.value?.innerHTML ?? ""),
-          text,
-        }
-      : null;
+  if (props.kind === "REPORT" || props.kind === "WEEKLY_PLAN") {
+    const content = editor.value?.read();
+    if (!content?.text) return null;
+    if (content.text.length > 8000 || content.html.length > 12000)
+      throw new Error(materialLabels[props.kind] + "正文或格式超过长度限制");
+    return { kind: props.kind, ...content };
   }
   const entries = rows.value.filter(
     (row) =>
       row.subject.trim() ||
       row.expected.trim() ||
       row.departmentId ||
-      row.personId,
+      row.support?.trim(),
   );
   if (entries.some((row) => !row.subject.trim() || !row.expected.trim())) {
     throw new Error(
@@ -109,15 +61,34 @@ function collect() {
   return entries.length
     ? {
         kind: props.kind,
-        rows: entries.map(({ subject, expected, departmentId, personId }) => ({
+        rows: entries.map(({ subject, expected, departmentId, category, support }) => ({
           subject,
           expected,
-          ...(props.kind === "COORDINATION" ? { departmentId, personId } : {}),
+          ...(props.kind === "COORDINATION" ? { departmentId, category, support } : {}),
         })),
       }
     : null;
 }
-defineExpose({ collect });
+/** 正文和议题独立提交，参会回复只处理是否参加。 */
+async function submit() {
+  busy.value = true;
+  error.value = "";
+  saved.value = false;
+  try {
+    const material = collect();
+    if (!material) throw new Error("请填写材料后提交");
+    await api("/meetings/" + props.meetingId + "/materials", {
+      method: "PUT",
+      body: JSON.stringify(material),
+    });
+    saved.value = true;
+    emit("saved");
+  } catch (e) {
+    error.value = (e as Error).message;
+  } finally {
+    busy.value = false;
+  }
+}
 </script>
 
 <template>
@@ -126,35 +97,11 @@ defineExpose({ collect });
     <p v-if="kind === 'REPORT'" class="material-author">
       发起人 {{ author.name }} · 发起部门 {{ author.department }}
     </p>
-    <template v-if="kind === 'REPORT'">
-      <div class="report-tools" aria-label="汇报格式">
-        <button
-          v-for="[command, label] in tools"
-          :key="command"
-          type="button"
-          class="secondary"
-          @mousedown.prevent
-          @click="format(command)"
-        >
-          {{ label }}
-        </button>
-      </div>
-      <div
-        ref="editor"
-        class="report-editor"
-        contenteditable="true"
-        v-numbered
-        role="textbox"
-        aria-label="工作汇报正文"
-        aria-multiline="true"
-        @paste.prevent="paste"
-        @drop.prevent
-      />
-    </template>
-    <label v-else-if="kind === 'WEEKLY_PLAN'">
-      本周计划内容
-      <textarea v-model="weeklyPlan" v-numbered rows="5" maxlength="8000" />
-    </label>
+    <RichTextEditor
+      v-if="kind === 'REPORT' || kind === 'WEEKLY_PLAN'"
+      ref="editor" v-model="narrative"
+      :label="materialLabels[kind]" :rows="5"
+    />
     <template v-else>
       <div
         class="material-table-wrap"
@@ -169,32 +116,26 @@ defineExpose({ collect });
         >
           <colgroup>
             <col class="row-number" />
+            <col v-if="kind === 'COORDINATION'" class="row-partner" />
             <col class="row-subject" />
+            <col v-if="kind === 'COORDINATION'" class="row-expected" />
             <col class="row-expected" />
             <col class="row-author" />
             <col class="row-author" />
-            <col v-if="kind === 'COORDINATION'" class="row-partner" />
             <col v-if="kind === 'COORDINATION'" class="row-partner" />
             <col class="row-actions" />
           </colgroup>
           <thead>
             <tr>
               <th scope="col">序号</th>
+              <th v-if="kind === 'COORDINATION'" scope="col">事项类别</th>
               <th scope="col">{{ kind === "TOPICS" ? "议题" : "具体事宜" }}</th>
-              <th scope="col">
-                {{
-                  kind === "TOPICS"
-                    ? "需公司协调什么 / 期望结果"
-                    : "需对方做什么 / 期望结果"
-                }}
-              </th>
+              <th v-if="kind === 'COORDINATION'" scope="col">需协调或配合内容</th>
+              <th scope="col">期望结果 / 验收标准</th>
               <th scope="col">发起部门</th>
               <th scope="col">发起人</th>
               <th v-if="kind === 'COORDINATION'" scope="col">
                 配合部门 <small>选填</small>
-              </th>
-              <th v-if="kind === 'COORDINATION'" scope="col">
-                配合人 <small>选填</small>
               </th>
               <th scope="col">操作</th>
             </tr>
@@ -202,6 +143,11 @@ defineExpose({ collect });
           <tbody>
             <tr v-for="(row, index) in rows" :key="row.rowId">
               <th scope="row">{{ index + 1 }}</th>
+              <td v-if="kind === 'COORDINATION'">
+                <select v-model="row.category" :aria-label="'事项类别 第 ' + (index + 1) + ' 行'">
+                  <option v-for="(label, key) in coordinationLabels" :key="key" :value="key">{{ label }}</option>
+                </select>
+              </td>
               <td>
                 <textarea v-numbered
                   v-model="row.subject"
@@ -215,18 +161,17 @@ defineExpose({ collect });
                   "
                 />
               </td>
+              <td v-if="kind === 'COORDINATION'">
+                <textarea v-model="row.support" maxlength="1000" rows="2"
+                  :aria-label="'需协调或配合内容 第 ' + (index + 1) + ' 行'" />
+              </td>
               <td>
                 <textarea v-numbered
                   v-model="row.expected"
                   maxlength="1000"
                   rows="2"
                   :aria-label="
-                    (kind === 'TOPICS'
-                      ? '需公司协调什么 / 期望结果'
-                      : '需对方做什么 / 期望结果') +
-                    ' 第 ' +
-                    (index + 1) +
-                    ' 行'
+                    '期望结果 第 ' + (index + 1) + ' 行'
                   "
                 />
               </td>
@@ -236,7 +181,6 @@ defineExpose({ collect });
                 <select
                   v-model="row.departmentId"
                   :aria-label="'配合部门 第 ' + (index + 1) + ' 行'"
-                  @change="row.personId = null"
                 >
                   <option :value="null">未选择</option>
                   <option
@@ -245,25 +189,6 @@ defineExpose({ collect });
                     :value="department.id"
                   >
                     {{ department.name }}
-                  </option>
-                </select>
-              </td>
-              <td v-if="kind === 'COORDINATION'">
-                <select
-                  v-model="row.personId"
-                  :aria-label="'配合人 第 ' + (index + 1) + ' 行'"
-                >
-                  <option :value="null">未选择</option>
-                  <option
-                    v-for="person in people.filter(
-                      (person) =>
-                        !row.departmentId ||
-                        person.departmentId === row.departmentId,
-                    )"
-                    :key="person.id"
-                    :value="person.id"
-                  >
-                    {{ person.name }} · {{ person.employeeNo }}
                   </option>
                 </select>
               </td>
@@ -279,7 +204,7 @@ defineExpose({ collect });
               </td>
             </tr>
             <tr v-if="!rows.length">
-              <td :colspan="kind === 'COORDINATION' ? 8 : 6">
+              <td :colspan="kind === 'COORDINATION' ? 9 : 6">
                 点击「新增行」开始填写。
               </td>
             </tr>
@@ -297,6 +222,12 @@ defineExpose({ collect });
         </button>
       </div>
     </template>
+    <div class="meeting-actions">
+      <button type="button" class="primary" :disabled="busy" @click="submit">
+        提交{{ materialLabels[kind] }}
+      </button>
+      <small v-if="saved" role="status">已提交</small>
+    </div>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   </section>
 </template>
@@ -377,21 +308,5 @@ defineExpose({ collect });
 }
 .material-table .text-button {
   padding-inline: 0;
-}
-.report-tools {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.report-tools button {
-  min-height: 30px;
-  font-size: 12px;
-}
-.report-editor {
-  min-height: 135px;
-  padding: 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  overflow-wrap: anywhere;
 }
 </style>

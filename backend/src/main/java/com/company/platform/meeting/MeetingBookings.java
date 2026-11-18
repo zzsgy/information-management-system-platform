@@ -111,6 +111,12 @@ public class MeetingBookings {
         result.put("canEnd", organizer && "IN_PROGRESS".equals(row.get("state")));
         result.put("canWriteMinutes", organizer && "AWAITING_MINUTES".equals(row.get("state")));
         result.put("canClose", organizer && "FOLLOW_UP".equals(row.get("state")) && allItemsConfirmed(id));
+        // 阅读版本和确认时间仅发给发起人及确认人本人，沿用本次详情的事务快照。
+        boolean sharedReading = Boolean.TRUE.equals(row.get("share_all")) && (organizer ||
+                attendees.stream().anyMatch(person -> actor.userId().equals(person.get("user_id"))));
+        var readingMaterials = sharedReading ? readingMaterials(id) : List.<Map<String, Object>>of();
+        if (full && summaryTypes(row).contains("COORDINATION"))
+            result.put("coordinationResults", coordinationResults(row));
         var minutes = published || full ? minutes(row, attendees, full, actor.userId()) : null;
         boolean reportsShared = legacy && published && Boolean.TRUE.equals(minutes.get("reportsShared"));
         result.put("attendees", attendees.stream().map(person -> {
@@ -122,12 +128,24 @@ public class MeetingBookings {
                 fields += ",report";
             }
             var visible = Sql.view(person, fields);
+            if (sharedReading && (organizer || actor.userId().equals(person.get("user_id")))
+                    && !"DECLINED".equals(person.get("reply"))) {
+                String revision = readingRevision(readingMaterials, (UUID) person.get("user_id"));
+                if (revision != null) {
+                    visible.put("readingRequired", true);
+                    if (revision.equals(person.get("read_material_revision")))
+                        visible.put("readMaterialAt", person.get("read_material_at"));
+                    else if (scheduled && actor.userId().equals(person.get("user_id")))
+                        result.put("readingRevision", revision);
+                }
+            }
             if ((ownOrFull || reportsShared) && row.get("material_types") != null) {
                 visible.put("materials", db.rows("""
                         SELECT kind,payload::text AS payload,submitted_at FROM portal.meeting_material
                         WHERE attendee_id=? AND (? OR kind='REPORT')
                         """, person.get("id"), ownOrFull).stream().map(m -> Sql.map("kind",m.get("kind"),
-                        "data",Crypto.JSON.readTree(m.get("payload").toString()),"submittedAt",m.get("submitted_at"))).toList());
+                        "data",Crypto.JSON.readTree(m.get("payload").toString()),"submittedAt",m.get("submitted_at"),
+                        "attendeeId", person.get("id"))).toList());
             }
             return visible;
         }).toList());
@@ -324,6 +342,52 @@ public class MeetingBookings {
         db.update("UPDATE portal.meeting_booking SET live_decisions=? WHERE id=?", decisions, id);
     }
 
+    /** 发起人在会中保存一条结论；所引用的会前事项已随开会冻结。 */
+    @Transactional
+    public void saveCoordination(Actor actor, UUID id, Map<String, Object> body) {
+        Inputs.only(body, "key", "conclusion", "assigneeId", "dueAt", "followUp");
+        String key = Inputs.text(body, "key", 48);
+        String conclusion = Inputs.text(body, "conclusion", 3000);
+        UUID assignee = Inputs.nullableUuid(body.get("assigneeId"));
+        Instant due = body.get("dueAt") == null ? null : inputTime(body.get("dueAt"));
+        boolean followUp = flag(body, "followUp", false);
+        identity.lockActor(actor);
+        var meeting = owned(actor, id);
+        if (meeting.get("actual_started_at") == null || meeting.get("actual_ended_at") != null)
+            throw ApiFault.conflict("只有进行中的会议可以记录事项结论");
+        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null))
+            throw ApiFault.invalid("生成会后待办须开启反馈跟踪并填写责任人和截止时间");
+        String subject = null;
+        for (var table : minuteTables(id)) {
+            if (!"COORDINATION".equals(table.get("kind"))) continue;
+            var rows = Crypto.JSON.valueToTree(table.get("data")).path("rows");
+            for (int index = 0; index < rows.size(); index++) {
+                if (key.equals(table.get("attendeeId") + ":" + index))
+                    subject = rows.get(index).path("subject").asText();
+            }
+        }
+        if (subject == null) throw ApiFault.invalid("未找到本次会议的协调事项");
+        Object assigneeName = null;
+        if (assignee != null) {
+            employee(assignee);
+            assigneeName = db.required("SELECT name FROM iam.user_account WHERE id=?", assignee).get("name");
+        }
+        var results = new ArrayList<Map<String, Object>>();
+        for (var result : coordinationResults(meeting)) {
+            if (!key.equals(result.get("key"))) results.add(result);
+        }
+        results.add(Sql.map("key", key, "subject", subject, "conclusion", conclusion, "assigneeId", assignee,
+                "assigneeName", assigneeName, "dueAt", due == null ? null : due.toString(), "followUp", followUp));
+        db.update("UPDATE portal.meeting_booking SET coordination_results=?::jsonb WHERE id=?", Crypto.json(results), id);
+    }
+
+    /** 数据库映射保留结论快照，供详情、导出和发布纪要共同使用。 */
+    List<Map<String, Object>> coordinationResults(Map<String, Object> meeting) {
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> results = Crypto.JSON.readValue(meeting.get("coordination_results").toString(), List.class);
+        return results;
+    }
+
     /** 发起人手动结束后开放纪要填写，并以实际结束时间释放剩余预约时段。 */
     @Transactional
     public void end(Actor actor, UUID id, UUID request) {
@@ -378,14 +442,45 @@ public class MeetingBookings {
                 saveStructuredMaterial(actor, id, request, material, kind, row, attendee);
             }
         }
-        if (decision.equals("ACCEPTED") && row.get("material_types") instanceof List<?> types
-                && types.contains("WEEKLY_PLAN") && db.count("""
-                SELECT count(*) FROM portal.meeting_material WHERE attendee_id=? AND kind='WEEKLY_PLAN'
-                """, attendee.get("id")) == 0)
-            throw ApiFault.invalid("请先填写本周计划，再提交并参加");
         db.update("UPDATE portal.meeting_attendee SET reply=?,decline_reason=?,replied_at=CURRENT_TIMESTAMP WHERE id=?",
                 decision, reason, attendee.get("id"));
         event(actor, request, id, "MEETING_REPLY");
+    }
+
+    /** 受邀员工确认自己看到的共享资料版本，材料变化后须重新确认。 */
+    @Transactional
+    public void confirmReading(Actor actor, UUID id, UUID request, String revision) {
+        identity.lockActor(actor);
+        var meeting = lockBooking(id);
+        var attendee = activeAttendee(actor, id);
+        available(meeting);
+        requireNotStarted(meeting);
+        if (!Boolean.TRUE.equals(meeting.get("share_all")) || "DECLINED".equals(attendee.get("reply")))
+            throw ApiFault.denied();
+        if (!revision.equals(readingRevision(readingMaterials(id), actor.userId())))
+            throw ApiFault.conflict("会前资料已变化，请刷新后再确认阅读");
+        if (revision.equals(attendee.get("read_material_revision"))) return;
+        db.update("""
+                UPDATE portal.meeting_attendee SET read_material_revision=?,read_material_at=CURRENT_TIMESTAMP WHERE id=?
+                """, revision, attendee.get("id"));
+        event(actor, request, id, "MEETING_MATERIALS_READ");
+    }
+
+    /** 每个作者的材料版本依据内容和提交时间，排除已移出会议的员工。 */
+    private List<Map<String, Object>> readingMaterials(UUID meeting) {
+        return db.rows("""
+                SELECT a.user_id, md5(jsonb_build_array(a.report, a.topics, a.material_at,
+                    jsonb_agg(jsonb_build_array(m.kind,m.submitted_at,m.payload) ORDER BY m.kind))::text) AS revision
+                FROM portal.meeting_attendee a LEFT JOIN portal.meeting_material m ON m.attendee_id=a.id
+                WHERE a.meeting_id=? AND a.removed_at IS NULL AND (m.kind IS NOT NULL OR a.material_at IS NOT NULL)
+                GROUP BY a.id ORDER BY a.user_id
+                """, meeting);
+    }
+
+    /** 本人材料改动不会使本人的阅读确认失效。 */
+    private static String readingRevision(List<Map<String, Object>> materials, UUID viewer) {
+        var others = materials.stream().filter(row -> !viewer.equals(row.get("user_id"))).toList();
+        return others.isEmpty() ? null : Crypto.hash(Crypto.json(others));
     }
 
     /** 只接受本人提交，既有材料保留到会议结束及之后。 */
@@ -398,6 +493,7 @@ public class MeetingBookings {
             var attendee = activeAttendee(actor, id);
             available(meeting);
             requireNotStarted(meeting);
+            if (!eligibleForMaterials(meeting, attendee)) throw ApiFault.denied();
             saveStructuredMaterial(actor, id, request, body, kind, meeting, attendee);
             return;
         }
@@ -424,48 +520,67 @@ public class MeetingBookings {
     /** 新材料按类型保存，填写人和所属部门从员工档案取值。 */
     private void saveStructuredMaterial(Actor actor, UUID id, UUID request, Map<String, Object> body,
             String kind, Map<String, Object> meeting, Map<String, Object> attendee) {
+        var payload = structuredPayload(body, kind, meeting, attendee);
+        storeMaterial((UUID) attendee.get("id"), kind, payload);
+        event(actor, request, id, "MEETING_MATERIALS");
+    }
+
+    /** 线上填报和代导入共用字段规则，材料作者取被填报的受邀员工。 */
+    Map<String, Object> structuredPayload(Map<String, Object> body, String kind,
+            Map<String, Object> meeting, Map<String, Object> attendee) {
         Inputs.only(body, "kind", "html", "text", "rows");
         if (!(meeting.get("material_types") instanceof List<?> types) || !types.contains(kind))
             throw ApiFault.denied();
-        var author = db.required("""
-                SELECT u.name,d.name AS department FROM iam.user_account u
-                JOIN iam.department d ON d.id=u.department_id WHERE u.id=?
-                """, actor.userId());
         Map<String,Object> payload;
-        if (kind.equals("REPORT")) {
-            payload = Sql.map("html",Inputs.text(body,"html",12000),"text",Inputs.text(body,"text",8000));
-        } else if (kind.equals("WEEKLY_PLAN")) {
+        if (kind.equals("REPORT") || kind.equals("WEEKLY_PLAN")) {
             payload = Sql.map("text", Inputs.text(body,"text",8000));
+            if(body.containsKey("html"))payload.put("html",Inputs.text(body,"html",12000));
         } else {
             var rows = Inputs.objects(body.get("rows"),30);
             if (rows.isEmpty()) throw ApiFault.invalid("请至少填写一条");
-            var saved = new ArrayList<Map<String,Object>>();
-            for (var row : rows) {
-                Inputs.only(row,"subject","expected","departmentId","personId");
-                String subject = Inputs.text(row,"subject",500), expected = Inputs.text(row,"expected",1000);
-                var entry = Sql.map("subject",subject,"expected",expected);
-                if (kind.equals("COORDINATION")) {
-                    UUID department = Inputs.nullableUuid(row.get("departmentId"));
-                    UUID person = Inputs.nullableUuid(row.get("personId"));
-                    if (department != null) entry.put("department",db.required(
-                            "SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department).get("name"));
-                    if (person != null) entry.put("person",db.required("""
-                            SELECT name FROM iam.user_account WHERE id=? AND status='ACTIVE' AND NOT it_shared_account
-                              AND (?::uuid IS NULL OR department_id=?)
-                            """, person, department, department).get("name"));
-                    entry.put("departmentId",department);
-                    entry.put("personId",person);
-                }
-                saved.add(entry);
-            }
-            payload = Sql.map("rows",saved);
+            payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row)).toList());
         }
-        payload.put("author",author);
+        return addMaterialAuthor(payload, attendee);
+    }
+
+    /** 校验一行议题或协调事项，代导入可准确标出发生错误的 Excel 行。 */
+    Map<String, Object> structuredRow(String kind, Map<String, Object> row) {
+        Inputs.only(row, "subject", "expected", "departmentId", "personId", "category", "support");
+        String subject = optional(row, "subject", 500);
+        String expected = optional(row, "expected", 1000);
+        if (subject == null || expected == null) throw ApiFault.invalid("请填写事项和期望结果");
+        var entry = Sql.map("subject", subject, "expected", expected);
+        if (kind.equals("COORDINATION")) {
+            UUID department = Inputs.nullableUuid(row.get("departmentId"));
+            // 旧版表单没有事项分类，原有协调事项按部门配合归类。
+            String category = Inputs.choice(row.getOrDefault("category", "DEPARTMENT"), "COMPANY", "DEPARTMENT");
+            entry.put("category", category);
+            String support = optional(row, "support", 1000);
+            if (support != null) entry.put("support", support);
+            if (department != null) entry.put("department", db.required(
+                    "SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department).get("name"));
+            entry.put("departmentId", department);
+        }
+        return entry;
+    }
+
+    /** 作者取所归属的受邀员工，代填后仍显示外地填报人的姓名和部门。 */
+    Map<String, Object> addMaterialAuthor(Map<String, Object> payload, Map<String, Object> attendee) {
+        var author = db.required("""
+                SELECT u.name,d.name AS department FROM iam.user_account u
+                JOIN iam.department d ON d.id=u.department_id WHERE u.id=?
+                """, attendee.get("user_id"));
+        payload.put("author", author);
+        return payload;
+    }
+
+    /** 保存一位员工的一类材料；重复导入相同内容时保留原提交时间。 */
+    void storeMaterial(UUID attendeeId, String kind, Map<String, Object> payload) {
         db.update("""
                 INSERT INTO portal.meeting_material(attendee_id,kind,payload) VALUES (?,?,?::jsonb)
                 ON CONFLICT(attendee_id,kind) DO UPDATE SET payload=EXCLUDED.payload,submitted_at=CURRENT_TIMESTAMP
-                """, attendee.get("id"),kind,Crypto.json(payload));
-        event(actor, request, id, "MEETING_MATERIALS");
+                WHERE portal.meeting_material.payload IS DISTINCT FROM EXCLUDED.payload
+                """, attendeeId,kind,Crypto.json(payload));
     }
 
     /** 管理员可查询配置，包括停用地点。 */
@@ -516,13 +631,14 @@ public class MeetingBookings {
     /** 纪要只共享议题与协调事项，汇报仍通过纪要正文发布。 */
     List<Map<String, Object>> minuteTables(UUID meeting) {
         return db.rows("""
-                SELECT x.kind,x.payload::text AS payload,x.submitted_at
+                SELECT x.attendee_id,x.kind,x.payload::text AS payload,x.submitted_at
                 FROM portal.meeting_material x JOIN portal.meeting_attendee a ON a.id=x.attendee_id
                 JOIN iam.user_account u ON u.id=a.user_id
                 WHERE a.meeting_id=? AND a.removed_at IS NULL AND x.kind IN ('TOPICS','COORDINATION')
                 ORDER BY u.name,u.id,x.kind
                 """, meeting).stream().map(row -> Sql.map("kind",row.get("kind"),
-                "data",Crypto.JSON.readTree(row.get("payload").toString()),"submittedAt",row.get("submitted_at"))).toList();
+                "data",Crypto.JSON.readTree(row.get("payload").toString()),"submittedAt",row.get("submitted_at"),
+                "attendeeId",row.get("attendee_id"))).toList();
     }
 
     /** 可编辑材料底稿按员工顺序汇总，在已保存草稿存在时使用草稿。 */
@@ -582,7 +698,7 @@ public class MeetingBookings {
             if (person.get("report") == null && materials.isEmpty()) continue;
             var lines = new ArrayList<String>();
             lines.add(person.get("name") + "（" + person.get("employee_no") + "）");
-            if (person.get("report") != null) lines.add("汇报 " + person.get("report"));
+            if (person.get("report") != null) lines.add("汇报 " + FormattedText.preview((String) person.get("report")));
             for (var material : materials)
                 lines.add(("REPORT".equals(material.get("kind")) ? "工作汇报 " : "本周计划 ") + material.get("text"));
             sections.add(String.join("\n", lines));
@@ -745,8 +861,9 @@ public class MeetingBookings {
                 id, actor.userId());
     }
 
-    private static boolean eligibleForMaterials(Map<String, Object> meeting, Map<String, Object> attendee) {
-        if (meeting.get("material_types") instanceof List<?> types) return !types.isEmpty();
+    static boolean eligibleForMaterials(Map<String, Object> meeting, Map<String, Object> attendee) {
+        if (meeting.get("material_types") instanceof List<?> types)
+            return !types.isEmpty() && !"DECLINED".equals(attendee.get("reply"));
         return Boolean.TRUE.equals(attendee.get("material_required"))
                 && ("WEEKLY".equals(meeting.get("kind")) || !"DECLINED".equals(attendee.get("reply")));
     }
@@ -755,7 +872,7 @@ public class MeetingBookings {
         if (row.get("cancelled_at") != null) throw ApiFault.conflict("会议已取消");
     }
 
-    private static void requireNotStarted(Map<String, Object> row) {
+    static void requireNotStarted(Map<String, Object> row) {
         if (row.get("actual_started_at") != null) throw ApiFault.conflict("会议已开始，当前操作已截止");
     }
 

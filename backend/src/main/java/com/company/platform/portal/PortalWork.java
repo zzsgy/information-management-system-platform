@@ -252,7 +252,8 @@ public class PortalWork {
                 ) f
                 WHERE a.user_id=? AND a.removed_at IS NULL
                 UNION ALL
-                SELECT i.id,'会后反馈 · '||left(i.content,120),
+                SELECT i.id,'会后反馈 · '||left(CASE WHEN starts_with(i.content,'IMS-RICH-1'||chr(10))
+                    THEN split_part(i.content,chr(10),2) ELSE i.content END,120),
                     CASE WHEN i.state IN ('PENDING','RETURNED') THEN 'HANDLING' ELSE 'COMPLETED' END,
                     i.due_at,'#/meetings?item='||i.id,'MEETING',
                     CASE WHEN i.state IN ('PENDING','RETURNED') AND i.due_at<CURRENT_TIMESTAMP THEN 'OVERDUE' ELSE i.state END,
@@ -261,7 +262,8 @@ public class PortalWork {
                     AND NOT EXISTS (SELECT 1 FROM portal.meeting_attendee a
                         WHERE a.meeting_id=i.meeting_id AND a.user_id=i.assignee_id AND a.removed_at IS NULL)
                 UNION ALL
-                SELECT md5('meeting-review:'||i.id)::uuid,'确认会后反馈 · '||left(i.content,120),'APPROVAL',
+                SELECT md5('meeting-review:'||i.id)::uuid,'确认会后反馈 · '||left(CASE WHEN starts_with(i.content,'IMS-RICH-1'||chr(10))
+                    THEN split_part(i.content,chr(10),2) ELSE i.content END,120),'APPROVAL',
                     NULL::timestamptz,'#/meetings?item='||i.id,'MEETING',i.state,(i.history->-1->>'at')::timestamptz,NULL
                 FROM portal.meeting_item i JOIN portal.meeting_booking m ON m.id=i.meeting_id
                 WHERE m.organizer_id=? AND i.state='SUBMITTED'
