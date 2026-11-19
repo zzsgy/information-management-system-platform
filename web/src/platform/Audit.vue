@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from "vue";
-import { responseError, requestFetch, api, can, dateTime, mutate, profile, query } from "./api";
+import { ApiError, responseRequestId, responseError, requestFetch, api, can, dateTime, mutate, profile, query } from "./api";
 import AuditStorage from "./AuditStorage.vue";
 import DateRangePreset from "./DateRangePreset.vue";
 import { recentDateRange } from "./listDates";
@@ -185,7 +185,11 @@ async function download() {
       },
     });
     if (!response.ok) throw await responseError(response, "文件下载失败");
-    const url = URL.createObjectURL(await response.blob()),
+    if (response.headers.get("Content-Type")?.split(";")[0] !== "text/csv")
+      throw new ApiError("AUDIT_EXPORT_FORMAT_INVALID", "服务器返回的操作记录不是CSV文件，未保存文件", responseRequestId(response), response.status);
+    const blob = await response.blob();
+    if (!blob.size) throw new ApiError("AUDIT_EXPORT_CONTENT_EMPTY", "服务器返回的操作记录文件为空", responseRequestId(response), response.status);
+    const url = URL.createObjectURL(blob),
       link = document.createElement("a");
     link.href = url;
     link.download = "操作记录.csv";

@@ -1,4 +1,4 @@
-import { ApiError, profile, responseError, requestFetch } from "./api";
+import { ApiError, responseRequestId, profile, responseError, requestFetch } from "./api";
 
 /** 导出二进制请求固定操作号，自动轮询和后台页加载不延长用户空闲会话。 */
 export async function usageBlob(
@@ -22,9 +22,9 @@ export async function usageBlob(
       response.headers.get("Content-Type") || "",
     )
   )
-    throw new Error("副本格式异常");
+    throw new ApiError("EXPORT_FORMAT_INVALID", "服务器返回的副本格式异常，未保存文件", responseRequestId(response), response.status);
   const blob = await response.blob();
-  if (blob.size < 1) throw new Error("副本内容为空，未保存文件");
+  if (blob.size < 1) throw new ApiError("EXPORT_CONTENT_EMPTY", "副本内容为空，未保存文件", responseRequestId(response), response.status);
   const expected = response.headers.get("X-Content-SHA256");
   if (expected) {
     const actual = Array.from(
@@ -33,7 +33,7 @@ export async function usageBlob(
       ),
       (byte) => byte.toString(16).padStart(2, "0"),
     ).join("");
-    if (actual !== expected) throw new Error("副本完整性核验失败，未保存文件");
+    if (actual !== expected) throw new ApiError("EXPORT_INTEGRITY_FAILED", "副本完整性核验失败，未保存文件", responseRequestId(response), response.status);
   }
   return blob;
 }

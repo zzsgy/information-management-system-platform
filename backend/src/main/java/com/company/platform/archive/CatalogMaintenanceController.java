@@ -49,5 +49,5 @@ public class CatalogMaintenanceController {
     /** 管理命令绑定稳定操作号和版本，缺失字段由公共校验拒绝。 */
     private Commands.Context context(HttpServletRequest r){return new Commands.Context(actor(r),ApiController.requestId(r),Inputs.uuid(r.getHeader("X-Operation-Id")),r.getMethod()+" "+r.getRequestURI(),r.getHeader("X-Reauth-Token"),r.getHeader("X-Expected-Version")==null?null:Inputs.integer(r.getHeader("X-Expected-Version"),0,1,Integer.MAX_VALUE));}
     /** 标准响应保持请求追踪号，内部异常不直接返回。 */
-    private Map<String,Object> ok(Object data,HttpServletRequest r){return Sql.map("code","OK","data",data,"requestId",ApiController.requestId(r));}
+    private Map<String,Object> ok(Object data,HttpServletRequest r){return ApiController.envelope("OK","操作成功",data,ApiController.requestId(r));}
 }

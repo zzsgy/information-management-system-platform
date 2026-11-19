@@ -92,6 +92,12 @@ export class ApiError extends Error {
     super(`${message}${code ? `（错误码：${code}）` : ""}${requestId ? `\n请求编号：${requestId}` : ""}`);
   }
 }
+/** 只关联本次响应与已发送编号；弱引用不保留文件正文，也不改变浏览器Response属性。 */
+const sentRequests = new WeakMap<Response, string>();
+/** 优先使用服务器确认的编号；代理漏传响应头时保留客户端发送的追踪号。 */
+export function responseRequestId(response: Response): string {
+  return response.headers.get("X-Request-Id") || sentRequests.get(response) || "";
+}
 /** JSON 与文件接口共用错误解析，代理 HTML 错误也保留响应头中的请求编号。 */
 export async function responseError(response: Response, fallback = "操作未完成"): Promise<ApiError> {
   let result: Partial<Envelope<never>> = {};
@@ -109,11 +115,15 @@ export async function responseError(response: Response, fallback = "操作未完
     : response.status === 504 ? "服务响应超时，请先查询操作结果，避免重复提交"
     : `${fallback}：服务器未返回有效的错误说明（HTTP ${response.status}）`);
   return new ApiError(typeof result.code === "string" ? result.code : `HTTP_${response.status}`, message,
-    typeof result.requestId === "string" ? result.requestId : response.headers.get("X-Request-Id") || "", response.status);
+    typeof result.requestId === "string" && result.requestId.trim() ? result.requestId : responseRequestId(response), response.status);
 }
 /** 网络失败保留客户端已发送的请求编号；主动取消仍交给页面按原流程处理。 */
 export async function requestFetch(input: RequestInfo | URL, options: RequestInit): Promise<Response> {
-  try { return await fetch(input, options); }
+  try {
+    const response = await fetch(input, options);
+    sentRequests.set(response, new Headers(options.headers).get("X-Request-Id") || "");
+    return response;
+  }
   catch (failure) {
     if ((failure as Error).name === "AbortError") throw failure;
     throw new ApiError("NETWORK_UNAVAILABLE", "无法连接服务器，请检查网络；若刚刚提交过，请先查询结果再重试",
@@ -144,12 +154,12 @@ export async function api<T>(
   let result: Envelope<T>;
   try { result = await response.json(); }
   catch { throw new ApiError("RESPONSE_FORMAT_INVALID", "服务器响应格式异常，请联系 IT 管理员",
-    response.headers.get("X-Request-Id") || headers.get("X-Request-Id") || "", response.status); }
-  if (!result || typeof result.code !== "string" || typeof result.message !== "string")
-    throw new ApiError("RESPONSE_FORMAT_INVALID", "服务器响应缺少有效的结果码或说明，请联系 IT 管理员",
-      response.headers.get("X-Request-Id") || headers.get("X-Request-Id") || "", response.status);
+    responseRequestId(response), response.status); }
+  if (!result || Array.isArray(result) || typeof result.code !== "string" || !result.code.trim() || typeof result.message !== "string" || !result.message.trim() || !Object.prototype.hasOwnProperty.call(result, "data"))
+    throw new ApiError("RESPONSE_FORMAT_INVALID", "服务器响应缺少有效的结果码、说明或数据字段，请联系 IT 管理员",
+      responseRequestId(response), response.status);
   if (result.code !== "OK") throw new ApiError(result.code, result.message || "服务器未能完成本次操作",
-    result.requestId, response.status);
+    typeof result.requestId === "string" && result.requestId.trim() ? result.requestId : responseRequestId(response), response.status);
   return result.data;
 }
 /** 仅从受控逐页API取得PNG，失败清除会话；不保存响应正文到持久缓存。 */
@@ -172,7 +182,7 @@ export async function pageImage(
   }
   if (!response.headers.get("Content-Type")?.startsWith("image/png"))
     throw new ApiError("PAGE_FORMAT_INVALID", "服务器返回的页面不是 PNG 图像，请联系 IT 管理员",
-      response.headers.get("X-Request-Id") || "");
+      responseRequestId(response));
   return response.blob();
 }
 /** 原子更新登录资料和 CSRF，避免退出后复用旧会话的前端状态。 */

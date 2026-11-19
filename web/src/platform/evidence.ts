@@ -1,4 +1,4 @@
-import { ApiError, profile, responseError, requestFetch } from "./api";
+import { ApiError, responseRequestId, profile, responseError, requestFetch } from "./api";
 
 /** 不可变凭据原件元数据；内部存储键从不返回。 */
 export interface EvidenceFile {
@@ -51,7 +51,7 @@ export async function evidenceBlob(item: EvidenceFile): Promise<Blob> {
   });
   if (!response.ok) throw await responseError(response, "文件读取失败");
   if (response.headers.get("Content-Type")?.split(";")[0] !== item.format)
-    throw new Error("凭据格式与提交记录不一致");
+    throw new ApiError("EVIDENCE_FORMAT_INVALID", "服务器返回的凭据格式与提交记录不一致", responseRequestId(response), response.status);
   const blob = await response.blob();
   const digest = Array.from(
     new Uint8Array(
@@ -60,6 +60,6 @@ export async function evidenceBlob(item: EvidenceFile): Promise<Blob> {
     (byte) => byte.toString(16).padStart(2, "0"),
   ).join("");
   if (blob.size !== item.size || digest !== item.digest)
-    throw new Error("凭据完整性核验失败");
+    throw new ApiError("EVIDENCE_INTEGRITY_FAILED", "凭据完整性核验失败", responseRequestId(response), response.status);
   return blob;
 }

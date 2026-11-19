@@ -2,7 +2,7 @@
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
-import { responseError, requestFetch, api, can, COLLECTION, dateTime, mutate, profile, query } from "./api";
+import { ApiError, responseRequestId, responseError, requestFetch, api, can, COLLECTION, dateTime, mutate, profile, query } from "./api";
 import { interactionRequest } from "./interaction";
 import { uploadArchivePdf } from "./archiveFiles";
 import { companyEmailFromName } from "./companyEmail";
@@ -283,9 +283,9 @@ async function downloadTemplate(event: MouseEvent) {
       response.headers.get("Content-Type")?.split(";")[0] !==
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
-      throw new Error("模板响应不是 Excel 文件，请刷新页面后重试。");
+      throw new ApiError("WORKBOOK_RESPONSE_INVALID", "模板响应不是Excel文件，请联系IT管理员", responseRequestId(response), response.status);
     const blob = await response.blob();
-    if (!blob.size) throw new Error("模板文件为空，请重试。");
+    if (!blob.size) throw new ApiError("WORKBOOK_CONTENT_EMPTY", "服务器返回的模板文件为空，请重试", responseRequestId(response), response.status);
     if (handle) {
       try {
         await blob.stream().pipeTo(await handle.createWritable());

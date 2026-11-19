@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { api, ApiError, profile, requestFetch, responseError } from "./api";
+import { api, ApiError, responseRequestId, profile, requestFetch, responseError } from "./api";
 import {
   coordinationLabels,
   materialLabels,
@@ -56,7 +56,7 @@ async function downloadWorkbook(kind: "template" | "summary") {
     });
     if (!response.ok) throw await responseError(response, "会议 Excel 下载失败");
     if (response.headers.get("Content-Type")?.split(";")[0] !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
-      throw new ApiError("WORKBOOK_RESPONSE_INVALID", "会议 Excel 响应格式异常，请联系 IT 管理员", response.headers.get("X-Request-Id") || "");
+      throw new ApiError("WORKBOOK_RESPONSE_INVALID", "会议 Excel 响应格式异常，请联系 IT 管理员", responseRequestId(response));
     const url = URL.createObjectURL(await response.blob());
     const link = document.createElement("a");
     link.href = url;
