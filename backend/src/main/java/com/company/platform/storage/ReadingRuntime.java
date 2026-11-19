@@ -17,13 +17,13 @@ public class ReadingRuntime {
     public ReadingRuntime(@Value("${platform.reading.java:}") String java,@Value("${platform.reading.worker-jar:}") String jar,@Value("${platform.reading.temporary:}") String temp) { this.java=java;this.jar=jar;this.temp=temp; }
     /** 临时目录每次验证绝对路径、无链接和服务账号权限；缺配置即拒绝解析。 */
     public PdfRenderClient get() {
-        if(java.isBlank()||jar.isBlank()||temp.isBlank()) throw ApiFault.protection();
+        if(java.isBlank()||jar.isBlank()||temp.isBlank()) throw SystemFailure.READING_NOT_CONFIGURED.fault();
         try {return new PdfRenderClient(Path.of(java),Path.of(jar),PrivateFiles.directory(temp),Duration.ofSeconds(30));}
-        catch(RuntimeException failure) {throw ApiFault.protection();}
+        catch(RuntimeException failure) {throw SystemFailure.READING_RUNTIME_UNAVAILABLE.fault(failure);}
     }
     /** 只尝试领取，不让HTTP线程无限排队等待大文件；调用方负责finally释放。 */
     public boolean tryAcquire() {return slots.tryAcquire();}
     public void release() {slots.release();}
     /** 候选页数解析与受控阅读共享有界资源，文件校验也应在该作用域内执行。 */
-    public <T> T withClient(Function<PdfRenderClient,T> work) {if(!tryAcquire()) throw ApiFault.protection();try{return work.apply(get());}finally{release();}}
+    public <T> T withClient(Function<PdfRenderClient,T> work) {if(!tryAcquire()) throw SystemFailure.READING_BUSY.fault();try{return work.apply(get());}finally{release();}}
 }

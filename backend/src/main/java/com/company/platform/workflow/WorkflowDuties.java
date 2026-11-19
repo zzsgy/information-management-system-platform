@@ -55,7 +55,7 @@ public class WorkflowDuties {
     /** 决定提交时共享锁住原任职行，再验证该任职仍属于当前人且实际有效。 */
     public void requireCurrent(Map<String,Object> step,UUID person) {
         if(!person.equals(step.get("assignee_id"))) throw ApiFault.denied();
-        String table=switch((String)step.get("assignment_type")) {case "ROLE"->"iam.user_role";case "DEPARTMENT","SUPERVISING"->"iam.department_manager";case "COMPANY"->"iam.company_duty";default->throw ApiFault.protection();};
+        String table=switch((String)step.get("assignment_type")) {case "ROLE"->"iam.user_role";case "DEPARTMENT","SUPERVISING"->"iam.department_manager";case "COMPANY"->"iam.company_duty";default->throw SystemFailure.WORKFLOW_CONFIGURATION_INVALID.fault();};
         db.required("SELECT id FROM "+table+" WHERE id=? FOR SHARE",step.get("assignment_ref"));
         if(db.count("SELECT CASE WHEN workflow.assignment_valid(?,?,?) THEN 1 ELSE 0 END",step.get("assignment_type"),step.get("assignment_ref"),person)!=1) throw ApiFault.denied();
     }

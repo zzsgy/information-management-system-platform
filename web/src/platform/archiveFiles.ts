@@ -59,16 +59,15 @@ export async function waitArchiveJob<T>(
     const task = await api<{
       state: string;
       errorCode: string | null;
+      errorMessage?: string;
+      requestId?: string;
       result: T | null;
     }>(`/jobs/${id}`, {}, false);
     if (task.state === "SUCCEEDED") return task.result;
     if (["FAILED", "CANCELLED", "UNKNOWN"].includes(task.state))
-      throw new ApiError(
-        task.errorCode || "FILE_PROCESSING_FAILED",
-        task.errorCode === "SCANNER_UNAVAILABLE"
-          ? "文件检测暂不可用，档案尚未发布。"
-          : "文件处理未完成，未开放阅读或发布。",
-      );
+      throw new ApiError(task.errorCode || "FILE_PROCESSING_FAILED",
+        `${task.errorMessage || "文件处理未完成，请联系 IT 管理员核查任务"}\n任务编号：${id}`, task.requestId);
+
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   throw new Error("文件仍在处理中，请稍后查询处理结果。");

@@ -13,6 +13,25 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** 独立临时目录测试：仅生成无害文本和测试用自定义摘要签名。 */
 class ClamFileScannerTest {
+    /** 配置与病毒库故障均在真实磁盘校验中定位，不启动伪造检测进程。 */
+    @Test void detailedScanDistinguishesMissingExecutableAndDatabase() throws Exception {
+        Path database=Files.createDirectory(root.resolve("diagnostic-db"));
+        Path temporary=Files.createDirectory(root.resolve("diagnostic-temp"));
+        Path source=Files.writeString(root.resolve("diagnostic-source"),"sample");
+        Path executable=root.resolve("diagnostic-exe");
+        var scanner=new ClamFileScanner(executable,database,temporary,"0".repeat(64),Duration.ofSeconds(1),true);
+        assertEquals("SCANNER_EXECUTABLE_UNAVAILABLE",assertThrows(com.company.platform.ApiFault.class,()->scanner.scanOrThrow(source)).code);
+        Files.writeString(executable,"binary fixture");
+        assertEquals("SCANNER_EXECUTABLE_MISMATCH",assertThrows(com.company.platform.ApiFault.class,()->scanner.scanOrThrow(source)).code);
+        var configured=new ClamFileScanner(executable,database,temporary,com.company.platform.Crypto.hash("binary fixture"),Duration.ofSeconds(1),true);
+        assertEquals("SCANNER_DATABASE_UNAVAILABLE",assertThrows(com.company.platform.ApiFault.class,()->configured.scanOrThrow(source)).code);
+        Files.writeString(database.resolve("main.cvd"),"fixture");
+        Path daily=Files.writeString(database.resolve("daily.cvd"),"fixture");
+        Files.setLastModifiedTime(daily,java.nio.file.attribute.FileTime.from(java.time.Instant.now().minus(Duration.ofDays(8))));
+        assertEquals("SCANNER_DATABASE_EXPIRED",assertThrows(com.company.platform.ApiFault.class,()->configured.scanOrThrow(source)).code);
+        var missing=new ConfiguredClamScanner("","","","",30);
+        assertEquals("SCANNER_NOT_CONFIGURED",assertThrows(com.company.platform.ApiFault.class,()->missing.scan(source)).code);
+    }
     @TempDir Path root;
     /** 不存在的检测器和签名库必须返回不可判定。 */
     @Test void missingScannerIsNeverClean() {

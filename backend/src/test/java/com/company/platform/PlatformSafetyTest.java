@@ -16,7 +16,7 @@ class PlatformSafetyTest {
         SecurityLedger ledger=new SecurityLedger(root.toString()); ledger.bind(instance,true);
         ledger.restrict(user,3,"ROLE_CHANGE",UUID.randomUUID()); ledger.check(user,3);
         SecurityLedger restarted=new SecurityLedger(root.toString()); restarted.bind(instance,false);
-        assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->restarted.check(user,2)).code);
+        assertEquals("SECURITY_VERSION_REVOKED",assertThrows(ApiFault.class,()->restarted.check(user,2)).code);
         assertDoesNotThrow(()->restarted.check(user,3));
     }
     /** 已有数据库缺少库外事实时拒绝自动重建，防止把未知状态当作安全。 */

@@ -61,7 +61,7 @@ public class OperationsConsole {
   where+=filters.sql();
   long total=db.count("SELECT count(*) FROM "+table+where,args.toArray());
   args.add((page-1)*20);
-  return Sql.map("items",db.rows("SELECT "+columns+" FROM "+table+where+" ORDER BY "+order+" LIMIT 20 OFFSET ?",args.toArray()).stream().map(r->Sql.view(r,columns)).toList(),"page",page,"total",total);
+  return Sql.map("items",db.rows("SELECT "+columns+" FROM "+table+where+" ORDER BY "+order+" LIMIT 20 OFFSET ?",args.toArray()).stream().map(r->{var item=Sql.view(r,columns);if(item.get("errorCode") instanceof String errorCode)item.put("errorMessage",SystemFailure.taskMessage(errorCode));return item;}).toList(),"page",page,"total",total);
  }
  /** 创建固定任务，不接受文件路径、命令、数据库名或客户端提交的检查结果。 */
  public Map<String,Object> create(Commands.Context ctx,Map<String,Object> body,UUID parent){Inputs.only(body,"kind","reason","sourceBackupId");String kind=Inputs.choice(body.get("kind"),"PROTECTION_CHECK","REPLICA_CHECK","BACKUP","RESTORE_VERIFY");ctx.actor().require(permission(kind));String reason=Inputs.text(body,"reason",1000);UUID source=body.get("sourceBackupId")==null?null:Inputs.uuid(body.get("sourceBackupId"));if(!enabled)throw new ApiFault(503,"OPERATIONS_DISABLED","本环境未启用维护执行");
@@ -86,7 +86,7 @@ public class OperationsConsole {
   if(run==null)return;
   if(run.get("kind").equals("PROTECTION_CHECK")){Map<String,Object> report=probe();tx.executeWithoutResult(status->{finish(run,"SUCCEEDED",null,report);if(!"READY".equals(report.get("health")))notice(run,"OPS_PROTECTION");});}
   else {var batch=run;long deadline=System.nanoTime()+java.util.concurrent.TimeUnit.SECONDS.toNanos(5);for(int n=0;n<20&&System.nanoTime()<deadline;n++){if(!checkReplica(batch))break;batch=db.required("SELECT * FROM ops.maintenance_run WHERE id=?",run.get("id"));}}
- }catch(RuntimeException error){org.slf4j.LoggerFactory.getLogger(getClass()).warn("运维检查暂未完成，后续按任务租约核对，类型 {}",error.getClass().getSimpleName());}}
+ }catch(RuntimeException error){FailureDiagnostics.log(UUID.randomUUID(),"OPERATIONS_CHECK",ApiErrors.classify(error));}}
  /** 状态探测不签发保护证据；界面绝不能点击把失败状态改成NORMAL。 */
  private Map<String,Object> probe(){Map<String,Object> report=new LinkedHashMap<>();var gate=protection.getIfUnique();report.put("protection",gate==null?Sql.map("ready",false,"mode","NOT_CONFIGURED"):gate.status());for(String module:List.of("DRIVE","ARCHIVE")){boolean read=true,write=true;try{boundary.requireReadable(module);}catch(RuntimeException e){read=false;}try{boundary.requireWritable(module,"OPERATIONS_CHECK");}catch(RuntimeException e){write=false;}report.put(module,Sql.map("readable",read,"writable",write));}
   boolean storage=true;try{files.get();}catch(RuntimeException e){storage=false;}report.put("storage",storage?"ROOTS_VERIFIED":"NOT_READY");String officeState="NOT_CONFIGURED";if(Boolean.TRUE.equals(office.status().get("enabled")))try{office.verifyVersion();officeState="VERIFIED";}catch(RuntimeException e){officeState="NOT_READY";}report.put("office",officeState);

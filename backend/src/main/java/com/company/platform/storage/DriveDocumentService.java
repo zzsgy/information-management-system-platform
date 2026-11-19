@@ -21,7 +21,7 @@ public class DriveDocumentService {
         if(name.indexOf('/')>=0||name.indexOf('\\')>=0||name.chars().anyMatch(Character::isISOControl)) throw ApiFault.invalid("文档名称不合法");
         policy.requireFolder(actor,folder,"UPLOAD"); boundaries.requireWritable("DRIVE","PUBLISH");
         var object=cleanUpload(actor,folder,upload);
-        if(!files.get().verified((String)object.get("storage_key"),((Number)object.get("byte_size")).longValue(),(String)object.get("sha256"))) throw ApiFault.protection();
+        if(!files.get().verified((String)object.get("storage_key"),((Number)object.get("byte_size")).longValue(),(String)object.get("sha256"))) throw SystemFailure.STORAGE_INTEGRITY_FAILED.fault();
         return transaction.execute(status->{
             identity.lockActor(actor); policy.requireFolder(actor,folder,"UPLOAD");boundaries.requireWritable("DRIVE","PUBLISH");
             String key="DRIVE_PUBLISH:"+operation,digest=Crypto.hash(Crypto.json(body));

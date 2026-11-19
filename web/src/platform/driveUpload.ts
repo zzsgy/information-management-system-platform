@@ -1,4 +1,4 @@
-import { api } from "./api";
+import { api, ApiError } from "./api";
 export const driveAccept =
   ".doc,.docx,.xls,.xlsx,.ppt,.pptx,.pdf,.txt,.csv,.jpg,.jpeg,.png,.tif,.tiff,.zip,.rar,.7z,.dwg,.dxf";
 /** 初次上传与版本上传复用分片链路，只有检测通过后才向业务层返回会话标识。 */
@@ -103,24 +103,22 @@ export async function uploadDrive(
       state: string;
       jobType: string;
       errorCode: string;
+      errorMessage?: string;
+      requestId?: string;
     }>(`/jobs/${task.jobId}`, { signal }, false);
     if (job.state === "SUCCEEDED") return session.uploadId;
-    if (job.errorCode?.startsWith("SERVICE_IDENTITY_")) {
-      progress(
-        job.errorCode === "SERVICE_IDENTITY_EXPIRED"
-          ? "检测服务授权已到期，请联系管理员；文件已接收，恢复后继续检测"
-          : "检测服务授权配置未就绪，请联系管理员；文件已接收，恢复后继续检测",
-        null,
-      );
+    if (job.errorCode && !["FAILED", "CANCELLED", "UNKNOWN"].includes(job.state)) {
+      progress(new ApiError(job.errorCode,
+        `${job.errorMessage || "文件处理服务尚未就绪"}；文件已接收，恢复后继续处理。任务编号：${task.jobId}`,
+        job.requestId).message, null);
       await new Promise((resolve) => setTimeout(resolve, 2000));
       continue;
     }
     if (["FAILED", "CANCELLED", "UNKNOWN"].includes(job.state))
-      throw Error(
-        job.errorCode === "SCANNER_UNAVAILABLE"
-          ? "检测服务暂不可用，文件尚未发布。"
-          : "文件检测未通过，文件尚未发布。",
-      );
+      throw new ApiError(job.errorCode || "FILE_PROCESSING_FAILED",
+        `${job.errorMessage || "文件检测未完成，请联系 IT 管理员核查任务"}\n任务编号：${task.jobId}`,
+        job.requestId);
+
     progress(
       job.jobType === "FILE_ASSEMBLY_CHECK"
         ? job.state === "RUNNING"

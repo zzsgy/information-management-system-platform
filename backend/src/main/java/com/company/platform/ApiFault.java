@@ -8,6 +8,7 @@ public class ApiFault extends RuntimeException {
     public final String code;
     /** 保存可以直接展示给用户的失败原因。 */
     public ApiFault(int status, String code, String message) { super(message); this.status = status; this.code = code; }
+    public ApiFault(int status, String code, String message, Throwable cause) { super(message, cause); this.status = status; this.code = code; }
     /** 请求格式或字段违反契约。 */
     public static ApiFault invalid(String message) { return new ApiFault(400, "VALIDATION_FAILED", message); }
     /** 服务端授权拒绝，不能以页面按钮状态代替。 */
@@ -18,6 +19,4 @@ public class ApiFault extends RuntimeException {
     public static ApiFault conflict(String message) { return new ApiFault(409, "VERSION_OR_STATE_CONFLICT", message); }
     /** 当前登录失效，不泄露失效的安全细节。 */
     public static ApiFault session() { return new ApiFault(401, "SESSION_INVALID", "登录已失效，请重新登录"); }
-    /** 账本、审计等保护基础不可用时停止操作。 */
-    public static ApiFault protection() { return new ApiFault(503, "PROTECTION_NOT_READY", "保护检查未完成，请联系管理员"); }
 }

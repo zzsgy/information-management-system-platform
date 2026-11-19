@@ -41,6 +41,6 @@ public class CredentialDelivery {
                 /** 只有当前新建文件可随事务回滚清理，不扫描或删除其他投递。 */
                 @Override public void afterCompletion(int status) { if (status!=STATUS_COMMITTED) try { Files.deleteIfExists(output); } catch (Exception ignored) { /* 凭据对应事务未提交，因此不能登录；管理员后续清理。 */ } }
             });
-        } catch (Exception e) { throw ApiFault.protection(); }
+        } catch (Exception e) { throw SystemFailure.CREDENTIAL_DELIVERY_FAILED.fault(e); }
     }
 }

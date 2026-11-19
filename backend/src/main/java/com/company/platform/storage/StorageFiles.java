@@ -19,11 +19,11 @@ public class StorageFiles {
     }
     /** 拒绝与账本、邮箱目录相互嵌套；缺失配置不自动选择旧附件路径。 */
     public synchronized QuarantineFiles get() {
-        if(primary.isBlank() || secondary.isBlank()) throw ApiFault.protection();
+        if(primary.isBlank() || secondary.isBlank()) throw SystemFailure.STORAGE_NOT_CONFIGURED.fault();
         if(store==null) {
             Path a=Path.of(primary).normalize(),b=Path.of(secondary).normalize();
             for(Path protectedRoot:List.of(Path.of(ledger).normalize(),Path.of(mailbox).normalize()))
-                if(a.startsWith(protectedRoot)||protectedRoot.startsWith(a)||b.startsWith(protectedRoot)||protectedRoot.startsWith(b)) throw ApiFault.protection();
+                if(a.startsWith(protectedRoot)||protectedRoot.startsWith(a)||b.startsWith(protectedRoot)||protectedRoot.startsWith(b)) throw SystemFailure.STORAGE_PATH_INVALID.fault();
             UUID id=(UUID)db.required("SELECT id FROM platform_meta.instance").get("id");
             store=new QuarantineFiles(a,b,id); store.bind();
         }

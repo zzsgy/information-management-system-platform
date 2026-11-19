@@ -25,7 +25,7 @@ public final class LocalBusinessMessages implements BusinessMessageTransport {
     /** 文件名只来自服务端UUID；重复发送核对原字节，绝不覆盖已存在的不同结果。 */
     @Override public synchronized String send(Message message){
         try{
-            if(message.address()==null||message.address().length()>254||!message.address().matches("[^\\s@]+@[^\\s@]+"))throw ApiFault.protection();
+            if(message.address()==null||message.address().length()>254||!message.address().matches("[^\\s@]+@[^\\s@]+"))throw SystemFailure.MESSAGE_STORAGE_FAILED.fault();
             writeOnce(root.resolve("instance"),instance.toString().getBytes(StandardCharsets.UTF_8));
             // 使用固定安全提示，不允许调用者把完整题名或正文混进消息。
             byte[] bytes=Crypto.json(Sql.map("deliveryId",message.deliveryId(),"notificationId",message.notificationId(),"recipientId",message.recipientId(),"to",message.address(),"kind",message.kind(),"sourceKind",message.sourceKind(),"sourceId",message.sourceId(),"message","您有一项业务状态更新，请登录工作台查看当前获授权内容。","delivery","LOCAL_DEVELOPMENT_ONLY")).getBytes(StandardCharsets.UTF_8);
@@ -34,16 +34,16 @@ public final class LocalBusinessMessages implements BusinessMessageTransport {
     }
     /** 先刷盘再返回；既有不完整文件会拒绝成功并进入人工处理，不被悄悄改写。 */
     private void writeOnce(Path target,byte[] content)throws Exception{
-        for(Path part=target;part!=null;part=part.getParent())if(Files.isSymbolicLink(part))throw ApiFault.protection();
+        for(Path part=target;part!=null;part=part.getParent())if(Files.isSymbolicLink(part))throw SystemFailure.MESSAGE_STORAGE_FAILED.fault();
         try(FileChannel channel=FileChannel.open(target,StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)){ByteBuffer bytes=ByteBuffer.wrap(content);while(bytes.hasRemaining())channel.write(bytes);channel.force(true);PrivateFiles.restrict(target);}
-        catch(FileAlreadyExistsException duplicate){if(!Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)||Files.size(target)!=content.length||!Arrays.equals(Files.readAllBytes(target),content))throw ApiFault.protection();}
+        catch(FileAlreadyExistsException duplicate){if(!Files.isRegularFile(target,LinkOption.NOFOLLOW_LINKS)||Files.size(target)!=content.length||!Arrays.equals(Files.readAllBytes(target),content))throw SystemFailure.MESSAGE_STORAGE_FAILED.fault();}
     }
     /** 正式适配器可实现同一接口替换；默认关闭，不会自动向公司邮箱发送。 */
     @Configuration(proxyBeanMethods=false)
     public static class Adapters {
         @Bean @ConditionalOnMissingBean(BusinessMessageTransport.class)
         BusinessMessageTransport businessMessages(Sql db,MailGateway mail,@Value("${platform.notifications.enabled:false}") boolean enabled,@Value("${platform.notifications.local-directory:}") String directory){
-            if(!enabled)return message->{throw ApiFault.protection();};
+            if(!enabled)return message->{throw SystemFailure.MESSAGE_STORAGE_FAILED.fault();};
             if(mail.mode().equals("SMTP"))return new BusinessMessageTransport(){
                 @Override public String channel(){return "SMTP";}
                 @Override public boolean replaySafe(){return false;}

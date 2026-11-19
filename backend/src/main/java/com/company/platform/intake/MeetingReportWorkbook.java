@@ -1,5 +1,7 @@
 package com.company.platform.intake;
 
+import com.company.platform.SystemFailure;
+
 import com.company.platform.ApiFault;
 import com.company.platform.Inputs;
 import org.w3c.dom.Element;
@@ -83,7 +85,7 @@ public final class MeetingReportWorkbook {
             zip.finish();
             return bytes.toByteArray();
         } catch (IOException failure) {
-            throw ApiFault.protection();
+            throw SystemFailure.WORKBOOK_GENERATION_FAILED.fault(failure);
         }
     }
 

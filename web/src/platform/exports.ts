@@ -1,4 +1,4 @@
-import { ApiError, profile, setProfile } from "./api";
+import { ApiError, profile, responseError, requestFetch } from "./api";
 
 /** 导出二进制请求固定操作号，自动轮询和后台页加载不延长用户空闲会话。 */
 export async function usageBlob(
@@ -6,7 +6,7 @@ export async function usageBlob(
   operation: string,
   activity = false,
 ): Promise<Blob> {
-  const response = await fetch(`/api/v1${path}`, {
+  const response = await requestFetch(`/api/v1${path}`, {
     credentials: "same-origin",
     cache: "no-store",
     headers: {
@@ -16,18 +16,7 @@ export async function usageBlob(
       ...(activity ? { "X-User-Activity": "1" } : {}),
     },
   });
-  if (!response.ok) {
-    const result = await response.json();
-    if (result.code === "SESSION_INVALID") {
-      setProfile(null);
-      window.dispatchEvent(new Event("ims-session-expired"));
-    }
-    throw new ApiError(
-      result.code,
-      result.message || "副本读取失败",
-      result.requestId,
-    );
-  }
+  if (!response.ok) throw await responseError(response, "文件读取失败");
   if (
     !/^(application\/(pdf|zip)|image\/png)/.test(
       response.headers.get("Content-Type") || "",

@@ -31,9 +31,18 @@ public final class ClamFileScanner {
     public enum Verdict { CLEAN, SUSPICIOUS, UNAVAILABLE }
     /** 两个副本的固定对象在调用方扫描前后都须重新校验；此方法只负责病毒扫描。 */
     public Verdict scan(Path source) {
+        try { return scanOrThrow(source); }
+        catch(ApiFault unavailable) { return Verdict.UNAVAILABLE; }
+    }
+    /** 正式服务保留不可检测的具体原因；兼容调用者仍可通过 scan 获取三态结论。 */
+    public Verdict scanOrThrow(Path source) {
         try {
-            safePath(executable,false); safePath(database,true); safePath(temporary,true); safePath(source,false);
-            if(!Crypto.equal(hash(executable),executableHash) || (officialOnly && !validOfficialDatabase())) return Verdict.UNAVAILABLE;
+            requirePath(executable,false,SystemFailure.SCANNER_EXECUTABLE_UNAVAILABLE);
+            requirePath(database,true,SystemFailure.SCANNER_DATABASE_UNAVAILABLE);
+            requirePath(temporary,true,SystemFailure.SCANNER_TEMP_UNAVAILABLE);
+            requirePath(source,false,SystemFailure.STORAGE_UNAVAILABLE);
+            if(!Crypto.equal(hash(executable),executableHash)) throw SystemFailure.SCANNER_EXECUTABLE_MISMATCH.fault();
+            if(officialOnly) requireOfficialDatabase();
             List<String> args=new ArrayList<>(List.of(executable.toString(),"--database="+database,"--tempdir="+temporary,
                 "--stdout","--alert-encrypted=yes","--alert-exceeds-max=yes","--scan-pdf=yes","--scan-archive=yes",
                 "--max-filesize=5120M","--max-scansize=5120M","--max-files=10000","--max-recursion=32"));
@@ -47,23 +56,29 @@ public final class ClamFileScanner {
             Process process=builder.start(); ExecutorService output=Executors.newSingleThreadExecutor();
             try {
                 Future<byte[]> captured=output.submit(()->process.getInputStream().readNBytes(65537));
-                if(!process.waitFor(timeout.toMillis(),TimeUnit.MILLISECONDS)) return Verdict.UNAVAILABLE;
-                byte[] raw=captured.get(2,TimeUnit.SECONDS); if(raw.length>65536) return Verdict.UNAVAILABLE;
+                if(!process.waitFor(timeout.toMillis(),TimeUnit.MILLISECONDS)) throw SystemFailure.SCANNER_TIMEOUT.fault();
+                byte[] raw=captured.get(2,TimeUnit.SECONDS); if(raw.length>65536) throw SystemFailure.SCANNER_RESPONSE_INVALID.fault();
                 String report=new String(raw,StandardCharsets.UTF_8); Matcher scanned=SCANNED.matcher(report), infected=INFECTED.matcher(report);
                 // 有效检测必须报告至少扫描一个文件；不能把“跳过”当作 CLEAN。
-                if(!scanned.find() || !infected.find() || Long.parseLong(scanned.group(1))<1) return Verdict.UNAVAILABLE;
+                if(!scanned.find() || !infected.find() || Long.parseLong(scanned.group(1))<1) throw SystemFailure.SCANNER_RESPONSE_INVALID.fault();
                 long found=Long.parseLong(infected.group(1));
                 if(process.exitValue()==1 && found>0) return Verdict.SUSPICIOUS;
                 if(process.exitValue()==0 && found==0) return Verdict.CLEAN;
-                return Verdict.UNAVAILABLE;
+                throw SystemFailure.SCANNER_EXECUTION_FAILED.fault();
             } finally { process.destroyForcibly(); try { process.getInputStream().close(); } catch(IOException ignored) { } output.shutdownNow(); }
-        } catch(InterruptedException e) { Thread.currentThread().interrupt(); return Verdict.UNAVAILABLE; }
-        catch(Exception e) { return Verdict.UNAVAILABLE; }
+        } catch(ApiFault fault) { throw fault; }
+        catch(InterruptedException e) { Thread.currentThread().interrupt(); throw SystemFailure.SCANNER_EXECUTION_FAILED.fault(e); }
+        catch(Exception e) { throw SystemFailure.SCANNER_EXECUTION_FAILED.fault(e); }
     }
     /** 缺失主要官方库或每日库时不允许进入正式检测；每日库超过七天拒绝。 */
-    private boolean validOfficialDatabase() throws IOException {
+    private void requireOfficialDatabase() throws IOException {
         Path main=existing("main"),daily=existing("daily");
-        return main!=null && daily!=null && !Files.getLastModifiedTime(daily,LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(Instant.now().minus(Duration.ofDays(7)));
+        if(main==null || daily==null) throw SystemFailure.SCANNER_DATABASE_UNAVAILABLE.fault();
+        if(Files.getLastModifiedTime(daily,LinkOption.NOFOLLOW_LINKS).toInstant().isBefore(Instant.now().minus(Duration.ofDays(7))))
+            throw SystemFailure.SCANNER_DATABASE_EXPIRED.fault();
+    }
+    private void requirePath(Path path,boolean directory,SystemFailure failure) {
+        try { safePath(path,directory); } catch(IOException error) { throw failure.fault(error); }
     }
     /** 只查找预期 CVD/CLD 文件，不相信其他自定义签名库。 */
     private Path existing(String name) { for(String ext:List.of(".cvd",".cld")) { Path path=database.resolve(name+ext); if(Files.isRegularFile(path,LinkOption.NOFOLLOW_LINKS)) return path; } return null; }

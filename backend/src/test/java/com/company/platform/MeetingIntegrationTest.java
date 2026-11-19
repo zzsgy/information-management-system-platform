@@ -501,6 +501,44 @@ class MeetingIntegrationTest {
         assertTrue(workbooks.download(organizer, id, false).length > 0);
     }
 
+    /** 线上员工和 Excel 代填员工同时汇总，未回复邀请不应造成线上材料漏导。 */
+    @Test
+    void workbookIncludesEveryOnlineAndImportedEmployee() throws IOException {
+        var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        booking.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
+        booking.put("materialTypes", List.of("REPORT", "WEEKLY_PLAN", "COORDINATION"));
+        UUID id = bookings.create(organizer, request(), booking);
+        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"));
+        for (var person : List.of(employee, outsider)) {
+            bookings.materials(person, id, request(), Map.of("kind", "REPORT", "text", "线上汇报 " + person.userId()));
+            bookings.materials(person, id, request(), Map.of("kind", "WEEKLY_PLAN", "text", "线上计划 " + person.userId()));
+            bookings.materials(person, id, request(), Map.of("kind", "COORDINATION", "rows", List.of(
+                    ownedCoordination(Map.of("subject", "线上协调 " + person.userId(), "expected", "完成核对")))));
+        }
+        var remote = person();
+        String file = filledWorkbook(workbooks.download(organizer, id, true), "外地汇报", "外地计划",
+                Map.of("F", employeeLabel(remote)));
+        var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
+        workbooks.importMaterials(organizer, id, request(), Map.of("file", file, "preview", preview.get("preview")));
+        try (var zip = new ZipInputStream(new ByteArrayInputStream(workbooks.download(organizer, id, false)))) {
+            for (ZipEntry part; (part = zip.getNextEntry()) != null;) {
+                if (!part.getName().equals("xl/worksheets/sheet1.xml")) continue;
+                String sheet = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+                for (var person : List.of(employee, outsider)) {
+                    assertTrue(sheet.contains("线上汇报 " + person.userId()));
+                    assertTrue(sheet.contains("线上计划 " + person.userId()));
+                    assertTrue(sheet.contains("线上协调 " + person.userId()));
+                    assertTrue(sheet.contains(attendee(organizer, id, person).get("employeeNo").toString()));
+                }
+                assertTrue(sheet.contains("外地汇报"));
+                assertTrue(sheet.contains("外地计划"));
+                assertTrue(sheet.contains(attendee(organizer, id, remote).get("employeeNo").toString()));
+                return;
+            }
+        }
+        fail("会议汇总缺少数据工作表");
+    }
+
     private Map<String, Object> ownedCoordination(Map<String, String> material) {
         var row = new HashMap<String, Object>(material);
         row.put("departmentId", department.toString());

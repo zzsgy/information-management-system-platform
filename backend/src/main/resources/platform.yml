@@ -50,6 +50,16 @@ spring:
     error:
       include-message: never
       include-stacktrace: never
+logging:
+  file:
+    # 后端诊断持续落盘；部署时可改为服务账号可写的独立日志目录。
+    name: ${IMS_PLATFORM_LOG_FILE:./logs/platform.log}
+  logback:
+    rollingpolicy:
+      # 按天及文件大小滚动，保留30天且总量不超过1GB，避免日志占满业务磁盘。
+      max-file-size: 20MB
+      max-history: 30
+      total-size-cap: 1GB
 platform:
   audit-storage:
     # 后台建分区、容量采样和已排队归档；关闭不会关闭审计追加与权限校验。

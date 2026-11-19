@@ -27,6 +27,6 @@ public class ScanHttpBoundary extends OncePerRequestFilter {
             if(r.getContentLengthLong()>limit||(r.getContentLengthLong()<0&&r.getHeader("Transfer-Encoding")!=null))throw ApiFault.invalid("扫描请求超过受控上限");
             String hash=UploadRules.sha(r.getHeader("X-Content-Sha256"));if(r.getMethod().equals("GET")&&!hash.equals(Crypto.hash("")))throw ApiFault.invalid("查询不能携带正文");
             UUID service=identity.authenticate(r.getHeader("X-Service-Id"),r.getHeader("X-Service-Time"),r.getHeader("X-Service-Nonce"),r.getMethod(),r.getRequestURI(),hash,r.getHeader("X-Service-Signature"));r.setAttribute(SERVICE,service);chain.doFilter(r,response);
-        }catch(ApiFault failure){response.setStatus(failure.status);response.setContentType("application/json;charset=UTF-8");response.getWriter().write(Crypto.JSON.writeValueAsString(ApiController.envelope(failure.code,failure.getMessage(),null,request)));}
+        }catch(Exception error){ApiFault failure=ApiErrors.classify(error);FailureDiagnostics.log(request,"SCAN_HTTP",failure);response.setStatus(failure.status);response.setContentType("application/json;charset=UTF-8");response.getWriter().write(Crypto.JSON.writeValueAsString(ApiController.envelope(failure.code,failure.getMessage(),null,request)));}
     }
 }

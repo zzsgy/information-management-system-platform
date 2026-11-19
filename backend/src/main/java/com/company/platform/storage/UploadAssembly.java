@@ -20,7 +20,7 @@ public class UploadAssembly {
     /** 接收由可信工作器重新认证的原始发起主体，不向HTTP开放执行入口。 */
     public UUID assemble(Actor actor,UUID jobId,UUID request) {
         Work work=transaction.execute(status->claim(actor,jobId));
-        if(work==null) throw ApiFault.protection();
+        if(work==null) throw SystemFailure.UPLOAD_ASSEMBLY_FAILED.fault();
         String key=null;
         try {
             QuarantineFiles store=files.get();
@@ -28,11 +28,13 @@ public class UploadAssembly {
             key=store.assemble(work.parts(),work.size(),work.sha());
             String savedKey=key;
             UUID object=transaction.execute(status->finish(actor,work,savedKey,request));
-            if(object==null) throw ApiFault.protection();
+            if(object==null) throw SystemFailure.UPLOAD_ASSEMBLY_FAILED.fault();
             return object;
         } catch(RuntimeException failure) {
+            ApiFault fault=failure instanceof ApiFault known?known:SystemFailure.UPLOAD_ASSEMBLY_FAILED.fault(failure);
+            FailureDiagnostics.log(request,"FILE_ASSEMBLY task="+work.job(),fault);
             // 提交结果不确定时不能删除新原件：数据库可能已提交引用；无引用孤儿以后受控核查。
-            try { transaction.executeWithoutResult(status->db.update("UPDATE ops.job SET state='FAILED',error_code='ASSEMBLY_FAILED',lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND state='RUNNING'",work.job(),work.lease())); }
+            try { transaction.executeWithoutResult(status->db.update("UPDATE ops.job SET state='FAILED',error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND state='RUNNING'",fault.code,work.job(),work.lease())); }
             catch(Exception ignored) { /* 租约超时后由受控恢复流程识别，不伪造完成。 */ }
             throw failure;
         }

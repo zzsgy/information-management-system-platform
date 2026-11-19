@@ -1,5 +1,7 @@
 package com.company.platform.storage;
 
+import com.company.platform.SystemFailure;
+
 import com.company.platform.ApiFault;
 import java.awt.*;
 import java.awt.image.BufferedImage;
@@ -50,11 +52,11 @@ public final class WatermarkedPage {
                 } finally { graphics.dispose(); }
                 // 使用内存输出缓存，不让 ImageIO 将敏感阅读页面写入系统默认临时目录。
                 ByteArrayOutputStream result=new ByteArrayOutputStream();
-                try(MemoryCacheImageOutputStream output=new MemoryCacheImageOutputStream(result)) { if(!ImageIO.write(page,"png",output)) throw ApiFault.protection(); }
+                try(MemoryCacheImageOutputStream output=new MemoryCacheImageOutputStream(result)) { if(!ImageIO.write(page,"png",output)) throw SystemFailure.RENDER_OUTPUT_INVALID.fault(); }
                 return result.toByteArray();
             } finally { reader.dispose(); }
         } catch(ApiFault error) { throw error; }
-        catch(Exception error) { throw ApiFault.protection(); }
+        catch(Exception error) { throw SystemFailure.RENDER_OUTPUT_INVALID.fault(error); }
     }
     /** 拒绝缺失身份、超长或控制字符，避免水印信息被换行隐藏。 */
     private static String field(String text) {

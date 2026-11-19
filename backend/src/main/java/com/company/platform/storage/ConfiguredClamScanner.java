@@ -2,6 +2,7 @@ package com.company.platform.storage;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import com.company.platform.*;
 import java.nio.file.Path;
 import java.time.Duration;
 
@@ -17,8 +18,9 @@ public class ConfiguredClamScanner implements FileScanEngine {
     /** 配置不全即拒绝判定，不使用系统PATH搜索任意检测程序。 */
     @Override public ClamFileScanner.Verdict scan(Path source) {
         try {
-            if(executable.isBlank()||database.isBlank()||temporary.isBlank()||hash.isBlank()) return ClamFileScanner.Verdict.UNAVAILABLE;
-            return new ClamFileScanner(Path.of(executable),Path.of(database),Path.of(temporary),hash,Duration.ofSeconds(timeoutSeconds),true).scan(source);
-        } catch(RuntimeException e) { return ClamFileScanner.Verdict.UNAVAILABLE; }
+            if(executable.isBlank()||database.isBlank()||temporary.isBlank()||hash.isBlank()) throw SystemFailure.SCANNER_NOT_CONFIGURED.fault();
+            return new ClamFileScanner(Path.of(executable),Path.of(database),Path.of(temporary),hash,Duration.ofSeconds(timeoutSeconds),true).scanOrThrow(source);
+        } catch(ApiFault fault) { if(fault.status<500) throw SystemFailure.SCANNER_NOT_CONFIGURED.fault(fault); throw fault; }
+        catch(RuntimeException e) { throw SystemFailure.SCANNER_NOT_CONFIGURED.fault(e); }
     }
 }

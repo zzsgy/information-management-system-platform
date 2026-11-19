@@ -108,6 +108,6 @@ public final class ArchiveBoxWorkbook {
             for(int i=0;i<Math.max(1,rows.size());i++){Map<String,Object> row=rows.isEmpty()?Map.of():rows.get(i);appendRow(sheet,i+4,KEYS.stream().map(key->Objects.toString(row.get(key),"")).toList());}
             sheet.append("</sheetData><mergeCells count=\"17\"><mergeCell ref=\"F2:H2\"/>");for(int i=0;i<19;i++)if(i<5||i>7){char col=(char)('A'+i);sheet.append("<mergeCell ref=\"").append(col).append("2:").append(col).append("3\"/>");}sheet.append("</mergeCells></worksheet>");
             String xml=sheet.toString().replace("<row r=\"2\">","<row r=\"2\" ht=\"38\" customHeight=\"1\">").replace("<row r=\"3\">","<row r=\"3\" ht=\"36\" customHeight=\"1\">").replaceAll("(<c r=\"[A-S][23]\")","$1 s=\"1\"").replaceAll("(<c r=\"[A-S](?:[4-9]|[1-9][0-9]+)\")","$1 s=\"2\"");put(zip,"xl/worksheets/sheet1.xml",xml);zip.finish();return bytes.toByteArray();
-        }catch(IOException failure){throw ApiFault.protection();}
+        }catch(IOException failure){throw SystemFailure.WORKBOOK_GENERATION_FAILED.fault(failure);}
     }
 }

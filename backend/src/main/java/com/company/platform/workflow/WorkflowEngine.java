@@ -26,17 +26,17 @@ public class WorkflowEngine {
         }
         // 与档案员整批交接协调路线创建，防止新流程绑定刚结束的旧任职；不影响读取或文件处理。
         db.rows("SELECT pg_advisory_xact_lock(61427003)");
-        String templateKey=switch(type){case "CATALOG_CHANGE"->"ARCHIVE_CATALOG_CHANGE_V1";case "REGISTRATION"->"ARCHIVE_REGISTRATION_V1";case "BORROW"->"ARCHIVE_BORROW_V1";case "ACCESS_POLICY"->"ARCHIVE_ACCESS_POLICY_V1";case "PHYSICAL_RETURN"->"ARCHIVE_PHYSICAL_RETURN_V1";default->throw ApiFault.protection();};
+        String templateKey=switch(type){case "CATALOG_CHANGE"->"ARCHIVE_CATALOG_CHANGE_V1";case "REGISTRATION"->"ARCHIVE_REGISTRATION_V1";case "BORROW"->"ARCHIVE_BORROW_V1";case "ACCESS_POLICY"->"ARCHIVE_ACCESS_POLICY_V1";case "PHYSICAL_RETURN"->"ARCHIVE_PHYSICAL_RETURN_V1";default->throw SystemFailure.WORKFLOW_CONFIGURATION_INVALID.fault();};
         int templateVersion="BORROW".equals(type)&&(Boolean.TRUE.equals(snapshot.get("paperHandoffs"))||snapshot.containsKey("unwatermarked"))?2:1;
         var template=db.required("SELECT *,nodes_definition::text AS definition FROM workflow.template_version WHERE business_type=? AND template_key=? AND version_no=? AND state='ACTIVE'",type,templateKey,templateVersion);
-        if(!Crypto.equal(Crypto.hash((String)template.get("definition")),(String)template.get("checksum"))) throw ApiFault.protection();
+        if(!Crypto.equal(Crypto.hash((String)template.get("definition")),(String)template.get("checksum"))) throw SystemFailure.WORKFLOW_CONFIGURATION_INVALID.fault();
         UUID instance=UUID.randomUUID(),routeId=UUID.randomUUID();List<Map<String,Object>> nodes=new ArrayList<>();
         for (int index = 0; index < route.size(); index++) {
             var duty = route.get(index);
             var person = itSharedBorrow ? duties.resolve(duty, applicant.userId()) : duties.resolve(duty);
             nodes.add(Sql.map("id",UUID.randomUUID(),"sequence",index+1,"duty",duty.code(),"departmentId",duty.department(),"userId",person.user(),"assignmentType",person.type(),"assignmentRef",person.reference()));
         }
-        if(nodes.isEmpty()) throw ApiFault.protection();
+        if(nodes.isEmpty()) throw SystemFailure.WORKFLOW_CONFIGURATION_INVALID.fault();
         int round=(int)db.count("SELECT COALESCE(max(round_no),0)+1 FROM workflow.instance WHERE business_type=? AND business_id=?",type,business);
         db.update("INSERT INTO workflow.instance(id,business_type,business_id,applicant_id,template_version_id,route_snapshot_id,business_snapshot,round_no) VALUES(?,?,?,?,?,?,?::jsonb,?)",instance,type,business,applicant.userId(),template.get("id"),routeId,Crypto.json(snapshot),round);
         db.update("INSERT INTO workflow.route_snapshot(id,instance_id,batch_id,highest_classification,form,applicant_role,department_context,over_week,calendar_version,template_version,nodes_snapshot) VALUES(?,?,?,?,? ,?,?::jsonb,?,?,?,?::jsonb)",routeId,instance,batch,highest,type.equals("BORROW")?snapshot.getOrDefault("form","ELECTRONIC"):null,authority.role(applicant,"DEPARTMENT_ARCHIVIST",Inputs.uuid(applicant.user().get("departmentId")))?"ARCHIVIST":"MEMBER",Crypto.json(Sql.map("applicantDepartmentId",applicant.user().get("departmentId"),"ownerDepartmentId",snapshot.get("departmentId"))),route.stream().anyMatch(duty->duty.code().equals("SUPERVISING_LEADER")),calendar==0?null:calendar,template.get("version_no"),Crypto.json(nodes));
@@ -164,7 +164,7 @@ public class WorkflowEngine {
         },key->Sql.map("objectId",key,"state","SUCCEEDED"));
     }
     /** 只有唯一业务适配器才能提交结果，配置冲突按保护失败处理。 */
-    private WorkflowBusiness business(String type) {var matches=businesses.orderedStream().filter(value->value.type().equals(type)).toList();if(matches.size()!=1) throw ApiFault.protection();return matches.getFirst();}
+    private WorkflowBusiness business(String type) {var matches=businesses.orderedStream().filter(value->value.type().equals(type)).toList();if(matches.size()!=1) throw SystemFailure.WORKFLOW_CONFIGURATION_INVALID.fault();return matches.getFirst();}
     /** 解析数据库JSON快照，避免调用者接受客户端重新指定的清单。 */
     @SuppressWarnings("unchecked") public static Map<String,Object> snapshot(Map<String,Object> instance) {Object value=instance.get("business_snapshot");return value instanceof Map<?,?> map?(Map<String,Object>)map:Crypto.JSON.readValue(value.toString(),Map.class);}
 }

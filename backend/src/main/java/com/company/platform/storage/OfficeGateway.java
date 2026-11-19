@@ -41,7 +41,7 @@ public class OfficeGateway {
     public void require() {
         if(!enabled)throw new ApiFault(503,"OFFICE_NOT_CONFIGURED","Office文档服务尚未配置");
         origin(browserOrigin);origin(serverOrigin);origin(callbackOrigin);
-        if(version.isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(inboxPath),secret(outboxPath)))throw ApiFault.protection();
+        if(version.isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(inboxPath),secret(outboxPath)))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();
         Inputs.uuid(serviceId);
     }
     /** CSP仅添加配置中精确的编辑器来源，不开启通配脚本或任意iframe。 */
@@ -70,8 +70,8 @@ public class OfficeGateway {
     /** 命令返回成功仅表示已接收，平台保存成功由后续回调和真实检测决定。 */
     @SuppressWarnings("unchecked") public Map<String,Object> command(Map<String,Object> payload) {
         require();try {var body=new LinkedHashMap<>(payload);body.put("token",sign(payload));var request=HttpRequest.newBuilder(URI.create(serverOrigin+"/command")).timeout(Duration.ofSeconds(15)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(Crypto.json(body))).build();
-            var response=exchange(request,HttpResponse.BodyHandlers.ofByteArray(),65536,15);if(response.statusCode()!=200)throw ApiFault.protection();return Crypto.JSON.readValue(response.body(),Map.class);
-        }catch(ApiFault fault){throw fault;}catch(Exception failure){if(failure instanceof InterruptedException)Thread.currentThread().interrupt();throw new ApiFault(503,"OFFICE_UNAVAILABLE","Office服务暂不可用，保存结果尚未确认");}
+            var response=exchange(request,HttpResponse.BodyHandlers.ofByteArray(),65536,15);if(response.statusCode()!=200)throw SystemFailure.OFFICE_REQUEST_FAILED.fault();return Crypto.JSON.readValue(response.body(),Map.class);
+        }catch(ApiFault fault){throw fault;}catch(Exception failure){if(failure instanceof InterruptedException)Thread.currentThread().interrupt();throw new ApiFault(503,"OFFICE_UNAVAILABLE","Office服务请求失败，保存结果尚未确认，请先查询保存记录",failure);}
     }
     /** 固定key重试可接回文档服务已完成的结果；超时不能当作转换失败或原件损坏。 */
     @SuppressWarnings("unchecked") public Path convert(UUID conversion,String inputType,String outputType) throws IOException {
@@ -84,7 +84,7 @@ public class OfficeGateway {
             var response=exchange(request,HttpResponse.BodyHandlers.ofByteArray(),65536,120);if(response.statusCode()!=200)throw new ApiFault(503,"OFFICE_CONVERSION_UNAVAILABLE","Office转换服务暂不可用，请稍后重试");Map<String,Object> result=Crypto.JSON.readValue(response.body(),Map.class);
             if(result.get("error") instanceof Number error&&error.intValue()!=0)throw new ApiFault(422,"OFFICE_CONVERSION_FAILED","Office未能转换该文件，请检查格式、密码或原件内容");
             if(!Boolean.TRUE.equals(result.get("endConvert"))||!outputType.equals(result.get("fileType")))throw new ApiFault(503,"OFFICE_CONVERSION_PENDING","转换尚未确认完成，请稍后重试");return candidate(Inputs.text(result,"fileUrl",8192));
-        }catch(InterruptedException failure){Thread.currentThread().interrupt();throw ApiFault.protection();}
+        }catch(InterruptedException failure){Thread.currentThread().interrupt();throw SystemFailure.OFFICE_REQUEST_FAILED.fault(failure);}
     }
     /** 下载限制同时覆盖正文大小与整体耗时，慢正文不能长期占住转换工作位。 */
     public Path candidate(String address) throws IOException {
@@ -92,8 +92,8 @@ public class OfficeGateway {
         if(!Objects.equals(uri.getScheme(),base.getScheme())||!Objects.equals(uri.getHost(),base.getHost())||uri.getPort()!=base.getPort()||uri.getUserInfo()!=null||uri.getFragment()!=null||!uri.getPath().startsWith("/cache/files/")||uri.getPath().contains(".."))throw ApiFault.denied();
         Path directory=PrivateFiles.directory(tempPath),target=Files.createTempFile(directory,"office-",".candidate");PrivateFiles.restrict(target);boolean complete=false;
         try {var request=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(45)).GET().build();var response=exchange(request,HttpResponse.BodyHandlers.ofFile(target),maximum,45);
-            if(response.statusCode()!=200||Files.size(target)==0)throw ApiFault.protection();complete=true;return target;
-        }catch(InterruptedException failure){Thread.currentThread().interrupt();throw ApiFault.protection();}finally{if(!complete)Files.deleteIfExists(target);}
+            if(response.statusCode()!=200||Files.size(target)==0)throw SystemFailure.OFFICE_RESPONSE_INVALID.fault();complete=true;return target;
+        }catch(InterruptedException failure){Thread.currentThread().interrupt();throw SystemFailure.OFFICE_REQUEST_FAILED.fault(failure);}finally{if(!complete)Files.deleteIfExists(target);}
     }
     /** 完成期限覆盖响应正文；超时取消网络订阅，不依赖只管响应头的request timeout。 */
     private <T> HttpResponse<T> exchange(HttpRequest request,HttpResponse.BodyHandler<T> handler,long limit,int seconds) throws IOException,InterruptedException {
@@ -111,9 +111,9 @@ public class OfficeGateway {
         public void onComplete(){if(!failed)target.onComplete();}
     }
     /** 只接受无路径、无查询、无用户信息的固定来源，禁止把外部输入拼接到配置中。 */
-    private void origin(String value){try{URI uri=URI.create(value);if(uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null||!uri.getPath().isEmpty()||!(uri.getScheme().equals("https")||(uri.getScheme().equals("http")&&Set.of("localhost","127.0.0.1","[::1]").contains(uri.getHost()))))throw ApiFault.protection();}catch(IllegalArgumentException failure){throw ApiFault.protection();}}
+    private void origin(String value){try{URI uri=URI.create(value);if(uri.getHost()==null||uri.getUserInfo()!=null||uri.getQuery()!=null||uri.getFragment()!=null||!uri.getPath().isEmpty()||!(uri.getScheme().equals("https")||(uri.getScheme().equals("http")&&Set.of("localhost","127.0.0.1","[::1]").contains(uri.getHost()))))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();}catch(IllegalArgumentException failure){throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault(failure);}}
     /** 密钥位于受限配置文件；禁用软链接，不记录内容。 */
-    private String secret(String file){try{Path path=Path.of(file);if(!path.isAbsolute()||Files.isSymbolicLink(path)||Files.size(path)>4096)throw ApiFault.protection();String value=Files.readString(path).strip();if(value.length()<32)throw ApiFault.protection();return value;}catch(IOException|IllegalArgumentException failure){throw ApiFault.protection();}}
+    private String secret(String file){try{Path path=Path.of(file);if(!path.isAbsolute()||Files.isSymbolicLink(path)||Files.size(path)>4096)throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();String value=Files.readString(path).strip();if(value.length()<32)throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();return value;}catch(IOException|IllegalArgumentException failure){throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault(failure);}}
     /** 固定HS256，避免alg=none或算法混淆；时间声明存在时必须有效。 */
     @SuppressWarnings("unchecked") static Map<String,Object> verify(String token,String key) {
         try{if(token==null||token.length()>100000)throw ApiFault.denied();String[] parts=token.split("\\.",-1);if(parts.length!=3)throw ApiFault.denied();var decoder=Base64.getUrlDecoder();Map<String,Object> header=Crypto.JSON.readValue(new String(decoder.decode(parts[0]),StandardCharsets.UTF_8),Map.class);

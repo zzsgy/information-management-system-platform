@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { api } from "./api";
+import { api, ApiError, profile, requestFetch, responseError } from "./api";
 import {
   coordinationLabels,
   materialLabels,
@@ -44,6 +44,28 @@ const busy = ref(false);
 const path = "/meetings/" + props.meetingId + "/workbooks/";
 /** 同一文件预检后再确认，只有明确选择的冲突组会覆盖线上材料。 */
 let encoded = "";
+
+/** 模板与汇总下载先检查错误响应，避免把失败 JSON 当成 Excel 保存。 */
+async function downloadWorkbook(kind: "template" | "summary") {
+  busy.value = true;
+  error.value = "";
+  try {
+    const response = await requestFetch("/api/v1" + path + kind, {
+      credentials: "same-origin", cache: "no-store",
+      headers: { "X-Request-Id": crypto.randomUUID(), "X-CSRF-Token": profile.value?.csrfToken || "" },
+    });
+    if (!response.ok) throw await responseError(response, "会议 Excel 下载失败");
+    if (response.headers.get("Content-Type")?.split(";")[0] !== "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+      throw new ApiError("WORKBOOK_RESPONSE_INVALID", "会议 Excel 响应格式异常，请联系 IT 管理员", response.headers.get("X-Request-Id") || "");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = kind === "template" ? "会议填报模板.xlsx" : "会议汇总.xlsx";
+    link.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  } catch (failure) { error.value = (failure as Error).message; }
+  finally { busy.value = false; }
+}
 
 function choose(event: Event) {
   file.value = (event.target as HTMLInputElement).files?.[0];
@@ -115,15 +137,15 @@ async function importMaterials() {
     <header class="workbook-toolbar">
       <h3>会议 Excel</h3>
       <div class="meeting-actions">
-        <a
+        <button
           v-if="canImport"
           class="secondary"
-          :href="'/api/v1' + path + 'template'"
-          download
-          >下载填报模板</a
+          :disabled="busy"
+          @click="downloadWorkbook('template')"
+          >下载填报模板</button
         >
-        <a class="secondary" :href="'/api/v1' + path + 'summary'" download
-          >导出会议汇总</a
+        <button class="secondary" :disabled="busy" @click="downloadWorkbook('summary')"
+          >导出会议汇总</button
         >
       </div>
       <div v-if="canImport" class="meeting-actions workbook-upload">

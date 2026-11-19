@@ -37,32 +37,32 @@ public class SecurityLedger {
         try {
             Path marker=root.resolve("instance");
             if (!Files.exists(marker)) {
-                if (!fresh) throw ApiFault.protection();
+                if (!fresh) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
                 Files.writeString(marker,instanceId.toString(),StandardOpenOption.CREATE_NEW);
                 Files.writeString(root.resolve("key"),Crypto.token(),StandardOpenOption.CREATE_NEW);
                 Files.createFile(root.resolve("events.jsonl"));
                 Files.writeString(root.resolve("checkpoint"),"0\n0",StandardOpenOption.CREATE_NEW);
             }
-            if (!Files.readString(marker).equals(instanceId.toString())) throw ApiFault.protection();
+            if (!Files.readString(marker).equals(instanceId.toString())) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
             this.instance=instanceId; this.secret=Files.readString(root.resolve("key"));
             String[] checkpoint=Files.readString(root.resolve("checkpoint")).split("\n");
             anchorSequence=Long.parseLong(checkpoint[0]); anchorDigest=checkpoint[1]; anchorVerified=anchorSequence==0 && anchorDigest.equals("0");
             access(null); // 启动时完整验证既有账本。
-        } catch (IOException | IllegalArgumentException | IndexOutOfBoundsException e) { throw ApiFault.protection(); }
+        } catch (IOException | IllegalArgumentException | IndexOutOfBoundsException e) { throw SystemFailure.SECURITY_LEDGER_INVALID.fault(e); }
     }
     /** 为账号或来源生成不可枚举的限速键。 */
-    public String bucket(String value) { if (secret==null) throw ApiFault.protection(); return Crypto.hmac(secret,value); }
+    public String bucket(String value) { if (secret==null) throw SystemFailure.SECURITY_LEDGER_UNAVAILABLE.fault(); return Crypto.hmac(secret,value); }
     /** 每次鉴权核验最新水位；数据库较旧或账本损坏时保持拒绝。 */
-    public synchronized void check(UUID user, int version) { access(null); if (versions.getOrDefault(user,0)>version) throw ApiFault.protection(); }
+    public synchronized void check(UUID user, int version) { access(null); if (versions.getOrDefault(user,0)>version) throw SystemFailure.SECURITY_VERSION_REVOKED.fault(); }
     /** 先持久化收紧事实再提交业务；业务回滚导致账本领先时保守拒绝该主体。 */
     public synchronized void restrict(UUID user, int version, String action, UUID operation) {
         access(Sql.map("subjectId",user.toString(),"authorizationVersion",version,"action",action,"operationId",operation.toString(),"occurredAt",Instant.now().toString()));
     }
     /** 文件锁跨 JVM 串行化追加；读取只处理新增记录，数据库请求不持有全局应用锁。 */
     private void access(Map<String,Object> next) {
-        if (instance==null) throw ApiFault.protection();
+        if (instance==null) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
         try (FileChannel channel=FileChannel.open(root.resolve("events.jsonl"),StandardOpenOption.READ,StandardOpenOption.WRITE); var lock=channel.lock()) {
-            if (channel.size()<offset) throw ApiFault.protection();
+            if (channel.size()<offset) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
             // 按固定大小缓冲流式重放，历史增长不会让重启分配整个日志大小的内存。
             channel.position(offset); ByteBuffer buffer=ByteBuffer.allocate(8192); ByteArrayOutputStream line=new ByteArrayOutputStream();
             while(channel.read(buffer)>0) {
@@ -70,11 +70,11 @@ public class SecurityLedger {
                 while(buffer.hasRemaining()) {
                     byte b=buffer.get();
                     if(b=='\n') { readRecord(line.toString(StandardCharsets.UTF_8)); line.reset(); }
-                    else { line.write(b); if(line.size()>65536) throw ApiFault.protection(); }
+                    else { line.write(b); if(line.size()>65536) throw SystemFailure.SECURITY_LEDGER_INVALID.fault(); }
                 }
                 buffer.clear();
             }
-            if(line.size()!=0 || sequence<anchorSequence || !anchorVerified) throw ApiFault.protection();
+            if(line.size()!=0 || sequence<anchorSequence || !anchorVerified) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
             offset=channel.size();
             if (next!=null) {
                 next.put("previous",tail); next.put("sequence",sequence+1); next.put("instance",instance.toString());
@@ -85,17 +85,19 @@ public class SecurityLedger {
                 tail=digest; sequence++; offset=channel.size();
                 checkpoint(); // 链记录先 fsync，随后原子更新独立链头。
             }
-        } catch (IOException | RuntimeException e) { throw ApiFault.protection(); }
+        } catch (ApiFault fault) { throw fault; }
+        catch (IOException e) { throw SystemFailure.SECURITY_LEDGER_UNAVAILABLE.fault(e); }
+        catch (RuntimeException e) { throw SystemFailure.SECURITY_LEDGER_INVALID.fault(e); }
     }
     /** 每行包含完整不可变事实和前向摘要，不能只保留摘要而丢失恢复依据。 */
     @SuppressWarnings("unchecked")
     private void readRecord(String line) {
         Map<String,Object> row=Crypto.JSON.readValue(line,Map.class);
         String digest=(String)row.remove("digest");
-        if (!Objects.equals(row.get("previous"),tail) || !Objects.equals(row.get("instance"),instance.toString()) || !Crypto.equal(digest,Crypto.hash(Crypto.json(row))) || ((Number)row.get("sequence")).longValue()!=sequence+1) throw ApiFault.protection();
+        if (!Objects.equals(row.get("previous"),tail) || !Objects.equals(row.get("instance"),instance.toString()) || !Crypto.equal(digest,Crypto.hash(Crypto.json(row))) || ((Number)row.get("sequence")).longValue()!=sequence+1) throw SystemFailure.SECURITY_LEDGER_INVALID.fault();
         versions.merge(UUID.fromString((String)row.get("subjectId")),((Number)row.get("authorizationVersion")).intValue(),Math::max);
         tail=digest; sequence++;
-        if(sequence==anchorSequence) { if(!tail.equals(anchorDigest)) throw ApiFault.protection(); anchorVerified=true; }
+        if(sequence==anchorSequence) { if(!tail.equals(anchorDigest)) throw SystemFailure.SECURITY_LEDGER_INVALID.fault(); anchorVerified=true; }
     }
     /** 原子替换持久化链头；掉电最多留下更旧链头，重放仍能完整验证更长的链。 */
     private void checkpoint() throws IOException {

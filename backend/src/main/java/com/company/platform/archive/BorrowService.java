@@ -189,7 +189,7 @@ public class BorrowService implements WorkflowBusiness {
         return Sql.map("items",db.rows("SELECT id,form,purpose,state,parent_max_classification,item_count,submitted_at,renewal_of_batch_id,renewal_reason"+where+" ORDER BY submitted_at DESC,id LIMIT ? OFFSET ?",args.toArray()).stream().map(row->Sql.view(row,"id,form,purpose,state,parent_max_classification,item_count,submitted_at,renewal_of_batch_id,renewal_reason")).toList(),"page",page,"pageSize",size,"total",total);
     }
     /** 等级排序只用于整批最高等级计算，未知值按保护失败处理。 */
-    private int rank(String value) {return switch(value){case "GENERAL"->0;case "IMPORTANT"->1;case "CORE"->2;default->throw ApiFault.protection();};}
+    private int rank(String value) {return switch(value){case "GENERAL"->0;case "IMPORTANT"->1;case "CORE"->2;default->throw SystemFailure.CLASSIFICATION_INVALID.fault();};}
     /** 未到期从原截止继续计算，已在途到期从新批准计算；每次新授权最多30自然日且须真正延长。 */
     private Instant renewalUntil(int version,Map<String,Object> period,Instant effective,Instant previous) {
         Instant start=previous.isAfter(effective)?previous:effective,until=calendar.until(version,period,start);

@@ -55,7 +55,7 @@ public class UploadService {
         String created=store.receive(input,part.length(),digest);
         // 数据刷盘后再进入短事务；重新锁住账号及会话，确保收流期间撤权立即生效。
         Map<String,Object> result=transaction.execute(status->commitPart(actor,id,part,digest,created,store,request));
-        if(result==null) throw ApiFault.protection();
+        if(result==null) throw SystemFailure.JOB_RESULT_INVALID.fault();
         return result;
     }
     /** 短事务登记分片，遇到重复操作重新验证已保存副本；提交结果未知时保留孤儿核查。 */
@@ -72,7 +72,7 @@ public class UploadService {
         var prior=db.one("SELECT * FROM storage.upload_part WHERE upload_session_id=? AND part_no=?",id,number);
         if(prior!=null) {
             if(!Crypto.equal(digest,(String)prior.get("sha256")) || ((Number)prior.get("byte_size")).longValue()!=part.length()) throw ApiFault.conflict("相同分片编号不能接收不同内容");
-            if(!store.verified((String)prior.get("staging_key"),part.length(),digest)) throw ApiFault.protection();
+            if(!store.verified((String)prior.get("staging_key"),part.length(),digest)) throw SystemFailure.JOB_RESULT_INVALID.fault();
             store.rollbackNew(created); // 已验证的重复分片不产生第二份有效内容。
             return receipt(id,part,digest);
         }
@@ -124,7 +124,7 @@ public class UploadService {
         var job=db.required("SELECT * FROM ops.job WHERE id=? AND requester_id=?",id,actor.userId());
         if("PREVIEW_METADATA".equals(job.get("job_type"))) return reading.job(actor,job);
         var handlers=domainJobs.orderedStream().filter(handler->handler.jobType().equals(job.get("job_type"))).toList();
-        if(handlers.size()==1) return handlers.getFirst().status(actor,job);if(handlers.size()>1) throw ApiFault.protection();
+        if(handlers.size()==1) return handlers.getFirst().status(actor,job);if(handlers.size()>1) throw SystemFailure.JOB_RESULT_INVALID.fault();
         if(!Set.of("FILE_ASSEMBLY_CHECK","FILE_CHECK").contains(job.get("job_type"))) throw ApiFault.hidden();
         var row=session(actor,Inputs.uuid(job.get("business_ref")),false); authorize(actor,row,"UPLOAD_READ",false);
         return Sql.map("id",id,"jobType",job.get("job_type"),"module",job.get("module"),"businessRef",job.get("business_ref"),"state",job.get("state"),"attemptCount",job.get("attempt_count"),"nextRunAt",job.get("next_run_at"),"errorCode",job.get("error_code"),"result",null);
@@ -136,7 +136,7 @@ public class UploadService {
         if(!"FILE_CHECK".equals(job.get("job_type"))) throw ApiFault.hidden();
         var row=session(actor,Inputs.uuid(job.get("business_ref")),true);authorize(actor,row,"FILE_CHECK",true);
         if("PENDING".equals(job.get("state"))) return task(job);
-        if(!"FAILED".equals(job.get("state")) || !Set.of("SCANNER_UNAVAILABLE","CHECK_FAILED").contains(job.get("error_code")) || !"CHECK_PENDING".equals(row.get("state"))) throw ApiFault.conflict("该任务不可重试");
+        if(!"FAILED".equals(job.get("state")) || !(Set.of("SCANNER_UNAVAILABLE","CHECK_FAILED").contains(job.get("error_code")) || Arrays.stream(SystemFailure.values()).anyMatch(failure->failure.status>=500 && failure.name().equals(job.get("error_code")))) || !"CHECK_PENDING".equals(row.get("state"))) throw ApiFault.conflict("该任务不可重试");
         db.update("UPDATE ops.job SET state='PENDING',error_code=NULL,requester_session_id=?,authorization_version=?,input_version=input_version+1 WHERE id=?",actor.sessionId(),actor.authVersion(),id);
         audit.event(actor.userId(),(String)job.get("module"),"JOB",id,"FILE_CHECK_RETRY","SUCCEEDED",request);return task(db.required("SELECT * FROM ops.job WHERE id=?",id));
     }

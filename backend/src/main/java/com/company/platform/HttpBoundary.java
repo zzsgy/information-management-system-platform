@@ -30,6 +30,7 @@ public class HttpBoundary extends OncePerRequestFilter {
         if (!request.getRequestURI().startsWith("/api/")) { chain.doFilter(request,response); return; }
         response.setHeader("Cache-Control","no-store");
         try {
+            request.setAttribute(REQUEST,requestId); response.setHeader("X-Request-Id",requestId.toString());
             if (request.getHeader("X-Request-Id")!=null) requestId=Inputs.uuid(request.getHeader("X-Request-Id"));
             request.setAttribute(REQUEST,requestId); response.setHeader("X-Request-Id",requestId.toString());
             String path=request.getRequestURI(), method=request.getMethod();
@@ -74,10 +75,11 @@ public class HttpBoundary extends OncePerRequestFilter {
                 if (write || ("1".equals(request.getHeader("X-User-Activity")) && Crypto.equal(actor.csrfToken(),request.getHeader("X-CSRF-Token")))) identity.activity(actor);
             }
             chain.doFilter(request,response);
-        } catch (ApiFault error) {
+        } catch (Exception failure) {
             Actor actor=(Actor)request.getAttribute(ACTOR);
-            try { audit.denied(actor==null?null:actor.userId(),error.code,requestId); }
-            catch (Exception ignored) { error=ApiFault.protection(); }
+            ApiFault error=ApiErrors.record(audit,actor,ApiErrors.classify(failure),requestId,ApiErrors.route(request));
+            // 文件流已经开始交付时不能向文件尾部追加 JSON 错误正文。
+            if(response.isCommitted()) { if(failure instanceof IOException io) throw io; throw new ServletException(failure); }
             response.setStatus(error.status); response.setContentType("application/json;charset=UTF-8");
             response.getWriter().write(Crypto.JSON.writeValueAsString(ApiController.envelope(error.code,error.getMessage(),null,requestId)));
         } finally {
@@ -86,7 +88,8 @@ public class HttpBoundary extends OncePerRequestFilter {
             boolean reminderPoll=request.getMethod().equals("GET")&&request.getRequestURI().equals("/api/v1/portal/todo-reminders")&&response.getStatus()==200;
             if(actor!=null&&!request.getRequestURI().equals("/api/v1/me/interactions")&&!reminderPoll){
                 String route=Objects.toString(request.getAttribute(org.springframework.web.servlet.HandlerMapping.BEST_MATCHING_PATTERN_ATTRIBUTE),"UNMAPPED");
-                audit.http(actor.userId(),request.getMethod(),response.getStatus(),route,requestId);
+                try { audit.http(actor.userId(),request.getMethod(),response.getStatus(),route,requestId); }
+                catch(Exception failure) { FailureDiagnostics.log(requestId,"HTTP_AUDIT",SystemFailure.AUDIT_WRITE_FAILED.fault(failure)); }
             }
         }
     }

@@ -26,16 +26,17 @@ public class DeliveryReceipts {
     public synchronized UUID custody(Actor actor,UUID item,UUID loan,String event,UUID request) {return write(actor,Sql.map("physicalItemId",item.toString(),"loanId",loan.toString(),"event",event,"result","CUSTODY_RECORD_INTENT"),request);}
     /** 先创建独立不可覆盖的回执，再允许领域服务开始交付。 */
     private UUID write(Actor actor,Map<String,Object> detail,UUID request) {
-        if(configured.isBlank()) throw ApiFault.protection();
+        if(configured.isBlank()) throw SystemFailure.RECEIPT_STORAGE_UNAVAILABLE.fault();
         try {
-            Path root=Path.of(configured); if(!root.isAbsolute()) throw ApiFault.protection();
-            for(Path item=root;item!=null;item=item.getParent()) if(Files.isSymbolicLink(item)) throw ApiFault.protection();
+            Path root=Path.of(configured); if(!root.isAbsolute()) throw SystemFailure.RECEIPT_STORAGE_UNAVAILABLE.fault();
+            for(Path item=root;item!=null;item=item.getParent()) if(Files.isSymbolicLink(item)) throw SystemFailure.RECEIPT_STORAGE_UNAVAILABLE.fault();
             UUID instance=(UUID)db.required("SELECT id FROM platform_meta.instance").get("id");
             if(!Files.exists(root)) { Files.createDirectory(root);PrivateFiles.restrict(root);Files.writeString(root.resolve("instance"),instance.toString(),StandardOpenOption.CREATE_NEW); }
-            if(!Files.isRegularFile(root.resolve("instance"),LinkOption.NOFOLLOW_LINKS) || !Files.readString(root.resolve("instance")).equals(instance.toString())) throw ApiFault.protection();
+            if(!Files.isRegularFile(root.resolve("instance"),LinkOption.NOFOLLOW_LINKS) || !Files.readString(root.resolve("instance")).equals(instance.toString())) throw SystemFailure.RECEIPT_STORAGE_UNAVAILABLE.fault();
             UUID receipt=UUID.randomUUID();var record=Sql.map("receiptId",receipt.toString(),"instanceId",instance.toString(),"userId",actor.userId().toString(),"sessionId",actor.sessionId().toString(),"authVersion",actor.authVersion(),"requestId",request.toString(),"at",Instant.now().toString(),"result","AUTHORIZED_FOR_DELIVERY");record.putAll(detail);byte[] data=Crypto.json(record).getBytes(java.nio.charset.StandardCharsets.UTF_8);
             try(FileChannel file=FileChannel.open(root.resolve(receipt+".json"),StandardOpenOption.CREATE_NEW,StandardOpenOption.WRITE)) { ByteBuffer bytes=ByteBuffer.wrap(data);while(bytes.hasRemaining()) file.write(bytes);file.force(true); }
             return receipt;
-        } catch(Exception e) { throw ApiFault.protection(); }
+        } catch(ApiFault fault) { throw fault; }
+        catch(Exception e) { throw SystemFailure.RECEIPT_WRITE_FAILED.fault(e); }
     }
 }

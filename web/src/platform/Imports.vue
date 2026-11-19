@@ -2,7 +2,7 @@
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
-import { api, can, COLLECTION, dateTime, mutate, profile, query } from "./api";
+import { responseError, requestFetch, api, can, COLLECTION, dateTime, mutate, profile, query } from "./api";
 import { interactionRequest } from "./interaction";
 import { uploadArchivePdf } from "./archiveFiles";
 import { companyEmailFromName } from "./companyEmail";
@@ -266,7 +266,7 @@ async function downloadTemplate(event: MouseEvent) {
       }
     }
     downloadNotice.value = "正在获取并保存模板…";
-    const response = await fetch(
+    const response = await requestFetch(
       `/api/v1/imports/templates/${type.value}?${query({ format: archiveFormat.value })}`,
       {
         credentials: "same-origin",
@@ -278,10 +278,7 @@ async function downloadTemplate(event: MouseEvent) {
         },
       },
     );
-    if (!response.ok) {
-      const result = await response.json();
-      throw new Error(result.message || "模板下载失败，请重试。");
-    }
+    if (!response.ok) throw await responseError(response, "文件下载失败");
     if (
       response.headers.get("Content-Type")?.split(";")[0] !==
       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"

@@ -38,7 +38,7 @@ public final class ImportWorkbook {
             Path temporary=Files.createTempFile("ims-employee-import-",".xlsx");
             try{Files.write(temporary,bytes);return read(temporary,"EMPLOYEE");}
             finally{Files.deleteIfExists(temporary);}
-        }catch(IOException failure){throw ApiFault.protection();}
+        }catch(IOException failure){throw SystemFailure.WORKBOOK_GENERATION_FAILED.fault(failure);}
     }
     /** 解析当前模板；编号和日期应使用文本格式以保留前导零及日历日期。 */
     public static List<Row> read(Path path,String type) {
@@ -57,7 +57,7 @@ public final class ImportWorkbook {
                 Files.deleteIfExists(temporary);
             }
         } catch (IOException failure) {
-            throw ApiFault.protection();
+            throw SystemFailure.WORKBOOK_STORAGE_FAILED.fault(failure);
         }
     }
 
@@ -153,7 +153,7 @@ public final class ImportWorkbook {
             appendRow(sheet,headerRow,displayHeaders(type,columns));
             for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
             put(zip,"xl/worksheets/sheet1.xml",sheet.append("</sheetData></worksheet>").toString());zip.finish();return bytes.toByteArray();
-        }catch(IOException failure){throw ApiFault.protection();}
+        }catch(IOException failure){throw SystemFailure.WORKBOOK_GENERATION_FAILED.fault(failure);}
     }
     /** 会议模板将可填写列设为 Excel 内置文本格式。 */
     private static final String MEETING_STYLES = """

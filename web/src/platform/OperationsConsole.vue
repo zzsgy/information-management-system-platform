@@ -16,6 +16,8 @@ interface Run {
   failedCount: number;
   totalCount: number;
   errorCode: string | null;
+  errorMessage?: string;
+  requestId?: string;
   rowVersion: number;
   sourceBackupId: string | null;
   summary?: Record<string, unknown>;
@@ -521,7 +523,7 @@ onUnmounted(() => {
             <td>{{ stateText(row.state) }}</td>
             <td>{{ dateTime(String(row.checkedAt)) }}</td>
             <td>{{ row.byteSize }}</td>
-            <td>{{ row.errorCode || "—" }}</td>
+            <td>{{ row.errorMessage || row.errorCode || "—" }}<small v-if="row.errorMessage" class="muted">{{ row.errorCode }}</small></td>
           </tr>
         </tbody>
       </table>
@@ -543,7 +545,7 @@ onUnmounted(() => {
             <td>{{ row.jobType }}</td>
             <td>{{ stateText(row.state) }}</td>
             <td>{{ row.attemptCount }}</td>
-            <td>{{ row.errorCode || "—" }}</td>
+            <td>{{ row.errorMessage || row.errorCode || "—" }}<small v-if="row.errorMessage" class="muted">{{ row.errorCode }}</small></td>
           </tr>
         </tbody>
       </table>
@@ -595,7 +597,7 @@ onUnmounted(() => {
     <h2>{{ labels[detail.kind] }} · {{ labels[detail.state] }}</h2>
     <p>任务编号：{{ detail.id }}</p>
     <p>申请依据：{{ detail.reason }}</p>
-    <p v-if="detail.errorCode" class="form-error">{{ detail.errorCode }}</p>
+    <p v-if="detail.errorCode" class="form-error">{{ detail.errorMessage || "处理未完成，请核查任务日志" }}（错误码：{{ detail.errorCode }}）<br v-if="detail.requestId" />{{ detail.requestId ? "请求编号：" + detail.requestId : "" }}</p>
     <p v-if="detail.kind === 'RESTORE_VERIFY' && detail.state === 'SUCCEEDED'">
       技术恢复核验通过，原入口未切换；请继续核对业务内容、附件对应和权限。
     </p>

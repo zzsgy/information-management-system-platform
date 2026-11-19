@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, ref } from "vue";
-import { api, can, dateTime, mutate, profile, query } from "./api";
+import { responseError, requestFetch, api, can, dateTime, mutate, profile, query } from "./api";
 import AuditStorage from "./AuditStorage.vue";
 import DateRangePreset from "./DateRangePreset.vue";
 import { recentDateRange } from "./listDates";
@@ -176,7 +176,7 @@ async function download() {
       "EXPORT_AUDIT",
       password,
     );
-    const response = await fetch(`/api/v1/admin/audit-exports/${id}/file`, {
+    const response = await requestFetch(`/api/v1/admin/audit-exports/${id}/file`, {
       credentials: "same-origin",
       cache: "no-store",
       headers: {
@@ -184,10 +184,7 @@ async function download() {
         "X-Request-Id": crypto.randomUUID(),
       },
     });
-    if (!response.ok) {
-      const result = await response.json();
-      throw new Error(result.message || "导出失败");
-    }
+    if (!response.ok) throw await responseError(response, "文件下载失败");
     const url = URL.createObjectURL(await response.blob()),
       link = document.createElement("a");
     link.href = url;

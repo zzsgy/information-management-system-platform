@@ -128,11 +128,23 @@ public class ApiController {
     /** 只信任本次过滤器确认的主体。 */
     private Actor actor(HttpServletRequest r) { Actor actor=(Actor)r.getAttribute(HttpBoundary.ACTOR); if(actor==null) throw ApiFault.session(); return actor; }
     /** 获取过滤器产生的实际请求号。 */
-    public static UUID requestId(HttpServletRequest r) { Object id=r.getAttribute(HttpBoundary.REQUEST); return id instanceof UUID uuid?uuid:UUID.randomUUID(); }
+    public static UUID requestId(HttpServletRequest r) {
+        Object id=r.getAttribute(HttpBoundary.REQUEST);
+        if(id instanceof UUID uuid) return uuid;
+        UUID generated=UUID.randomUUID();r.setAttribute(HttpBoundary.REQUEST,generated);return generated;
+    }
     /** 标准成功包装；响应时间使用 UTC ISO 时间。 */
     private Map<String,Object> ok(Object data,HttpServletRequest r) { return envelope("OK","操作成功",data,requestId(r)); }
     /** 所有接口共享 V1.1 包装，前端无需兼容旧 snake_case/code 数值协议。 */
-    public static Map<String,Object> envelope(String code,String message,Object data,UUID request) { return Sql.map("code",code,"message",message,"data",data,"requestId",request,"timestamp",Instant.now().toString()); }
+    public static Map<String,Object> envelope(String code,String message,Object data,UUID request) {
+        if(data instanceof Map<?,?> task && task.get("errorCode") instanceof String errorCode) {
+            var details=new LinkedHashMap<Object,Object>(task);
+            details.put("errorMessage",SystemFailure.taskMessage(errorCode));
+            details.put("requestId",request);
+            data=details;
+        }
+        return Sql.map("code",code,"message",message,"data",data,"requestId",request,"timestamp",Instant.now().toString());
+    }
     /** Cookie 缺省安全标志不可由客户端或普通配置降级。 */
     private String cookie(String token,int maxAge) { return ResponseCookie.from("IMS_SESSION",token).httpOnly(true).secure(true).sameSite("Strict").path("/").maxAge(maxAge).build().toString(); }
 }

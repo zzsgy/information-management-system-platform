@@ -75,7 +75,7 @@ public class ArchiveExportService implements FileDomainJobs {
     }
     /** 异步生成全部水印副本；任一来源失效则整批失败，不返回部分成功包。 */
     @Override public void process(Actor actor,UUID job,UUID request) {
-        if(!runtime.tryAcquire()) throw ApiFault.protection();UUID lease=UUID.randomUUID();List<Path> temporary=new ArrayList<>();List<String> written=new ArrayList<>();
+        if(!runtime.tryAcquire()) throw SystemFailure.READING_BUSY.fault();UUID lease=UUID.randomUUID();List<Path> temporary=new ArrayList<>();List<String> written=new ArrayList<>();
         try {
             UUID usage=tx.execute(status->{identity.lockActor(actor);gate.requireWritable("ARCHIVE","EXPORT");var task=db.required("SELECT *,lease_until<CURRENT_TIMESTAMP AS expired FROM ops.job WHERE id=? AND job_type='ARCHIVE_EXPORT' FOR UPDATE",job);if(!("PENDING".equals(task.get("state"))||("RUNNING".equals(task.get("state"))&&Boolean.TRUE.equals(task.get("expired"))))) throw ApiFault.conflict("副本任务已被领取或完成");UUID id=Inputs.uuid(task.get("business_ref"));bound(actor,id,null,false);db.update("UPDATE ops.job SET state='RUNNING',lease_owner=?,lease_until=CURRENT_TIMESTAMP+interval '90 seconds',attempt_count=attempt_count+1 WHERE id=?",lease.toString(),job);db.update("UPDATE archive.export_request SET state='RUNNING',lease_token=?,lease_until=CURRENT_TIMESTAMP+interval '90 seconds',generated_at=CURRENT_TIMESTAMP WHERE id=?",lease,id);return id;});
             try {
@@ -84,7 +84,7 @@ public class ArchiveExportService implements FileDomainJobs {
                     tx.executeWithoutResult(status->{identity.lockActor(actor);bound(actor,usage,null,false);if(db.update("UPDATE ops.job SET lease_until=CURRENT_TIMESTAMP+interval '90 seconds' WHERE id=? AND lease_owner=? AND lease_until>CURRENT_TIMESTAMP",job,lease.toString())!=1) throw ApiFault.conflict("处理租约已失效");});
                     var source=source(actor,item,(String)usageRow.get("action"));Properties plan=new Properties();plan.setProperty("name",usageRow.get("watermark_name").toString());plan.setProperty("employeeNo",usageRow.get("watermark_employee_no").toString());plan.setProperty("fileNo",item.get("file_no").toString());plan.setProperty("at",java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss xxx").format(Instant.parse(usageRow.get("generated_at").toString()).atZone(WorkCalendarService.ZONE)));plan.setProperty("usage",usage.toString());plan.setProperty("action",usageRow.get("action").toString());plan.setProperty("pages",String.join(",",UsagePages.list(item.get("pages")).stream().map(Object::toString).toList()));plan.setProperty("copies",item.get("copies").toString());
                     plan.setProperty("unwatermarked",usageRow.get("unwatermarked").toString());
-                    byte[] pdf=client.exportPdf(original(source),(String)source.get("sha256"),plan);original(source);bound(actor,usage,null,false);total+=pdf.length;if(total>MAX_BYTES) throw ApiFault.protection();Path file=Files.createTempFile(outputs.temporary(),"usage-",".pdf");temporary.add(file);Files.write(file,pdf);assets.add(Sql.map("file",file,"kind","PDF","sequence",item.get("sequence_no"),"name",item.get("file_no")+".pdf","pages",UsagePages.list(item.get("pages")).size()*((Number)item.get("copies")).intValue()));
+                    byte[] pdf=client.exportPdf(original(source),(String)source.get("sha256"),plan);original(source);bound(actor,usage,null,false);total+=pdf.length;if(total>MAX_BYTES) throw SystemFailure.EXPORT_TOO_LARGE.fault();Path file=Files.createTempFile(outputs.temporary(),"usage-",".pdf");temporary.add(file);Files.write(file,pdf);assets.add(Sql.map("file",file,"kind","PDF","sequence",item.get("sequence_no"),"name",item.get("file_no")+".pdf","pages",UsagePages.list(item.get("pages")).size()*((Number)item.get("copies")).intValue()));
                 }
                 if(plans.size()>1&&"DOWNLOAD".equals(usageRow.get("action"))) {
                     Path zip=Files.createTempFile(outputs.temporary(),"usage-",".zip");temporary.add(zip);
@@ -94,15 +94,20 @@ public class ArchiveExportService implements FileDomainJobs {
                         for(var asset:assets){stream.putNextEntry(new ZipEntry(asset.get("name").toString()));Files.copy((Path)asset.get("file"),stream);stream.closeEntry();}
                         stream.putNextEntry(new ZipEntry("manifest.json"));stream.write(Crypto.json(Sql.map("usageId",usage.toString(),"action","DOWNLOAD","generatedAt",usageRow.get("generated_at"),"watermarkTemplateVersion",Boolean.TRUE.equals(usageRow.get("unwatermarked"))?null:1,"items",manifestItems,"notice","个人授权使用副本，不代表原件签名验证通过")).getBytes(java.nio.charset.StandardCharsets.UTF_8));stream.closeEntry();
                     }
-                    if(Files.size(zip)>MAX_BYTES) throw ApiFault.protection();assets.add(Sql.map("file",zip,"kind","ZIP","sequence",0,"name","档案使用副本.zip","pages",0));
+                    if(Files.size(zip)>MAX_BYTES) throw SystemFailure.EXPORT_TOO_LARGE.fault();assets.add(Sql.map("file",zip,"kind","ZIP","sequence",0,"name","档案使用副本.zip","pages",0));
                 }
                 tx.executeWithoutResult(status->{identity.lockActor(actor);bound(actor,usage,null,false);gate.requireWritable("ARCHIVE","EXPORT");db.rows("SELECT pg_advisory_xact_lock(61427006)");
                     long extra=assets.stream().mapToLong(asset->size((Path)asset.get("file"))).sum();if(db.count("SELECT COALESCE(sum(byte_size),0) FROM archive.export_asset WHERE storage_state='LIVE'")+extra>CACHE_BYTES) throw new ApiFault(503,"EXPORT_CACHE_FULL","使用副本缓存已满，等待过期清理后重试");
                     if(db.count("SELECT count(*) FROM ops.job WHERE id=? AND lease_owner=? AND state='RUNNING' AND lease_until>CURRENT_TIMESTAMP",job,lease.toString())!=1) throw ApiFault.conflict("处理租约已失效");
-                    for(var asset:assets) {Path file=(Path)asset.get("file");String sha=hash(file);long bytes=size(file);try(InputStream input=Files.newInputStream(file)){String key=outputs.get().receive(input,bytes,sha);written.add(key);db.update("INSERT INTO archive.export_asset(id,usage_id,lease_token,kind,sequence_no,storage_key,sha256,byte_size,media_type,purge_after) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP+interval '24 hours')",UUID.randomUUID(),usage,lease,asset.get("kind"),asset.get("sequence"),key,sha,bytes,"ZIP".equals(asset.get("kind"))?"application/zip":"application/pdf");}catch(IOException failure){throw ApiFault.protection();}}
+                    for(var asset:assets) {Path file=(Path)asset.get("file");String sha=hash(file);long bytes=size(file);try(InputStream input=Files.newInputStream(file)){String key=outputs.get().receive(input,bytes,sha);written.add(key);db.update("INSERT INTO archive.export_asset(id,usage_id,lease_token,kind,sequence_no,storage_key,sha256,byte_size,media_type,purge_after) VALUES(?,?,?,?,?,?,?,?,?,CURRENT_TIMESTAMP+interval '24 hours')",UUID.randomUUID(),usage,lease,asset.get("kind"),asset.get("sequence"),key,sha,bytes,"ZIP".equals(asset.get("kind"))?"application/zip":"application/pdf");}catch(IOException failure){throw SystemFailure.EXPORT_FAILED.fault(failure);}}
                     bound(actor,usage,null,false);gate.requireWritable("ARCHIVE","EXPORT");db.update("UPDATE archive.export_request SET state='READY',lease_until=NULL WHERE id=? AND lease_token=?",usage,lease);db.update("UPDATE ops.job SET state='SUCCEEDED',lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=?",job,lease.toString());
                 });written.clear();
-            } catch(Exception failure) {tx.executeWithoutResult(status->{if(db.update("UPDATE ops.job SET state='FAILED',error_code='ARCHIVE_EXPORT_FAILED',lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=?",job,lease.toString())==1) db.update("UPDATE archive.export_request SET state='FAILED',error_code='ARCHIVE_EXPORT_FAILED',lease_until=NULL WHERE id=? AND lease_token=?",usage,lease);});throw failure instanceof RuntimeException runtimeFailure?runtimeFailure:ApiFault.protection();}
+            } catch(Exception failure) {
+                ApiFault fault=failure instanceof ApiFault known?known:SystemFailure.EXPORT_FAILED.fault(failure);
+                FailureDiagnostics.log(request,"ARCHIVE_EXPORT task="+job,fault);
+                tx.executeWithoutResult(status->{if(db.update("UPDATE ops.job SET state='FAILED',error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=?",fault.code,job,lease.toString())==1) db.update("UPDATE archive.export_request SET state='FAILED',error_code=?,lease_until=NULL WHERE id=? AND lease_token=?",fault.code,usage,lease);});
+                throw fault;
+            }
         } finally {
             // 提交结果未知时不能删除可能已被数据库引用的成品；数据库不可达则保留私有孤儿供核对。
             for(String key:written)try{if(db.count("SELECT count(*) FROM archive.export_asset WHERE storage_key=?",key)==0)outputs.get().rollbackNew(key);}catch(RuntimeException uncertain){/* 不用清理动作扩大未知提交造成的损失。 */}
@@ -127,7 +132,7 @@ public class ArchiveExportService implements FileDomainJobs {
     /** HTTP开始前核验内容资格；流式回调仍会重新检查，地址不构成永久取件凭证。 */
     public Delivery prepare(Actor actor,UUID usage,String action,UUID operation,UUID request) {
         if(action.equals("DOWNLOAD"))security.requireAvailable(actor.userId(),"BULK_DOWNLOAD");
-        var row=bound(actor,usage,action,true);for(var item:items(usage))original(source(actor,item,action));var asset=contentAsset(usage,action);derived(asset);if(((Number)asset.get("byte_size")).longValue()>MAX_BYTES)throw ApiFault.protection();
+        var row=bound(actor,usage,action,true);for(var item:items(usage))original(source(actor,item,action));var asset=contentAsset(usage,action);derived(asset);if(((Number)asset.get("byte_size")).longValue()>MAX_BYTES)throw SystemFailure.EXPORT_FAILED.fault();
         // 库外回执不可用必须在HTTP成功头之前返回错误，不能以200空文件掩盖交付失败。
         authorizeDelivery(actor,row,asset,operation,request,0);return new Delivery(actor,usage,(UUID)asset.get("id"),action,asset.get("sha256").toString(),((Number)asset.get("byte_size")).longValue(),request);
     }
@@ -135,10 +140,10 @@ public class ArchiveExportService implements FileDomainJobs {
     public void stream(Delivery ticket,OutputStream output) {
         if(!deliveries.tryAcquire()) throw new ApiFault(429,"DELIVERY_BUSY","交付通道繁忙，请重试原任务");
         try {
-            Actor actor=ticket.actor;UUID usage=ticket.usage;String action=ticket.action;bound(actor,usage,action,true);for(var item:items(usage)) original(source(actor,item,action));var asset=contentAsset(usage,action);if(!ticket.asset.equals(asset.get("id"))||!ticket.sha.equals(asset.get("sha256")))throw ApiFault.protection();Path path=derived(asset);
+            Actor actor=ticket.actor;UUID usage=ticket.usage;String action=ticket.action;bound(actor,usage,action,true);for(var item:items(usage)) original(source(actor,item,action));var asset=contentAsset(usage,action);if(!ticket.asset.equals(asset.get("id"))||!ticket.sha.equals(asset.get("sha256")))throw SystemFailure.EXPORT_RESULT_INVALID.fault();Path path=derived(asset);
             try(InputStream input=Files.newInputStream(path)) {byte[] block=new byte[65536];int count;long sinceCheck=0;Instant checked=Instant.now();while((count=input.read(block))!=-1){if(sinceCheck>=1048576||checked.plusSeconds(1).isBefore(Instant.now())){bound(actor,usage,action,true);sinceCheck=0;checked=Instant.now();}output.write(block,0,count);sinceCheck+=count;}}
             audit.event(actor.userId(),"ARCHIVE","USAGE",usage,"EXPORT_DELIVERED","SUCCEEDED",ticket.request);
-        }catch(IOException failure){throw ApiFault.protection();}finally{deliveries.release();}
+        }catch(IOException failure){throw SystemFailure.EXPORT_FAILED.fault(failure);}finally{deliveries.release();}
     }
     /** 批量打印走逐页接口，批量下载只能交付完整ZIP。 */
     private Map<String,Object> contentAsset(UUID usage,String action) {var plans=items(usage);if(action.equals("PRINT")&&plans.size()>1)throw ApiFault.invalid("批量打印请使用受控打印页面");String kind=plans.size()>1?"ZIP":"PDF";return asset(usage,kind,kind.equals("ZIP")?0:1);}
@@ -187,9 +192,9 @@ public class ArchiveExportService implements FileDomainJobs {
     /** 派生副本也需要双侧验证，不能仅检查原件就交付损坏成品。 */
     private Path derived(Map<String,Object> asset) {return outputs.get().verifiedPrimary(asset.get("storage_key").toString(),((Number)asset.get("byte_size")).longValue(),asset.get("sha256").toString());}
     /** 返回字节单位的实存大小；文件消失不作为零长度成功。 */
-    private long size(Path path) {try{return Files.size(path);}catch(IOException failure){throw ApiFault.protection();}}
+    private long size(Path path) {try{return Files.size(path);}catch(IOException failure){throw SystemFailure.EXPORT_FAILED.fault(failure);}}
     /** 固定64KiB缓冲计算成品摘要，不把完整副本装入内存。 */
-    private String hash(Path path) {try(InputStream input=Files.newInputStream(path)){MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] block=new byte[65536];int count;while((count=input.read(block))!=-1)digest.update(block,0,count);return HexFormat.of().formatHex(digest.digest());}catch(Exception failure){throw ApiFault.protection();}}
+    private String hash(Path path) {try(InputStream input=Files.newInputStream(path)){MessageDigest digest=MessageDigest.getInstance("SHA-256");byte[] block=new byte[65536];int count;while((count=input.read(block))!=-1)digest.update(block,0,count);return HexFormat.of().formatHex(digest.digest());}catch(Exception failure){throw SystemFailure.EXPORT_FAILED.fault(failure);}}
     /** 客户端声明字段有明确长度上限，并保持空值语义。 */
     private String optional(Map<String,Object> body,String key,int limit) {return body.get(key)==null?null:Inputs.text(body,key,limit);}
     /** 内部计划由本服务构造，禁止将任意JSON直接当作源文件元数据。 */

@@ -21,6 +21,6 @@ public class ExportFiles {
     }
     /** 私有工作目录只容纳有界的本次输出；清理只处理本次显式创建的文件。 */
     public Path temporary() {get();return PrivateFiles.directory(temporary);}
-    private Path path(String value) {if(value.isBlank()||!Path.of(value).isAbsolute()) throw ApiFault.protection();return Path.of(value).normalize();}
-    private void separate(Path a,Path b) {if(a.startsWith(b)||b.startsWith(a)) throw ApiFault.protection();}
+    private Path path(String value) {if(value.isBlank()||!Path.of(value).isAbsolute()) throw SystemFailure.EXPORT_STORAGE_INVALID.fault();return Path.of(value).normalize();}
+    private void separate(Path a,Path b) {if(a.startsWith(b)||b.startsWith(a)) throw SystemFailure.EXPORT_STORAGE_INVALID.fault();}
 }

@@ -18,13 +18,15 @@ public class Audit {
     /** 不保存请求正文或凭据，只记录对象、动作、实际结果和追踪号。 */
     public void event(UUID actor, String module, String type, UUID target, String action, String result, UUID request) {
         // 入库时点使用真实时钟；事务开始时间会让本次查询结束后追加的审计混入旧票据。
-        db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,actor_id,module,resource_type,resource_id,action,result,request_id,record_kind,severity,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,?,?,?,?,?,?,'BUSINESS_EVENT',?,clock_timestamp())",
+        try { db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,actor_id,module,resource_type,resource_id,action,result,request_id,record_kind,severity,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,?,?,?,?,?,?,'BUSINESS_EVENT',?,clock_timestamp())",
             UUID.randomUUID(),UUID.randomUUID(),actor,module,type,target,action,result,request,"DENIED".equals(result)?"WARN":Set.of("FAILED","MANUAL").contains(result)?"ERROR":"INFO");
+        } catch(org.springframework.dao.DataAccessException failure) { throw SystemFailure.AUDIT_WRITE_FAILED.fault(failure); }
     }
     /** 拒绝事件使用独立事务，避免业务回滚抹掉越权与失败证据。 */
     @Transactional(propagation=Propagation.REQUIRES_NEW)
     public void denied(UUID actor, String action, UUID request) {
-        db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,actor_id,module,resource_type,action,result,request_id,record_kind,severity,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,'PLATFORM','REQUEST',?,'DENIED',?,'SECURITY_EVENT',?,clock_timestamp())",UUID.randomUUID(),UUID.randomUUID(),actor,action,request,action.equals("PROTECTION_NOT_READY")?"CRITICAL":"WARN");
+        boolean critical=action.equals("PROTECTION_NOT_READY") || Arrays.stream(SystemFailure.values()).anyMatch(failure->failure.name().equals(action) && failure.status>=500);
+        db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,actor_id,module,resource_type,action,result,request_id,record_kind,severity,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,'PLATFORM','REQUEST',?,'DENIED',?,'SECURITY_EVENT',?,clock_timestamp())",UUID.randomUUID(),UUID.randomUUID(),actor,action,request,critical?"CRITICAL":"WARN");
     }
     /** HTTP结果与业务成功分开：200只表示响应完成，异步任务仍以各领域实际事件为准。 */
     @Transactional(propagation=Propagation.REQUIRES_NEW)

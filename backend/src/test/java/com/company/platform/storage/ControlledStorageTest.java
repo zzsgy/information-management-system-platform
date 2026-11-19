@@ -11,6 +11,15 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** 独立文件目录和内存权限替身；不访问业务数据库，也不接触旧附件。 */
 class ControlledStorageTest {
+    /** 缺失源文件与缺失解析程序应给出不同故障原因，不启动任何子进程。 */
+    @Test void missingSourceAndReadingProgramHaveDifferentCodes() throws Exception {
+        var renderer=new PdfRenderClient(root.resolve("missing-java"),root.resolve("missing-worker"),root,
+                java.time.Duration.ofSeconds(1));
+        Path source=root.resolve("source.pdf");
+        assertEquals("STORAGE_UNAVAILABLE",assertThrows(ApiFault.class,()->renderer.pageCount(source,"0".repeat(64))).code);
+        Files.writeString(source,"fixture");
+        assertEquals("READING_RUNTIME_UNAVAILABLE",assertThrows(ApiFault.class,()->renderer.pageCount(source,Crypto.hash("fixture"))).code);
+    }
     /** JUnit 为每个测试创建独立临时目录。 */
     @TempDir Path root;
     /** 全局唯一实例用于绑定两个副本。 */
@@ -78,9 +87,9 @@ class ControlledStorageTest {
         Path a=root.resolve("a"),b=root.resolve("b"); Files.createDirectory(a); Files.writeString(a.resolve("old"),"保留");
         assertThrows(ApiFault.class,()->new QuarantineFiles(a,b,instance).bind());
         assertEquals("保留",Files.readString(a.resolve("old")));
-        assertThrows(IllegalStateException.class,()->new QuarantineFiles(a,a.resolve("nested"),instance));
+        assertEquals("STORAGE_PATH_INVALID",assertThrows(ApiFault.class,()->new QuarantineFiles(a,a.resolve("nested"),instance)).code);
         QuarantineFiles good=new QuarantineFiles(root.resolve("c"),root.resolve("d"),instance); good.bind();
-        assertThrows(ApiFault.class,()->new QuarantineFiles(root.resolve("c"),root.resolve("d"),UUID.randomUUID()).bind());
+        assertEquals("STORAGE_INSTANCE_MISMATCH",assertThrows(ApiFault.class,()->new QuarantineFiles(root.resolve("c"),root.resolve("d"),UUID.randomUUID()).bind()).code);
     }
     /** 缺少领域策略或保护状态时拒绝；一个模块的能力不能转作另一模块权限。 */
     @Test void boundariesAreClosedWhenDomainOrProtectionMissing() {

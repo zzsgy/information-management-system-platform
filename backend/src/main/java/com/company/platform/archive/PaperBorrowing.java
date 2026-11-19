@@ -157,7 +157,7 @@ public class PaperBorrowing {
     }
     /** 比较只包含授权关键字段，显示题名和续借说明不参与版本匹配。 */
     private List<Map<String,Object>> compact(List<Map<String,Object>> values){return values.stream().map(v->Sql.map("recordId",v.get("recordId"),"recordRevisionId",v.get("recordRevisionId"),"pdfVersionId",v.get("pdfVersionId"),"classification",v.get("classification"))).toList();}
-    private int rank(Object value){return switch(Objects.toString(value)){case "GENERAL"->0;case "IMPORTANT"->1;case "CORE"->2;default->throw ApiFault.protection();};}
+    private int rank(Object value){return switch(Objects.toString(value)){case "GENERAL"->0;case "IMPORTANT"->1;case "CORE"->2;default->throw SystemFailure.CLASSIFICATION_INVALID.fault();};}
     /** 交付和扩期使用统一的实时权限判断，识别有效 IT 任职和普通档案授权。 */
     private void requireApplicant(UUID person){
         long allowed=db.count("SELECT CASE WHEN iam.archive_access_enabled(?) AND iam.action_enabled(?,'ARCHIVE.PHYSICAL_BORROW') THEN 1 ELSE 0 END",person,person);

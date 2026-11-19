@@ -18,7 +18,7 @@ public class ScanIdentity {
     /** 为 IT 新建设备生成专用身份，秘密仅存私有文件，部署人员通过受控渠道配置代理。 */
     public UUID provision(UUID department,String name){
         UUID id=UUID.randomUUID();Path key=root().resolve(id+".key");
-        try{Files.writeString(key,Crypto.token(),StandardOpenOption.CREATE_NEW);PrivateFiles.restrict(key);}catch(Exception failure){throw ApiFault.protection();}
+        try{Files.writeString(key,Crypto.token(),StandardOpenOption.CREATE_NEW);PrivateFiles.restrict(key);}catch(Exception failure){throw SystemFailure.SCAN_KEY_UNAVAILABLE.fault(failure);}
         TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){@Override public void afterCompletion(int state){if(state==STATUS_ROLLED_BACK)try{Files.deleteIfExists(key);}catch(Exception ignored){/* 无数据库身份的孤立高熵密钥不能用于接入。 */}}});
         db.update("INSERT INTO iam.service_identity(id,service_type,name,allowed_module,department_scope,allowed_actions,credential_ref,valid_until) VALUES(?,'SCAN_INTAKE',?,'ARCHIVE',ARRAY[?::uuid],ARRAY['SCAN_UPLOAD','SCAN_RECEIPT'],?,CURRENT_TIMESTAMP+interval '1 year')",id,name,department,id+".key");return id;
     }
@@ -38,7 +38,7 @@ public class ScanIdentity {
     /** 固定目录与简单随机文件名避免 credential_ref 形成路径穿越。 */
     private String key(Map<String,Object> identity){try{String ref=(String)identity.get("credential_ref");if(!ref.matches("[a-f0-9-]{36}\\.key"))throw invalid();Path key=root().resolve(ref);if(Files.isSymbolicLink(key)||Files.size(key)>128)throw invalid();String secret=Files.readString(key).trim();if(secret.length()<43)throw invalid();return secret;}catch(Exception failure){throw invalid();}}
     /** 配置缺失时默认拒绝设备接收，普通员工功能仍可运行。 */
-    private Path root(){if(directory.isBlank())throw ApiFault.protection();try{return PrivateFiles.directory(directory);}catch(Exception failure){throw ApiFault.protection();}}
+    private Path root(){if(directory.isBlank())throw SystemFailure.SCAN_KEY_UNAVAILABLE.fault();try{return PrivateFiles.directory(directory);}catch(Exception failure){throw SystemFailure.SCAN_KEY_UNAVAILABLE.fault(failure);}}
     /** 设备错误不区分是否存在某个服务标识。 */
     private ApiFault invalid(){return new ApiFault(401,"SERVICE_IDENTITY_INVALID","扫描服务身份或签名无效");}
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import EmptyState from "./EmptyState.vue";
 import { computed, onMounted, onUnmounted, ref } from "vue";
-import { api, query, profile, dateTime, type Department, type Page } from "./api";
+import { ApiError, api, query, profile, dateTime, type Department, type Page } from "./api";
 import Icon from "../preview/PlatformIcon.vue";
 import DriveFilePanel from "./DriveFilePanel.vue";
 import DriveRecycle from "./DriveRecycle.vue";
@@ -287,20 +287,16 @@ async function waitJob(id: string, current: number) {
     const task = await api<{
       state: string;
       errorCode: string;
+      errorMessage?: string;
+      requestId?: string;
       result: { previewId: string } | null;
     }>(`/jobs/${id}`, {}, false);
     if (task.state === "SUCCEEDED") return task.result;
     if (["FAILED", "CANCELLED", "UNKNOWN"].includes(task.state))
-      throw new Error(
-        task.errorCode === "SERVICE_IDENTITY_EXPIRED"
-          ? "预览服务授权已到期，请联系管理员续期。文件已发布，无需重新上传。"
-          : task.errorCode?.startsWith("SERVICE_IDENTITY_")
-            ? "预览服务授权配置未就绪，请联系管理员。文件已发布，无需重新上传。"
-            : task.errorCode?.startsWith("OFFICE_") ||
-                task.errorCode === "SCANNER_UNAVAILABLE"
-              ? "Office预览处理服务暂不可用，请稍后重试或联系管理员。文件已发布，无需重新上传。"
-              : "阅读预览生成失败，请重试或联系管理员。文件已发布，无需重新上传。",
-      );
+      throw new ApiError(task.errorCode || "PREVIEW_FAILED",
+        `${task.errorMessage || "文档预览生成失败，请联系 IT 管理员"}。文件已发布，无需重新上传。\n任务编号：${id}`,
+        task.requestId);
+
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
   if (!alive || current !== readerGeneration) return null;

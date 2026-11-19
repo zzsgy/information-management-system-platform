@@ -26,15 +26,24 @@ class SignedProtectionGateTest {
     /** 正常签名可用，但篡改任一字段及未获准模块立即拒绝。 */
     @Test void signedCurrentEvidenceCannotBeTamperedOrUsedForAnotherModule() throws Exception {
         var current=state(1);write(current);var gate=gate();gate.requireWritable("DRIVE","UPLOAD");gate.requireReadable("DRIVE");
-        assertEquals(503,assertThrows(ApiFault.class,()->gate.requireWritable("ARCHIVE","UPLOAD")).status);
-        current.put("oldPrimaryFenced",false);Files.writeString(evidence,Crypto.json(current));assertEquals(503,assertThrows(ApiFault.class,()->gate.requireReadable("DRIVE")).status);
+        assertEquals("PROTECTION_MODULE_BLOCKED",assertThrows(ApiFault.class,()->gate.requireWritable("ARCHIVE","UPLOAD")).code);
+        current.put("oldPrimaryFenced",false);Files.writeString(evidence,Crypto.json(current));assertEquals("PROTECTION_EVIDENCE_INVALID",assertThrows(ApiFault.class,()->gate.requireReadable("DRIVE")).code);
     }
     /** 主备和恢复点新鲜度分别核验，只读状态不等于写保护已恢复。 */
     @Test void staleReplicaBackupAndUnfencedPrimaryBlockWrites() throws Exception {
-        var current=state(1);current.put("replicaVerifiedAt",Instant.now().minusSeconds(31).toString());write(current);assertThrows(ApiFault.class,()->gate().requireWritable("DRIVE","UPLOAD"));
-        current=state(1);current.put("backupProtectedAt",Instant.now().minusSeconds(1801).toString());write(current);assertThrows(ApiFault.class,()->gate().requireWritable("DRIVE","UPLOAD"));
+        var current=state(1);current.put("replicaVerifiedAt",Instant.now().minusSeconds(31).toString());write(current);assertEquals("REPLICA_VERIFICATION_EXPIRED",assertThrows(ApiFault.class,()->gate().requireWritable("DRIVE","UPLOAD")).code);
+        current=state(1);current.put("backupProtectedAt",Instant.now().minusSeconds(1801).toString());write(current);assertEquals("BACKUP_PROTECTION_EXPIRED",assertThrows(ApiFault.class,()->gate().requireWritable("DRIVE","UPLOAD")).code);
         current=state(1);current.put("oldPrimaryFenced",false);write(current);assertThrows(ApiFault.class,()->gate().requireReadable("DRIVE"));
         current=state(1);current.put("mode","ALL_READ_ONLY");write(current);gate().requireReadable("DRIVE");assertThrows(ApiFault.class,()->gate().requireWritable("DRIVE","UPLOAD"));
+    }
+    /** 同一页面原先的通用报错现在能区分缺文件、过期与迁移实例不匹配。 */
+    @Test void unavailableExpiredAndMismatchedEvidenceHaveDistinctCodes() throws Exception {
+        assertEquals("PROTECTION_EVIDENCE_UNAVAILABLE",assertThrows(ApiFault.class,()->gate().requireReadable("DRIVE")).code);
+        var current=state(1);current.put("issuedAt",Instant.now().minusSeconds(70).toString());
+        current.put("expiresAt",Instant.now().minusSeconds(10).toString());write(current);
+        assertEquals("PROTECTION_EVIDENCE_EXPIRED",assertThrows(ApiFault.class,()->gate().requireReadable("DRIVE")).code);
+        current=state(1);current.put("instanceId",UUID.randomUUID().toString());write(current);
+        assertEquals("PROTECTION_INSTANCE_MISMATCH",assertThrows(ApiFault.class,()->gate().requireReadable("DRIVE")).code);
     }
     /** 服务重启后仍读取库外最高接管代次，旧主证据和高水位篡改均拒绝。 */
     @Test void durableEpochRejectsRollbackAcrossProcessRestart() throws Exception {

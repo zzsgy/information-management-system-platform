@@ -16,9 +16,9 @@ public final class UsagePages {
         if(pages.isEmpty()||!new HashSet<>(allowed).containsAll(pages)) throw ApiFault.invalid("页码超出批准范围或PDF实际页数");return List.copyOf(pages);
     }
     /** 数据库整数数组已由Sql转换为列表，此处拒绝未知来源。 */
-    public static List<Integer> list(Object value) {if(!(value instanceof List<?> values)) throw ApiFault.protection();return values.stream().map(v->((Number)v).intValue()).toList();}
+    public static List<Integer> list(Object value) {if(!(value instanceof List<?> values)) throw SystemFailure.ARCHIVE_PAGE_DATA_INVALID.fault();return values.stream().map(v->((Number)v).intValue()).toList();}
     /** PDF页数已在绑定阶段经隔离工作器核验。 */
-    public static List<Integer> all(int count) {if(count<1||count>10000) throw ApiFault.protection();return java.util.stream.IntStream.rangeClosed(1,count).boxed().toList();}
+    public static List<Integer> all(int count) {if(count<1||count>10000) throw SystemFailure.ARCHIVE_PAGE_DATA_INVALID.fault();return java.util.stream.IntStream.rangeClosed(1,count).boxed().toList();}
     /** 父子动作集合均规范为固定次序；重复和未知动作直接拒绝。 */
     public static List<String> actions(Object input) {if(!(input instanceof List<?> values)||values.isEmpty()||values.size()>3||new HashSet<>(values).size()!=values.size()||!List.of("VIEW","DOWNLOAD","PRINT").containsAll(values)) throw ApiFault.invalid("请选择独立的查看、下载或打印动作");return List.of("VIEW","DOWNLOAD","PRINT").stream().filter(values::contains).toList();}
 }

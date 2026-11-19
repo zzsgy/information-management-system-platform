@@ -22,7 +22,7 @@ public class DriveFilePolicy implements StorageDomainPolicy {
         var rows=db.rows("WITH RECURSIVE path AS (SELECT *,0 AS depth FROM drive.folder WHERE id=? UNION ALL SELECT f.*,p.depth+1 FROM drive.folder f JOIN path p ON p.parent_id=f.id WHERE p.depth<128) SELECT * FROM path ORDER BY depth",id);
         if(rows.isEmpty()) throw ApiFault.hidden();
         if(rows.size()>128 || rows.stream().anyMatch(r->!r.get("state").equals("ACTIVE"))) throw ApiFault.hidden();
-        if(rows.stream().map(r->r.get("id")).distinct().count()!=rows.size()) throw ApiFault.protection();
+        if(rows.stream().map(r->r.get("id")).distinct().count()!=rows.size()) throw SystemFailure.DRIVE_POLICY_INVALID.fault();
         if(TransactionSynchronizationManager.isActualTransactionActive()) {
             for(var row:rows) db.rows("SELECT id FROM drive.folder WHERE id=? FOR SHARE",row.get("id"));
         }

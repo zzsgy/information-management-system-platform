@@ -71,8 +71,8 @@ public class AccountMessages {
     public int tick(){int count=0;while(count<20){var row=claim();if(row==null)break;deliver(row);count++;}return count;}
     @Scheduled(fixedDelayString="${platform.messaging.delay-ms:10000}") public void scheduled(){if(enabled)tick();}
     /** AES-GCM绑定消息标识；换行、重放到另一消息或密文篡改均无法解密。 */
-    private String encrypt(UUID id,String secret){try{byte[] iv=new byte[12];new SecureRandom().nextBytes(iv);Cipher c=cipher(Cipher.ENCRYPT_MODE,id,iv);return Base64.getEncoder().encodeToString(iv)+":"+Base64.getEncoder().encodeToString(c.doFinal(secret.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw ApiFault.protection();}}
-    private String decrypt(UUID id,String payload){try{String[] parts=payload.split(":");return new String(cipher(Cipher.DECRYPT_MODE,id,Base64.getDecoder().decode(parts[0])).doFinal(Base64.getDecoder().decode(parts[1])),StandardCharsets.UTF_8);}catch(Exception e){throw ApiFault.protection();}}
+    private String encrypt(UUID id,String secret){try{byte[] iv=new byte[12];new SecureRandom().nextBytes(iv);Cipher c=cipher(Cipher.ENCRYPT_MODE,id,iv);return Base64.getEncoder().encodeToString(iv)+":"+Base64.getEncoder().encodeToString(c.doFinal(secret.getBytes(StandardCharsets.UTF_8)));}catch(Exception e){throw SystemFailure.ACCOUNT_MESSAGE_ENCRYPTION_FAILED.fault(e);}}
+    private String decrypt(UUID id,String payload){try{String[] parts=payload.split(":");return new String(cipher(Cipher.DECRYPT_MODE,id,Base64.getDecoder().decode(parts[0])).doFinal(Base64.getDecoder().decode(parts[1])),StandardCharsets.UTF_8);}catch(Exception e){throw SystemFailure.ACCOUNT_MESSAGE_ENCRYPTION_FAILED.fault(e);}}
     private Cipher cipher(int mode,UUID id,byte[] iv)throws Exception{Cipher c=Cipher.getInstance("AES/GCM/NoPadding");c.init(mode,new SecretKeySpec(HexFormat.of().parseHex(ledger.bucket("account-message-encryption-v1")),"AES"),new GCMParameterSpec(128,iv));c.updateAAD(id.toString().getBytes(StandardCharsets.UTF_8));return c;}
     /** 仅IT查询技术状态，不返回邮箱、验证码、密文或机器人配置。 */
     public Map<String,Object> queue(Actor actor,Map<String,String> query){

@@ -87,8 +87,37 @@ export class ApiError extends Error {
     public code: string,
     message: string,
     public requestId = "",
+    public status = 0,
   ) {
-    super(message);
+    super(`${message}${code ? `（错误码：${code}）` : ""}${requestId ? `\n请求编号：${requestId}` : ""}`);
+  }
+}
+/** JSON 与文件接口共用错误解析，代理 HTML 错误也保留响应头中的请求编号。 */
+export async function responseError(response: Response, fallback = "操作未完成"): Promise<ApiError> {
+  let result: Partial<Envelope<never>> = {};
+  try {
+    const body = await response.json();
+    if (body && typeof body === "object") result = body;
+  } catch { /* 网关故障可能返回 HTML 或空正文。 */ }
+  if (result.code === "SESSION_INVALID" || result.code === "SECURITY_VERSION_REVOKED") {
+    const previouslySignedIn = profile.value !== null;
+    setProfile(null);
+    if (previouslySignedIn) window.dispatchEvent(new Event("ims-session-expired"));
+  }
+  const message = (typeof result.message === "string" && result.message) || (response.status === 502 || response.status === 503
+    ? "服务暂不可用，请联系 IT 管理员检查应用及代理服务"
+    : response.status === 504 ? "服务响应超时，请先查询操作结果，避免重复提交"
+    : `${fallback}：服务器未返回有效的错误说明（HTTP ${response.status}）`);
+  return new ApiError(typeof result.code === "string" ? result.code : `HTTP_${response.status}`, message,
+    typeof result.requestId === "string" ? result.requestId : response.headers.get("X-Request-Id") || "", response.status);
+}
+/** 网络失败保留客户端已发送的请求编号；主动取消仍交给页面按原流程处理。 */
+export async function requestFetch(input: RequestInfo | URL, options: RequestInit): Promise<Response> {
+  try { return await fetch(input, options); }
+  catch (failure) {
+    if ((failure as Error).name === "AbortError") throw failure;
+    throw new ApiError("NETWORK_UNAVAILABLE", "无法连接服务器，请检查网络；若刚刚提交过，请先查询结果再重试",
+      new Headers(options.headers).get("X-Request-Id") || "");
   }
 }
 /** 统一同源 JSON 请求；登录 Cookie 由浏览器管理，未知接口不得当成功。 */
@@ -105,27 +134,22 @@ export async function api<T>(
     headers.set("X-CSRF-Token", csrf);
     if (activity) headers.set("X-User-Activity", "1");
   }
-  const response = await fetch(`/api/v1${path}`, {
+  const response = await requestFetch(`/api/v1${path}`, {
     ...options,
     headers,
     credentials: "same-origin",
     cache: "no-store",
   });
-  const result = (await response.json()) as Envelope<T>;
-  if (!response.ok || result.code !== "OK") {
-    if (result.code === "SESSION_INVALID") {
-      // 首次匿名打开页面是正常登录入口；只有已有身份失效才提示用户。
-      const previouslySignedIn = profile.value !== null;
-      setProfile(null);
-      if (previouslySignedIn)
-        window.dispatchEvent(new Event("ims-session-expired"));
-    }
-    throw new ApiError(
-      result.code,
-      result.message || "操作未完成，请稍后重试",
-      result.requestId,
-    );
-  }
+  if (!response.ok) throw await responseError(response);
+  let result: Envelope<T>;
+  try { result = await response.json(); }
+  catch { throw new ApiError("RESPONSE_FORMAT_INVALID", "服务器响应格式异常，请联系 IT 管理员",
+    response.headers.get("X-Request-Id") || headers.get("X-Request-Id") || "", response.status); }
+  if (!result || typeof result.code !== "string" || typeof result.message !== "string")
+    throw new ApiError("RESPONSE_FORMAT_INVALID", "服务器响应缺少有效的结果码或说明，请联系 IT 管理员",
+      response.headers.get("X-Request-Id") || headers.get("X-Request-Id") || "", response.status);
+  if (result.code !== "OK") throw new ApiError(result.code, result.message || "服务器未能完成本次操作",
+    result.requestId, response.status);
   return result.data;
 }
 /** 仅从受控逐页API取得PNG，失败清除会话；不保存响应正文到持久缓存。 */
@@ -133,7 +157,7 @@ export async function pageImage(
   path: string,
   signal?: AbortSignal,
 ): Promise<Blob> {
-  const response = await fetch(`/api/v1${path}`, {
+  const response = await requestFetch(`/api/v1${path}`, {
     credentials: "same-origin",
     cache: "no-store",
     signal,
@@ -144,19 +168,11 @@ export async function pageImage(
     },
   });
   if (!response.ok) {
-    const result = (await response.json()) as Envelope<never>;
-    if (result.code === "SESSION_INVALID") {
-      setProfile(null);
-      window.dispatchEvent(new Event("ims-session-expired"));
-    }
-    throw new ApiError(
-      result.code,
-      result.message || "页面读取失败",
-      result.requestId,
-    );
+    throw await responseError(response, "页面读取失败");
   }
   if (!response.headers.get("Content-Type")?.startsWith("image/png"))
-    throw new Error("页面格式异常，请稍后重试");
+    throw new ApiError("PAGE_FORMAT_INVALID", "服务器返回的页面不是 PNG 图像，请联系 IT 管理员",
+      response.headers.get("X-Request-Id") || "");
   return response.blob();
 }
 /** 原子更新登录资料和 CSRF，避免退出后复用旧会话的前端状态。 */
@@ -230,7 +246,7 @@ export async function mutate<T>(
     // 确定性拒绝允许重新读取版本后重试；网络或保护失败保留同一操作号核查原请求。
     if (
       error instanceof ApiError &&
-      !["PROTECTION_NOT_READY"].includes(error.code)
+      error.status >= 400 && error.status < 500
     )
       operations.delete(key);
     throw error;

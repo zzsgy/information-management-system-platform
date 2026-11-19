@@ -29,7 +29,7 @@ class UploadPostgresIntegrationTest {
             public boolean supports(String module,String purpose) { return module.equals("PLATFORM") && purpose.equals("EVIDENCE"); }
             public void require(Actor actor,String module,String purpose,UUID context,String action) { if(!ALLOWED.get()) throw ApiFault.denied(); }
         }; }
-        @Bean StorageProtectionPolicy testProtection() { return (module,action)-> { if(!PROTECTED.get()) throw ApiFault.protection(); }; }
+        @Bean StorageProtectionPolicy testProtection() { return (module,action)-> { if(!PROTECTED.get()) throw SystemFailure.PROTECTION_WRITE_BLOCKED.fault(); }; }
     }
     @Autowired UploadService uploads;
     @Autowired UploadAssembly assembly;

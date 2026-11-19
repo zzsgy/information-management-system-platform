@@ -55,7 +55,7 @@ public class ControlledReadService {
             // Office转换包含远程处理和真实文件检测，租约需覆盖现有检测器最长处理窗口。
             db.update("UPDATE ops.job SET state='RUNNING',attempt_count=attempt_count+1,lease_owner=?,lease_until=CURRENT_TIMESTAMP+interval '15 minutes' WHERE id=?",lease,jobId);return id;
         });
-        if(preview==null) throw ApiFault.protection();
+        if(preview==null) throw SystemFailure.PREVIEW_NOT_READY.fault();
         try {
             var fixed=bound(actor,preview,false);
             if(OFFICE_MEDIA.contains(fixed.get("media_type"))) {
@@ -71,8 +71,8 @@ public class ControlledReadService {
                 db.update("UPDATE storage.preview_session SET state='READY',page_count=?,render_object_id=? WHERE id=?",pages,fixed.get("render_object_id"),preview);
                 audit.event(actor.userId(),"DRIVE","PREVIEW",preview,"PREVIEW_READY","SUCCEEDED",request);
             });
-        } catch(ApiFault failure) { fail(jobId,preview,lease,failure.code);throw failure; }
-        catch(RuntimeException failure) { fail(jobId,preview,lease,"PREVIEW_FAILED");throw failure; }
+        } catch(ApiFault failure) { FailureDiagnostics.log(request,"PREVIEW task="+jobId,failure);fail(jobId,preview,lease,failure.code);throw failure; }
+        catch(RuntimeException failure) { FailureDiagnostics.log(request,"PREVIEW task="+jobId,ApiErrors.classify(failure));fail(jobId,preview,lease,"PREVIEW_FAILED");throw failure; }
     }
     /** 查询本人固定阅读会话；撤权后不能继续取得旧的页数与版本信息。 */
     public Map<String,Object> manifest(Actor actor,UUID preview) {
@@ -82,7 +82,7 @@ public class ControlledReadService {
     public byte[] page(Actor actor,UUID preview,int page,UUID request) {
         var fixed=bound(actor,preview,true);
         if(page<1 || page>((Number)fixed.get("page_count")).intValue()) throw new ApiFault(416,"PAGE_OUT_OF_RANGE","页码超出范围");
-        if(!runtime.tryAcquire()) throw ApiFault.protection();
+        if(!runtime.tryAcquire()) throw SystemFailure.READING_BUSY.fault();
         try {
             RenderInput input=renderInput(fixed);var renderer=runtime.get();
             byte[] image=input.image()?renderer.renderImagePage(input.path(),input.sha(),page):renderer.renderPage(input.path(),input.sha(),page,120);

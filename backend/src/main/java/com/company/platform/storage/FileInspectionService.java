@@ -28,23 +28,24 @@ public class FileInspectionService {
                         String key,String sha,long size,String name,String media,int inputVersion) { }
     /** 只由可信调度器调用，文件扫描与类型检查都在数据库事务之外执行。 */
     public void inspect(Actor actor,UUID jobId,UUID request) {
-        Work work=transaction.execute(status->claim(actor,jobId)); if(work==null) throw ApiFault.protection();
+        Work work=transaction.execute(status->claim(actor,jobId)); if(work==null) throw SystemFailure.FILE_CHECK_FAILED.fault();
         try {
             QuarantineFiles store=files.get(); Path source=store.verifiedPrimary(work.key(),work.size(),work.sha());
             ClamFileScanner.Verdict verdict=scanner.scan(source);
             String media=verdict==ClamFileScanner.Verdict.CLEAN?FileMediaCheck.detect(source,work.name(),work.media()):null;
             // 台账导入仍执行专门的受限工作簿规则，不能因公盘允许普通Office而放宽导入解析。
             if(media!=null&&Set.of("IMPORT_XLSX","ARCHIVE_CHECKLIST","ARCHIVE_REGISTRATION_CHECKLIST").contains(work.purpose())&&!com.company.platform.intake.ImportWorkbook.validContainer(source))media=null;
-            if(!store.verified(work.key(),work.size(),work.sha())) throw ApiFault.protection();
+            if(!store.verified(work.key(),work.size(),work.sha())) throw SystemFailure.FILE_CHECK_FAILED.fault();
             String checkedMedia=media;
             transaction.executeWithoutResult(status->finish(actor,work,verdict,checkedMedia,request));
         } catch(Exception failure) {
+            ApiFault fault=failure instanceof ApiFault known?known:SystemFailure.FILE_CHECK_FAILED.fault(failure);
+            FailureDiagnostics.log(request,"FILE_CHECK task="+work.job(),fault);
             transaction.executeWithoutResult(status->{
-                db.update("UPDATE ops.job SET state='FAILED',error_code='CHECK_FAILED',lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND state='RUNNING'",work.job(),work.lease());
-                db.update("UPDATE ops.job_attempt SET state='FAILED',ended_at=CURRENT_TIMESTAMP,sanitized_error='CHECK_FAILED' WHERE id=? AND state='RUNNING'",work.attempt());
+                db.update("UPDATE ops.job SET state='FAILED',error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND state='RUNNING'",fault.code,work.job(),work.lease());
+                db.update("UPDATE ops.job_attempt SET state='FAILED',ended_at=CURRENT_TIMESTAMP,sanitized_error=? WHERE id=? AND state='RUNNING'",fault.code,work.attempt());
             });
-            if(failure instanceof ApiFault fault) throw fault;
-            throw ApiFault.protection();
+            throw fault;
         }
     }
     /** 领取时再次检查服务身份、用户会话、任务输入和当前领域授权。 */
@@ -67,7 +68,7 @@ public class FileInspectionService {
     /** 服务身份只允许明确模块和部门，不能作为全公司上传或正文读取通行证。 */
     private UUID worker(String module,String purpose,UUID context) {
         UUID service; try { service=Inputs.uuid(module.equals("ARCHIVE")?archiveIdentity:module.equals("PLATFORM")?platformIdentity:serviceIdentity); } catch(RuntimeException e) { throw new ApiFault(503,"SERVICE_IDENTITY_UNAVAILABLE","文件检测服务身份尚未配置，请联系管理员"); }
-        if(!Set.of("DRIVE","ARCHIVE","PLATFORM").contains(module)) throw ApiFault.protection();
+        if(!Set.of("DRIVE","ARCHIVE","PLATFORM").contains(module)) throw SystemFailure.FILE_CHECK_FAILED.fault();
         // 凭据上下文是固定审批节点；总经理节点没有所属部门，沿用申请人所属部门限制检测身份。
         String scope=Set.of("IMPORT_XLSX","ARCHIVE_REGISTRATION_CHECKLIST").contains(purpose)?"SELECT id AS department_id FROM iam.department WHERE id=? AND status='ACTIVE'":purpose.equals("EVIDENCE")?"SELECT COALESCE(s.department_id,u.department_id) AS department_id FROM workflow.step s JOIN workflow.instance w ON w.id=s.instance_id JOIN iam.user_account u ON u.id=w.applicant_id WHERE s.id=?":module.equals("ARCHIVE")?"SELECT department_id FROM archive.record WHERE id=?":"SELECT department_id FROM drive.folder WHERE id=?";
         if(purpose.equals("DRIVE_VERSION"))scope="SELECT publishing_department_id AS department_id FROM drive.document WHERE id=? AND status='ACTIVE'";

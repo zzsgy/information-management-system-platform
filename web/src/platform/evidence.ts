@@ -1,4 +1,4 @@
-import { ApiError, profile, setProfile } from "./api";
+import { ApiError, profile, responseError, requestFetch } from "./api";
 
 /** 不可变凭据原件元数据；内部存储键从不返回。 */
 export interface EvidenceFile {
@@ -40,7 +40,7 @@ export const evidenceStates: Record<string, string> = {
 };
 /** 每次取回原件都携带当前会话并核对提交时摘要；失败清除过期身份。 */
 export async function evidenceBlob(item: EvidenceFile): Promise<Blob> {
-  const response = await fetch(`/api/v1/workflow/evidence/${item.id}/content`, {
+  const response = await requestFetch(`/api/v1/workflow/evidence/${item.id}/content`, {
     credentials: "same-origin",
     cache: "no-store",
     headers: {
@@ -49,18 +49,7 @@ export async function evidenceBlob(item: EvidenceFile): Promise<Blob> {
       "X-User-Activity": "1",
     },
   });
-  if (!response.ok) {
-    const result = await response.json();
-    if (result.code === "SESSION_INVALID") {
-      setProfile(null);
-      window.dispatchEvent(new Event("ims-session-expired"));
-    }
-    throw new ApiError(
-      result.code,
-      result.message || "凭据原件读取失败",
-      result.requestId,
-    );
-  }
+  if (!response.ok) throw await responseError(response, "文件读取失败");
   if (response.headers.get("Content-Type")?.split(";")[0] !== item.format)
     throw new Error("凭据格式与提交记录不一致");
   const blob = await response.blob();

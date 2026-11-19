@@ -116,13 +116,13 @@ class SystemAdministratorIntegrationTest {
         var recycled=driveFolders.change(context(driveIt,"test-password","FOLDER",folder,"RECYCLE_FOLDER",2),folder,reason,"RECYCLE_FOLDER");
         assertEquals("RECYCLED",recycled.get("state"));
         var purge=context(driveIt,"test-password","FOLDER",folder,"PURGE_FOLDER",3);
-        assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->driveFolders.change(purge,folder,reason,"PURGE_FOLDER")).code);
+        assertEquals("PROTECTION_PROVIDER_UNAVAILABLE",assertThrows(ApiFault.class,()->driveFolders.change(purge,folder,reason,"PURGE_FOLDER")).code);
         var restored=driveFolders.change(context(driveIt,"test-password","FOLDER",folder,"RESTORE_FOLDER",3),folder,reason,"RESTORE_FOLDER");
         assertEquals("ACTIVE",restored.get("state"));
 
         var child=Sql.map("parentId",folder.toString(),"zone","DEPARTMENT_SHARED","departmentId",department.toString(),"name","子目录");
         var childContext=context("DRIVE_COLLECTION",ApiController.COLLECTION,"CREATE_FOLDER",1);
-        assertEquals("PROTECTION_NOT_READY",assertThrows(ApiFault.class,()->driveAccess.folder(childContext,child)).code);
+        assertEquals("PROTECTION_PROVIDER_UNAVAILABLE",assertThrows(ApiFault.class,()->driveAccess.folder(childContext,child)).code);
         UUID staffId=person();
         assign(context(staffId,1),staffId,List.of(Sql.map("roleId",role("DRIVE","STAFF"))));
         Actor staff=login(staffId.toString(),"test-password");
