@@ -21,6 +21,8 @@ public class OfficeGateway {
     // 原生多人检查点须单独验收；关闭只影响编辑中发布，最终保存仍由状态2回调确认。
     private final boolean checkpointEnabled;
     /** 浏览器入口、服务端命令/候选入口和本平台回调入口都是可信部署固定值。 */
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private ServiceIdentities managedIdentities;
     private final String browserOrigin,serverOrigin,callbackOrigin,version,inboxPath,outboxPath,tempPath,serviceId;
     /** 在线处理上限独立于公盘5GiB上传，防止文档服务耗尽内存；单位字节。 */
     private final long maximum;
@@ -42,7 +44,7 @@ public class OfficeGateway {
         if(!enabled)throw new ApiFault(503,"OFFICE_NOT_CONFIGURED","Office文档服务尚未配置");
         origin(browserOrigin);origin(serverOrigin);origin(callbackOrigin);
         if(version.isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(inboxPath),secret(outboxPath)))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();
-        Inputs.uuid(serviceId);
+        Inputs.uuid(managedIdentities==null?serviceId:managedIdentities.configured("platform.office.service-id"));
     }
     /** CSP仅添加配置中精确的编辑器来源，不开启通配脚本或任意iframe。 */
     public String browserOrigin() {if(!enabled)return "";origin(browserOrigin);return browserOrigin;}
@@ -54,7 +56,7 @@ public class OfficeGateway {
     public String conversionSource(UUID conversion){require();return callbackOrigin+"/integrations/onlyoffice/conversion-source/"+conversion;}
     /** 档案转换使用独立取源上下文，不能用公盘转换ID读取档案。 */
     public String archiveConversionSource(UUID conversion){require();return callbackOrigin+"/integrations/onlyoffice/archive-source/"+conversion;}
-    public UUID service(){require();return Inputs.uuid(serviceId);}
+    public UUID service(){require();return Inputs.uuid(managedIdentities==null?serviceId:managedIdentities.configured("platform.office.service-id"));}
     public long maximum(){return maximum;}
     /** 浏览器只取得签过名的固定配置，不取得任何签名密钥。 */
     public String sign(Map<String,Object> payload){require();return jwt(payload,secret(inboxPath));}

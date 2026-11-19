@@ -6,6 +6,7 @@ interface Health {
   warning: boolean;
   identities: { name: string; state: string; validUntil: string | null }[];
   office: { state: string; checkedAt: string | null };
+  runtimeChecks?: {name: string; ready: boolean; message: string; errorCode?: string; requestId?: string}[];
 }
 const health = ref<Health | null>(null),
   error = ref("");
@@ -32,17 +33,19 @@ async function load() {
       health.value = result;
       error.value = "";
     }
-  } catch {
-    if (alive) error.value = "服务状态检查暂不可用，请进入运维与保护核查。";
+  } catch (failure) {
+    if (alive) error.value = "服务状态检查失败：" + (failure as Error).message;
   }
 }
 onMounted(() => {
   void load();
   timer = setInterval(load, 60000);
+  window.addEventListener("ims-service-config-changed", load);
 });
 onUnmounted(() => {
   alive = false;
   clearInterval(timer);
+  window.removeEventListener("ims-service-config-changed", load);
 });
 </script>
 <template>
@@ -60,7 +63,7 @@ onUnmounted(() => {
           ? "关键服务需要维护"
           : "关键服务状态正常")
     }}</strong>
-    <a v-if="!showHealthy" href="#/operations-console">运维与保护</a>
+    <a v-if="!showHealthy" href="#/operations-console">进入运维与保护配置服务</a>
     <details v-if="health" :open="showHealthy || health.warning">
       <summary>服务可用性及授权有效期（到期前30天提醒）</summary>
       <ul>
@@ -78,6 +81,7 @@ onUnmounted(() => {
               : "尚未完成"
           }}
         </li>
+        <li v-for="check in health.runtimeChecks" :key="check.name">{{ check.name }}：{{ check.message }}<span v-if="check.errorCode">（{{ check.errorCode }}）</span><span v-if="!check.ready && check.requestId">；检查请求编号：{{ check.requestId }}</span></li>
       </ul>
     </details>
   </section>

@@ -67,7 +67,7 @@ public class FileInspectionService {
     }
     /** 服务身份只允许明确模块和部门，不能作为全公司上传或正文读取通行证。 */
     private UUID worker(String module,String purpose,UUID context) {
-        UUID service; try { service=Inputs.uuid(module.equals("ARCHIVE")?archiveIdentity:module.equals("PLATFORM")?platformIdentity:serviceIdentity); } catch(RuntimeException e) { throw new ApiFault(503,"SERVICE_IDENTITY_UNAVAILABLE","文件检测服务身份尚未配置，请联系管理员"); }
+        UUID service; try { service=Inputs.uuid(services.configured(module.equals("ARCHIVE")?"platform.scanner.archive-service-id":module.equals("PLATFORM")?"platform.scanner.platform-service-id":"platform.scanner.service-id")); } catch(RuntimeException e) { throw new ApiFault(503,"SERVICE_IDENTITY_UNAVAILABLE","文件检测服务身份尚未配置，请联系管理员"); }
         if(!Set.of("DRIVE","ARCHIVE","PLATFORM").contains(module)) throw SystemFailure.FILE_CHECK_FAILED.fault();
         // 凭据上下文是固定审批节点；总经理节点没有所属部门，沿用申请人所属部门限制检测身份。
         String scope=Set.of("IMPORT_XLSX","ARCHIVE_REGISTRATION_CHECKLIST").contains(purpose)?"SELECT id AS department_id FROM iam.department WHERE id=? AND status='ACTIVE'":purpose.equals("EVIDENCE")?"SELECT COALESCE(s.department_id,u.department_id) AS department_id FROM workflow.step s JOIN workflow.instance w ON w.id=s.instance_id JOIN iam.user_account u ON u.id=w.applicant_id WHERE s.id=?":module.equals("ARCHIVE")?"SELECT department_id FROM archive.record WHERE id=?":"SELECT department_id FROM drive.folder WHERE id=?";

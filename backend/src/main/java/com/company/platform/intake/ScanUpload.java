@@ -17,8 +17,8 @@ public class ScanUpload {
     /** 慢文件读写、病毒检查和 PDF 解析在数据库事务外运行。 */
     private final Sql db;private final ScanIntake intake;private final StorageFiles files;private final FileScanEngine scanner;private final ReadingRuntime runtime;private final TransactionTemplate tx;
     /** 检测器专用身份与调度开关；模拟验收关闭调度后显式执行任务。 */
-    private final String scannerId;private final boolean enabled;
-    public ScanUpload(Sql db,ScanIntake intake,StorageFiles files,FileScanEngine scanner,ReadingRuntime runtime,PlatformTransactionManager manager,@Value("${platform.scanner.archive-service-id:}") String scannerId,@Value("${platform.scan-intake.worker-enabled:true}") boolean enabled){this.db=db;this.intake=intake;this.files=files;this.scanner=scanner;this.runtime=runtime;this.tx=new TransactionTemplate(manager);this.scannerId=scannerId;this.enabled=enabled;}
+    private final ServiceIdentities services;private final String scannerId;private final boolean enabled;
+    public ScanUpload(Sql db,ScanIntake intake,StorageFiles files,FileScanEngine scanner,ReadingRuntime runtime,PlatformTransactionManager manager,ServiceIdentities services,@Value("${platform.scanner.archive-service-id:}") String scannerId,@Value("${platform.scan-intake.worker-enabled:true}") boolean enabled){this.db=db;this.services=services;this.intake=intake;this.files=files;this.scanner=scanner;this.runtime=runtime;this.tx=new TransactionTemplate(manager);this.scannerId=scannerId;this.enabled=enabled;}
     /** 创建设备分片会话；同一稳定操作号不能重新指向另一档案或另一轮返工。 */
     @Transactional
     public Map<String,Object> create(UUID service,UUID operation,Map<String,Object> body){
@@ -80,7 +80,7 @@ public class ScanUpload {
     /** 正常分片只进入尚未过期的开放会话。 */
     private void open(Map<String,Object> row){if(!"OPEN".equals(row.get("state"))||!Boolean.TRUE.equals(row.get("valid")))throw ApiFault.conflict("上传已结束或过期");}
     /** 检测工作器使用独立受限身份，设备账号不能自报干净。 */
-    private UUID checker(Map<String,Object> upload){UUID id=Inputs.uuid(scannerId);db.required("SELECT id FROM iam.service_identity WHERE id=? AND service_type='FILE_CHECK' AND allowed_module='ARCHIVE' AND ?=ANY(department_scope) AND 'FILE_CHECK'=ANY(allowed_actions) AND status='ACTIVE' AND valid_until>CURRENT_TIMESTAMP FOR SHARE",id,upload.get("department_id"));return id;}
+    private UUID checker(Map<String,Object> upload){UUID id=Inputs.uuid(services.configured("platform.scanner.archive-service-id"));db.required("SELECT id FROM iam.service_identity WHERE id=? AND service_type='FILE_CHECK' AND allowed_module='ARCHIVE' AND ?=ANY(department_scope) AND 'FILE_CHECK'=ANY(allowed_actions) AND status='ACTIVE' AND valid_until>CURRENT_TIMESTAMP FOR SHARE",id,upload.get("department_id"));return id;}
     /** 明确回滚时只清理本次新键；提交结果未知时保留供核查。 */
     private void rollback(String key){TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization(){@Override public void afterCompletion(int state){if(state==STATUS_ROLLED_BACK)files.get().rollbackNew(key);}});}
     /** 设备接收回执只含固定标识和待质检状态，不含目录正文。 */

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, inject, onMounted, onUnmounted, ref } from "vue";
-import { api, can, COLLECTION, dateTime, mutate, query } from "./api";
+import { api, can, COLLECTION, dateTime, mutate, query, profile } from "./api";
 import ListFilters, { type ListFilterField } from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import ServiceHealthNotice from "./ServiceHealthNotice.vue";
+import ServiceConfigurations from "./ServiceConfigurations.vue";
 /** 页面只接收技术状态与受控编号，不接收目录路径、存储键和档案名称。 */
 interface Run {
   id: string;
@@ -332,6 +333,7 @@ onUnmounted(() => {
       <p>检查保护条件，核验双副本，追踪备份、恢复和后台任务。</p>
     </div>
   </section>
+  <ServiceConfigurations v-if="profile?.roles.some(role => role.module === 'PLATFORM' && role.code === 'IT_ADMIN')" />
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <div v-if="summary" class="ops-cards">
     <article class="panel">

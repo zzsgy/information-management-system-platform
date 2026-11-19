@@ -12,6 +12,20 @@ public class ServiceIdentities {
     private final Environment env;
     public ServiceIdentities(Sql db,Environment env){this.db=db;this.env=env;}
 
+    /** 每次执行重新读取网页绑定，停用和范围变更不会被启动时配置缓存掩盖。 */
+    public String configured(String property) {
+        String slot=switch(property) {
+            case "platform.scanner.service-id" -> "DRIVE_SCANNER";
+            case "platform.scanner.archive-service-id" -> "ARCHIVE_SCANNER";
+            case "platform.scanner.platform-service-id" -> "PLATFORM_SCANNER";
+            case "platform.office.service-id" -> "OFFICE";
+            default -> throw ApiFault.invalid("不支持的服务用途");
+        };
+        var binding=db.one("SELECT service_identity_id FROM iam.service_binding WHERE slot=?",slot);
+        return binding!=null && binding.get("service_identity_id")!=null
+                ? binding.get("service_identity_id").toString() : env.getProperty(property,"");
+    }
+
     public UUID require(UUID id,String type,String module,UUID department,String action){
         var row=db.one("SELECT *,valid_until>CURRENT_TIMESTAMP AS valid FROM iam.service_identity WHERE id=? FOR SHARE",id);
         String label=type.equals("OFFICE")?"Office预览与编辑服务":"文件检测服务";
@@ -29,7 +43,7 @@ public class ServiceIdentities {
         String[][] services={{"platform.scanner.service-id","DRIVE","FILE_CHECK","公盘文件检测"},{"platform.scanner.archive-service-id","ARCHIVE","FILE_CHECK","档案文件检测"},{"platform.scanner.platform-service-id","PLATFORM","FILE_CHECK","人员与台账文件检测"},{"platform.office.service-id","DRIVE","OFFICE","Office预览与编辑"}};
         for(var service:services){
             if(service[2].equals("OFFICE")&&!env.getProperty("platform.office.enabled",Boolean.class,false))continue;
-            String configured=env.getProperty(service[0],"");
+            String configured=configured(service[0]);
             Map<String,Object> row=null;
             try{row=db.one("SELECT id,valid_until,status,service_type,allowed_module,cardinality(department_scope)>0 AS scoped,?=ANY(allowed_actions) AS action_allowed,valid_until<=CURRENT_TIMESTAMP AS expired,valid_until<=CURRENT_TIMESTAMP+interval '30 days' AS expiring FROM iam.service_identity WHERE id=?",service[2].equals("OFFICE")?"VIEW":"FILE_CHECK",UUID.fromString(configured));}catch(IllegalArgumentException ignored){/* 配置缺失也必须出现在检查结果中。 */}
             String state=row==null?"NOT_CONFIGURED":!"ACTIVE".equals(row.get("status"))?"DISABLED":!service[1].equals(row.get("allowed_module"))||!service[2].equals(row.get("service_type"))||!Boolean.TRUE.equals(row.get("scoped"))||!Boolean.TRUE.equals(row.get("action_allowed"))?"SCOPE_MISMATCH":Boolean.TRUE.equals(row.get("expired"))?"EXPIRED":Boolean.TRUE.equals(row.get("expiring"))?"EXPIRING":"READY";
