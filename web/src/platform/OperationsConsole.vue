@@ -5,6 +5,7 @@ import ListFilters, { type ListFilterField } from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import ServiceHealthNotice from "./ServiceHealthNotice.vue";
 import ServiceConfigurations from "./ServiceConfigurations.vue";
+import DeploymentSettings from "./DeploymentSettings.vue";
 /** 页面只接收技术状态与受控编号，不接收目录路径、存储键和档案名称。 */
 interface Run {
   id: string;
@@ -39,7 +40,8 @@ interface Plan {
 }
 interface Overview {
   enabled: boolean;
-  protection: { ready: boolean; mode: string };
+  protection: { ready: boolean; mode: string; message?: string; errorCode?: string };
+  maintenanceAgent?: {seen_at: string; state: string; error_code: string | null} | null;
   office: { enabled: boolean; state: string };
   storage: { objects: number; bytes: number };
   latestCheck: { summary: string; finished_at: string } | null;
@@ -166,7 +168,9 @@ const report = computed(() =>
     : null,
 );
 const modes: Record<string, string> = {
-  NOT_CONFIGURED: "未配置保护代理",
+  NOT_CONFIGURED: "尚未选择保护方式",
+  SINGLE: "单机双副本与独立备份",
+  EXTERNAL: "外部主备保护",
   PROTECTION_NOT_READY: "保护未就绪",
   NORMAL: "正常保护",
   ARCHIVE_READ_ONLY: "档案只读",
@@ -333,6 +337,7 @@ onUnmounted(() => {
       <p>检查保护条件，核验双副本，追踪备份、恢复和后台任务。</p>
     </div>
   </section>
+  <DeploymentSettings v-if="profile?.roles.some(role => role.module === 'PLATFORM' && role.code === 'IT_ADMIN')" />
   <ServiceConfigurations v-if="profile?.roles.some(role => role.module === 'PLATFORM' && role.code === 'IT_ADMIN')" />
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <div v-if="summary" class="ops-cards">
@@ -341,7 +346,7 @@ onUnmounted(() => {
       ><strong>{{
         modes[summary.protection.mode] || summary.protection.mode
       }}</strong
-      ><small>写入权限仍以实时保护检查为准</small>
+      ><small>{{ summary.protection.ready ? "保护检查通过" : "保护尚未就绪" }} · {{ summary.protection.message || "写入权限以实时检查为准" }}</small>
     </article>
     <article class="panel">
       <span>原件与历史源</span><strong>{{ summary.storage.objects }} 份</strong
@@ -363,7 +368,8 @@ onUnmounted(() => {
   <section class="panel ops-panel">
     <div class="ops-section-heading">
       <h2>检查与维护申请</h2>
-      <span v-if="!summary?.enabled" class="chip">当前执行器未启用</span>
+      <span v-if="!summary?.enabled" class="chip">维护任务尚未启用</span>
+      <span v-else class="chip">独立执行器：{{ summary.maintenanceAgent && Date.now() - new Date(summary.maintenanceAgent.seen_at).getTime() < 180000 && summary.maintenanceAgent.state === 'READY' ? '在线' : '离线或未就绪' }}</span>
     </div>
     <form class="toolbar" @submit.prevent="create">
       <label

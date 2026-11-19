@@ -29,6 +29,9 @@ class ServiceAdministrationIntegrationTest {
     @Autowired ServiceIdentities services;
     @Autowired Commands commands;
     @Autowired ServiceHealth health;
+    @Autowired DeploymentSettings deployment;
+    @Autowired ManagedProtection protection;
+    @Autowired DeliveryReceipts receipts;
     private Actor admin,staff;
     private UUID department;
     private final UUID target=UUID.fromString("50000000-0000-4000-8000-000000000003");
@@ -88,4 +91,58 @@ class ServiceAdministrationIntegrationTest {
         assertEquals(true,health.status().get("warning"));
         assertTrue(result.toString().contains("后台文件处理器"));
     }
+    /** 部署配置与身份一样，必须由IT本人再验证；失败不能留下半份配置。 */
+    @Test void deploymentConfigurationIsAuthorizedVersionedAndAppliedAfterCommit() {
+        UUID id=UUID.fromString("51000000-0000-4000-8000-000000000001");
+        var original=db.required("SELECT settings::text FROM ops.deployment_settings WHERE id=?",id).get("settings");
+        try{
+            assertEquals(403,assertThrows(ApiFault.class,()->deployment.list(staff)).status);
+            var current=deployment.get(admin,id);
+            var values=new LinkedHashMap<>((Map<String,Object>)current.get("values"));
+            values.put("platform.scanner.executable","");values.put("platform.scanner.timeout-seconds","321");
+            var body=Sql.map("values",values,"reason","隔离库部署参数验收");
+            assertThrows(ApiFault.class,()->saveDeployment(id,current,body,false));
+            assertEquals(current.get("rowVersion"),deployment.get(admin,id).get("rowVersion"));
+            saveDeployment(id,current,body,true);
+            assertEquals("321",deployment.effective("platform.scanner.timeout-seconds"));
+            assertEquals(409,assertThrows(ApiFault.class,()->saveDeployment(id,current,body,true)).status);
+            var fresh=deployment.get(admin,id);values.put("platform.scanner.timeout-seconds","0");
+            assertEquals(400,assertThrows(ApiFault.class,()->saveDeployment(id,fresh,body,true)).status);
+            assertEquals("321",deployment.effective("platform.scanner.timeout-seconds"));
+        }finally{db.update("UPDATE ops.deployment_settings SET settings=?::jsonb WHERE id=?",original,id);deployment.refresh();}
+    }
+    @Test void overlappingDirectoriesCannotBeSavedAndSingleModeDoesNotInventABackup() {
+        UUID storage=UUID.fromString("51000000-0000-4000-8000-000000000002"),guard=UUID.fromString("51000000-0000-4000-8000-000000000005");
+        var current=deployment.get(admin,storage);var values=new LinkedHashMap<>((Map<String,Object>)current.get("values"));
+        values.put("platform.storage.primary","D:/tmp/ims-config-overlap");values.put("platform.storage.secondary","D:/tmp/ims-config-overlap/nested");
+        assertEquals(400,assertThrows(ApiFault.class,()->saveDeployment(storage,current,Sql.map("values",values,"reason","验证重叠拒绝"),true)).status);
+        var original=db.required("SELECT settings::text FROM ops.deployment_settings WHERE id=?",guard).get("settings");
+        try{
+            db.update("UPDATE ops.deployment_settings SET settings='{"+"\"platform.protection.mode\":\"SINGLE\"}'::jsonb WHERE id=?",guard);deployment.refresh();
+            assertEquals("SINGLE",protection.status().get("mode"));
+            assertEquals(false,protection.status().get("ready"));
+            assertThrows(ApiFault.class,()->protection.writable("DRIVE","UPLOAD"));
+        }finally{db.update("UPDATE ops.deployment_settings SET settings=?::jsonb WHERE id=?",original,guard);deployment.refresh();}
+    }
+    @Test void runtimeCheckBindsNewReceiptDirectoryAndRejectsAnotherInstance()throws Exception{
+        UUID id=UUID.fromString("51000000-0000-4000-8000-000000000003");
+        var original=db.required("SELECT settings::text FROM ops.deployment_settings WHERE id=?",id).get("settings");
+        java.nio.file.Path root=java.nio.file.Path.of("D:/tmp/ims-deployment-receipts-"+UUID.randomUUID());
+        try{
+            db.update("UPDATE ops.deployment_settings SET settings=?::jsonb WHERE id=?",Crypto.json(Map.of("platform.reading.audit-root",root.toString())),id);deployment.refresh();
+            assertEquals(root,receipts.verifyStorage());assertTrue(java.nio.file.Files.isRegularFile(root.resolve("instance")));
+            assertEquals(root,receipts.verifyStorage());
+            java.nio.file.Files.writeString(root.resolve("instance"),UUID.randomUUID().toString());
+            assertEquals("RECEIPT_STORAGE_UNAVAILABLE",assertThrows(ApiFault.class,()->receipts.verifyStorage()).code);
+        }finally{
+            db.update("UPDATE ops.deployment_settings SET settings=?::jsonb WHERE id=?",original,id);deployment.refresh();
+            java.nio.file.Files.deleteIfExists(root.resolve("instance"));java.nio.file.Files.deleteIfExists(root);
+        }
+    }
+    private Map<String,Object> saveDeployment(UUID target,Map<String,Object> current,Map<String,Object> body,boolean verified){
+        String token=verified?identity.reauthenticate(admin,Sql.map("password",System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"),"purpose","MANAGE","objectIds",List.of(target.toString()),"scopeItems",List.of(Sql.map("objectType","DEPLOYMENT_SETTINGS","objectId",target.toString(),"actions",List.of("CONFIGURE_DEPLOYMENT")))),UUID.randomUUID()).get("verificationToken").toString():null;
+        var ctx=new Commands.Context(admin,UUID.randomUUID(),UUID.randomUUID(),"PUT deployment/"+target,token,((Number)current.get("rowVersion")).intValue());
+        return commands.run(ctx,body,"DEPLOYMENT_SETTINGS",target,"CONFIGURE_DEPLOYMENT",()->administration.authorize(admin),()->deployment.save(ctx,target,body),key->deployment.get(admin,key));
+    }
+
 }

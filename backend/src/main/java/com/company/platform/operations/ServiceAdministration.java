@@ -11,6 +11,7 @@ import java.util.*;
 /** IT 专用服务配置；身份维护不依赖当前文件保护状态，以便在服务未就绪时修复配置。 */
 @Service
 public class ServiceAdministration {
+    @org.springframework.beans.factory.annotation.Autowired private DeploymentDiagnostics diagnostics;
     private final Sql db;
     private final IdentityService identity;
     private final ServiceIdentities identities;
@@ -66,14 +67,14 @@ public class ServiceAdministration {
         db.update("UPDATE iam.service_binding SET service_identity_id=?,row_version=row_version+1,changed_by=?,changed_at=CURRENT_TIMESTAMP WHERE id=?",service,ctx.actor().userId(),id);
         return get(ctx.actor(),id);
     }
-    /** 实测服务器已有检测配置，不接收网页传入的程序路径或密钥。 */
+    /** 实测已保存的服务器检测配置；检查请求不携带程序参数或密钥。 */
     public Map<String,Object> check(Actor actor,UUID request) {
         authorize(actor);
         var checks=new ArrayList<Map<String,Object>>();Path sample=null;
         try {
             String temporary=env.getProperty("platform.scanner.temporary","");
             if(temporary.isBlank())throw SystemFailure.SCANNER_NOT_CONFIGURED.fault();
-            sample=Files.createTempFile(Path.of(temporary),"ims-service-check-",".txt");
+            sample=Files.createTempFile(PrivateFiles.directory(temporary),"ims-service-check-",".txt");
             PrivateFiles.restrict(sample);Files.writeString(sample,"IMS harmless service configuration check");
             if(scanner.scan(sample)!=ClamFileScanner.Verdict.CLEAN)throw SystemFailure.SCANNER_UNAVAILABLE.fault();
             checks.add(Sql.map("name","文件检测程序与病毒库","ready",true,"message","实际检测通过"));
@@ -83,7 +84,8 @@ public class ServiceAdministration {
             checks.add(Sql.map("name","文件检测程序与病毒库","ready",false,"message",fault.getMessage(),"errorCode",fault.code));
         } finally {if(sample!=null)try{Files.deleteIfExists(sample);}catch(java.io.IOException failure){FailureDiagnostics.log(request,"SERVICE_CHECK_CLEANUP",SystemFailure.SCANNER_TEMP_UNAVAILABLE.fault(failure));}}
         boolean worker=env.getProperty("platform.file-worker.enabled",Boolean.class,false);
-        checks.add(Sql.map("name","后台文件处理器","ready",worker,"message",worker?"已启用":"部署配置尚未启用后台文件处理器，请配置 IMS_PLATFORM_WORKER_ENABLED=true 后重启服务"));
+        checks.add(Sql.map("name","后台文件处理器","ready",worker,"message",worker?"已启用":"请进入部署配置的文件检测页签启用后台文件处理器"));
+        checks.addAll(diagnostics.check(request));
         checks.forEach(check->check.put("requestId",request));
         health.runtimeChecks(checks);
         health.probe();

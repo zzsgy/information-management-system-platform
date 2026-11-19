@@ -12,13 +12,18 @@ public class StorageFiles {
     private final Sql db;
     private final String primary,secondary,ledger,mailbox;
     private QuarantineFiles store;
-    /** 两路径来自部署配置，绝不从文件名或 HTTP 请求接受。 */
+    private String storePaths="";
+    @org.springframework.beans.factory.annotation.Autowired(required=false) private com.company.platform.operations.DeploymentSettings deployment;
+    /** 路径来自受再验证的IT部署配置，业务上传请求不能选择物理目录。 */
     public StorageFiles(Sql db,@Value("${platform.storage.primary:}") String primary,@Value("${platform.storage.secondary:}") String secondary,
                         @Value("${platform.security-ledger}") String ledger,@Value("${platform.mailbox}") String mailbox) {
         this.db=db; this.primary=primary; this.secondary=secondary; this.ledger=ledger; this.mailbox=mailbox;
     }
     /** 拒绝与账本、邮箱目录相互嵌套；缺失配置不自动选择旧附件路径。 */
     public synchronized QuarantineFiles get() {
+        String primary=deployment==null?this.primary:deployment.text("platform.storage.primary",this.primary),secondary=deployment==null?this.secondary:deployment.text("platform.storage.secondary",this.secondary);
+        String paths=primary+"\n"+secondary;
+        if(!paths.equals(storePaths)){store=null;storePaths=paths;}
         if(primary.isBlank() || secondary.isBlank()) throw SystemFailure.STORAGE_NOT_CONFIGURED.fault();
         if(store==null) {
             Path a=Path.of(primary).normalize(),b=Path.of(secondary).normalize();

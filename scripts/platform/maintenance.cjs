@@ -105,12 +105,15 @@ function privateDirectory(value) {
   return directory;
 }
 /** 仅接受独立本机平台库，业务数据库、远程地址与空口令均拒绝。 */
-function settings(file) {
-  const config = JSON.parse(fs.readFileSync(safe(file), "utf8")),
-    url = new URL(config.IMS_PLATFORM_DB_URL.replace(/^jdbc:/, ""));
+function settings(file) {return settingsFromConfig(JSON.parse(fs.readFileSync(safe(file), "utf8")));}
+function settingsFromConfig(config) {
+  const url = new URL(config.IMS_PLATFORM_DB_URL.replace(/^jdbc:/, ""));
   assert.equal(url.protocol, "postgresql:");
   assert.ok(["127.0.0.1", "localhost"].includes(url.hostname));
-  assert.match(url.pathname, /^\/ims_platform_(dev|test|trial)[a-z0-9_]*$/);
+  if(config.IMS_BACKUP_SOURCE_DATABASE){
+    assert.match(config.IMS_BACKUP_SOURCE_DATABASE,/^[A-Za-z0-9_]+$/);
+    assert.equal(url.pathname,"/"+config.IMS_BACKUP_SOURCE_DATABASE,"源库与明确配置的库名不一致");
+  }else assert.match(url.pathname, /^\/ims_platform_(dev|test|trial)[a-z0-9_]*$/);
   assert.ok(
     config.IMS_PLATFORM_DB_USER && config.IMS_PLATFORM_DB_PASSWORD,
     "数据库身份未配置",
@@ -192,6 +195,12 @@ function run(context, name, args) {
     encoding: "utf8",
     maxBuffer: 8 * 1024 * 1024,
   });
+  if(result.status!==0&&context.config.IMS_OPS_RUN_ROOT){
+    let detail=String(result.stderr||result.error?.message||"");
+    for(const key of ["IMS_PLATFORM_DB_PASSWORD","IMS_RESTORE_DB_PASSWORD","IMS_RESTORE_APP_PASSWORD","IMS_PLATFORM_TLS_PASSWORD"]){const secret=context.config[key];if(secret)detail=detail.replaceAll(String(secret),"[REDACTED]");}
+    const logRoot=safe(context.config.IMS_OPS_RUN_ROOT);
+    if(fs.existsSync(logRoot))fs.appendFileSync(path.join(logRoot,"database-tools.private.log"),JSON.stringify({at:new Date().toISOString(),tool:name,exit:result.status,detail})+"\n",{mode:0o600});
+  }
   assert.equal(result.status, 0, "数据库工具执行失败：" + name);
   return result.stdout.trim();
 }
@@ -597,8 +606,18 @@ async function backup(context, args) {
       !(await listening(context.config.IMS_PLATFORM_PORT)),
       "备份期间应用重新启动，拒绝发布一致性清单",
     );
+    const privateFiles=[];
+    const privateRoot=path.join(output,"privateConfiguration");
+    for(const key of ["IMS_MAINTENANCE_BOOTSTRAP_FILE","IMS_MAINTENANCE_RESTORE_FILE","IMS_PLATFORM_TLS_KEYSTORE","IMS_PLATFORM_OFFICE_INBOX_KEY","IMS_PLATFORM_OFFICE_OUTBOX_KEY","IMS_PLATFORM_PROTECTION_KEY"]){
+      if(!context.config[key])continue;
+      const source=safe(context.config[key]);assert.ok(fs.statSync(source).isFile(),"配置依赖文件不存在："+key);
+      if(!fs.existsSync(privateRoot))privateDirectory(privateRoot);
+      const name=key+".bin", destination=path.join(privateRoot,name);fs.copyFileSync(source,destination,fs.constants.COPYFILE_EXCL);
+      assert.equal(sha(source),sha(destination));privateFiles.push({key,name,sha256:sha(destination)});
+    }
     const manifest = {
       format: 1,
+      privateFiles,
       scope: "LOCAL_ISOLATED_REHEARSAL",
       sourceDatabase: context.name,
       instance: sql(context, "SELECT id FROM platform_meta.instance"),
@@ -650,7 +669,7 @@ function restoreTarget(context) {
   assert.ok(
     ["127.0.0.1", "localhost"].includes(url.hostname) &&
       url.pathname === "/postgres" &&
-      url.port !== context.url.port,
+      (url.port || "5432") !== (context.url.port || "5432"),
     "恢复必须使用另一实例的维护库",
   );
   assert.match(config.IMS_RESTORE_APP_USER, /^[a-z_][a-z0-9_]*$/);
@@ -739,6 +758,9 @@ async function restore(context, args) {
     assert.match(label, /^[A-Za-z]+$/);
     verifyFiles(path.join(bundle, label), entries);
   }
+  for(const file of manifest.privateFiles||[]){
+    assert.match(file.name,/^[A-Z_]+\.bin$/);assert.equal(sha(safe(path.join(bundle,"privateConfiguration",file.name))),file.sha256,"私有配置文件摘要不符");
+  }
   const sourceMarker = fs.readFileSync(
     path.join(currentLedger, "instance"),
     "utf8",
@@ -763,6 +785,10 @@ async function restore(context, args) {
     "当前收紧账本水位低于备份，拒绝恢复",
   );
   privateDirectory(output);
+  if(manifest.privateFiles?.length){
+    const privateRoot=path.join(output,"privateConfiguration");privateDirectory(privateRoot);
+    for(const file of manifest.privateFiles)fs.copyFileSync(path.join(bundle,"privateConfiguration",file.name),path.join(privateRoot,file.name),fs.constants.COPYFILE_EXCL);
+  }
   run(target, "createdb", [
     "-h",
     target.url.hostname,
@@ -845,6 +871,7 @@ async function restore(context, args) {
     IMS_PLATFORM_DB_PASSWORD: context.config.IMS_RESTORE_APP_PASSWORD,
     IMS_PLATFORM_PORT: String(port),
     IMS_PLATFORM_LEDGER_ROOT: path.join(output, "ledger"),
+    IMS_PLATFORM_ISOLATED_RESTORE: "true",
     IMS_PLATFORM_WORKER_ENABLED: "false",
     IMS_PLATFORM_SCAN_WORKER_ENABLED: "false",
     IMS_PLATFORM_OPERATIONS_ENABLED: "false",
@@ -931,6 +958,7 @@ module.exports = {
   main,
   options,
   settings,
+  settingsFromConfig,
   canonical,
   sha,
   safe,

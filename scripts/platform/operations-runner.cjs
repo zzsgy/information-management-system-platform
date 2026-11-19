@@ -149,6 +149,10 @@ async function main(argv) {
     );
     return { id: run.id, kind: run.kind, state: "SUCCEEDED", ...summary };
   } catch (error) {
+    // 详细原因只保存在服务账号可访问的维护目录；页面继续使用受控错误码。
+    let detail=JSON.stringify({at:new Date().toISOString(),taskId:run.id,name:error.name,message:error.message,stack:error.stack});
+    for(const key of ["IMS_PLATFORM_DB_PASSWORD","IMS_RESTORE_DB_PASSWORD","IMS_RESTORE_APP_PASSWORD","IMS_PLATFORM_TLS_PASSWORD"])if(config[key])detail=detail.replaceAll(String(config[key]),"[REDACTED]");
+    try{fs.writeFileSync(path.join(root,run.id+".failure.private.json"),detail,{flag:"wx",mode:0o600});}catch{console.error("维护详细日志写入失败，请检查独立维护目录权限");}
     const code = authorized(context, run)
       ? "MAINTENANCE_VERIFICATION_FAILED"
       : "REQUESTER_AUTHORIZATION_INVALID";

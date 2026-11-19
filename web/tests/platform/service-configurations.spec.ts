@@ -35,3 +35,25 @@ test("IT在网页维护服务授权，保存持久化且运行环境失败不伪
   await verification.getByRole("button", {name: "确认并继续"}).click();
   await expect(card.getByText("已停用", {exact: true})).toBeVisible();
 });
+
+/** 分组表单沿真实保存、再验证、刷新读取链路，安装包不含当前环境凭据。 */
+test("IT部署参数可保存并刷新，安装包包含可用脚本", async ({page})=>{
+ await page.goto("/");
+ await page.getByLabel("公司工号", {exact:true}).fill(config.IMS_PLATFORM_ADMIN_NO);
+ await page.getByLabel("登录密码", {exact:true}).fill(config.IMS_PLATFORM_ADMIN_PASSWORD);
+ await page.getByRole("button",{name:"登录工作台"}).click();
+ await page.getByRole("link",{name:"进入运维与保护配置服务",exact:true}).click();
+ const panel=page.getByRole("region",{name:"部署运行配置"});
+ await expect(panel.getByRole("heading",{name:"部署运行配置",exact:true})).toBeVisible();
+ await panel.getByLabel("检测超时（秒）",{exact:true}).fill("301");
+ await panel.getByLabel("修改原因",{exact:true}).fill("隔离环境运行参数验收");
+ await panel.getByRole("button",{name:"保存文件检测配置",exact:true}).click();
+ const verify=page.getByRole("dialog").filter({has:page.getByRole("heading",{name:"验证本人身份"})});
+ await verify.getByLabel("本人登录密码").fill(config.IMS_PLATFORM_ADMIN_PASSWORD);
+ await verify.getByRole("button",{name:"确认并继续"}).click();
+ await expect(panel.getByRole("status")).toContainText("配置已保存并生效");
+ await page.reload();await expect(panel.getByLabel("检测超时（秒）",{exact:true})).toHaveValue("301");
+ await panel.getByRole("button",{name:"备份与维护",exact:true}).click();
+ const download=page.waitForEvent("download");await panel.getByRole("link",{name:"下载独立执行器安装包与说明"}).click();
+ expect((await download).suggestedFilename()).toBe("IMS-operations-agent.zip");
+});

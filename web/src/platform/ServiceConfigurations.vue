@@ -68,7 +68,7 @@ onMounted(load);
         <div class="service-heading"><h3>{{ item.label }}</h3><span class="chip">{{ !item.configured ? '尚未配置' : item.status === 'DISABLED' ? '已停用' : item.validUntil && new Date(item.validUntil).getTime() <= Date.now() ? '已到期' : '已配置' }}</span></div>
         <p>{{ item.configured ? item.name : '尚未绑定可用的服务身份' }}</p>
         <p class="muted">获准部门：{{ item.departmentIds.length }} 个 · 截止：{{ item.validUntil ? dateTime(item.validUntil) : '未设置' }}</p>
-        <p v-if="item.slot === 'OFFICE'" class="muted">此处维护服务授权；Office 连接及密钥由部署配置提供。</p>
+        <p v-if="item.slot === 'OFFICE'" class="muted">此处维护服务授权；连接地址及密钥文件位置在上方“部署运行配置 → Office连接”维护。</p>
         <button class="secondary" :disabled="busy" @click="edit(item)">{{ item.configured ? '编辑授权 / 续期 / 停用' : '配置服务' }}</button>
       </article>
     </div>

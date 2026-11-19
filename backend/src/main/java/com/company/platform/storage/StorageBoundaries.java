@@ -9,6 +9,7 @@ import java.util.*;
 @Component
 public class StorageBoundaries {
     /** 可扩展领域策略与独立保护状态提供者。 */
+    @org.springframework.beans.factory.annotation.Autowired(required=false) private com.company.platform.operations.ManagedProtection managed;
     private final ObjectProvider<StorageDomainPolicy> domains;
     private final ObjectProvider<StorageProtectionPolicy> protections;
     public StorageBoundaries(ObjectProvider<StorageDomainPolicy> domains,ObjectProvider<StorageProtectionPolicy> protections) { this.domains=domains; this.protections=protections; }
@@ -21,12 +22,14 @@ public class StorageBoundaries {
     }
     /** 业务发布及授权配置复用同一实时保护门槛，不能绕过文件上传保护。 */
     public void requireWritable(String module,String action) {
+            if(managed!=null&&managed.configured()){managed.writable(module,action);return;}
             List<StorageProtectionPolicy> gates=protections.orderedStream().toList();
             if(gates.size()!=1) throw SystemFailure.PROTECTION_PROVIDER_UNAVAILABLE.fault();
             gates.getFirst().requireWritable(module,action);
     }
     /** 无唯一可信保护提供者时，不能返回任何正文页面。 */
     public void requireReadable(String module) {
+        if(managed!=null&&managed.configured()){managed.readable(module);return;}
         List<StorageProtectionPolicy> gates=protections.orderedStream().toList();
         if(gates.size()!=1) throw SystemFailure.PROTECTION_PROVIDER_UNAVAILABLE.fault();
         gates.getFirst().requireReadable(module);

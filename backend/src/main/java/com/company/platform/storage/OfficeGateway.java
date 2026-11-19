@@ -35,43 +35,54 @@ public class OfficeGateway {
         @Value("${platform.office.service-id:}") String serviceId,@Value("${platform.office.max-bytes:268435456}") long maximum,@Value("${platform.office.checkpoint-enabled:false}") boolean checkpointEnabled) {
         this.enabled=enabled;this.checkpointEnabled=checkpointEnabled;this.browserOrigin=browserOrigin;this.serverOrigin=serverOrigin;this.callbackOrigin=callbackOrigin;this.version=version;this.inboxPath=inboxPath;this.outboxPath=outboxPath;this.tempPath=tempPath;this.serviceId=serviceId;this.maximum=maximum;
     }
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.company.platform.operations.DeploymentSettings deployment;
+    private boolean settingEnabled(){return deployment==null?enabled:deployment.flag("platform.office.enabled",enabled);}
+    private String settingBrowserOrigin(){return deployment==null?browserOrigin:deployment.text("platform.office.browser-origin",browserOrigin);}
+    private String settingServerOrigin(){return deployment==null?serverOrigin:deployment.text("platform.office.server-origin",serverOrigin);}
+    private String settingCallbackOrigin(){return deployment==null?callbackOrigin:deployment.text("platform.office.callback-origin",callbackOrigin);}
+    private String settingVersion(){return deployment==null?version:deployment.text("platform.office.expected-version",version);}
+    private String settingInboxPath(){return deployment==null?inboxPath:deployment.text("platform.office.inbox-key-file",inboxPath);}
+    private String settingOutboxPath(){return deployment==null?outboxPath:deployment.text("platform.office.outbox-key-file",outboxPath);}
+    private String settingTempPath(){return deployment==null?tempPath:deployment.text("platform.office.temporary",tempPath);}
+
     /** 仅返回非秘密可用性；未部署不产生虚假的编辑成功页面。 */
-    public Map<String,Object> status() {return Sql.map("enabled",enabled,"state",enabled?"CONFIGURED":"NOT_CONFIGURED","maximumBytes",maximum,"expectedVersion",version,"checkpointEnabled",checkpointEnabled);}
+    public Map<String,Object> status() {return Sql.map("enabled",settingEnabled(),"state",settingEnabled()?"CONFIGURED":"NOT_CONFIGURED","maximumBytes",maximum,"expectedVersion",settingVersion(),"checkpointEnabled",checkpointEnabled);}
     public boolean checkpointEnabled(){return checkpointEnabled;}
     public void requireCheckpoint(){if(!checkpointEnabled)throw new ApiFault(409,"OFFICE_CHECKPOINT_DISABLED","当前仅支持所有参与人退出后的最终保存，请关闭编辑并等待保存结果");}
     /** 启用前校验所有地址、独立密钥和空间限制；HTTP仅允许本机回环隔离演练。 */
     public void require() {
-        if(!enabled)throw new ApiFault(503,"OFFICE_NOT_CONFIGURED","Office文档服务尚未配置");
-        origin(browserOrigin);origin(serverOrigin);origin(callbackOrigin);
-        if(version.isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(inboxPath),secret(outboxPath)))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();
+        if(!settingEnabled())throw new ApiFault(503,"OFFICE_NOT_CONFIGURED","Office文档服务尚未配置");
+        origin(settingBrowserOrigin());origin(settingServerOrigin());origin(settingCallbackOrigin());
+        if(settingVersion().isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(settingInboxPath()),secret(settingOutboxPath())))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();
         Inputs.uuid(managedIdentities==null?serviceId:managedIdentities.configured("platform.office.service-id"));
     }
     /** CSP仅添加配置中精确的编辑器来源，不开启通配脚本或任意iframe。 */
-    public String browserOrigin() {if(!enabled)return "";origin(browserOrigin);return browserOrigin;}
+    public String browserOrigin() {if(!settingEnabled())return "";origin(settingBrowserOrigin());return settingBrowserOrigin();}
     /** 稳定回调URL在编辑开始时固定，不能由浏览器覆盖。 */
-    public String callback(UUID session){require();return callbackOrigin+"/integrations/onlyoffice/callback/"+session;}
+    public String callback(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/callback/"+session;}
     /** 源文件地址仍需要文档服务outbox签名；看到URL的浏览器也不能直接下载。 */
-    public String source(UUID session){require();return callbackOrigin+"/integrations/onlyoffice/source/"+session;}
+    public String source(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/source/"+session;}
     /** 转换源与编辑源分别绑定固定版本，不向浏览器签发原件下载凭据。 */
-    public String conversionSource(UUID conversion){require();return callbackOrigin+"/integrations/onlyoffice/conversion-source/"+conversion;}
+    public String conversionSource(UUID conversion){require();return settingCallbackOrigin()+"/integrations/onlyoffice/conversion-source/"+conversion;}
     /** 档案转换使用独立取源上下文，不能用公盘转换ID读取档案。 */
-    public String archiveConversionSource(UUID conversion){require();return callbackOrigin+"/integrations/onlyoffice/archive-source/"+conversion;}
+    public String archiveConversionSource(UUID conversion){require();return settingCallbackOrigin()+"/integrations/onlyoffice/archive-source/"+conversion;}
     public UUID service(){require();return Inputs.uuid(managedIdentities==null?serviceId:managedIdentities.configured("platform.office.service-id"));}
     public long maximum(){return maximum;}
     /** 浏览器只取得签过名的固定配置，不取得任何签名密钥。 */
-    public String sign(Map<String,Object> payload){require();return jwt(payload,secret(inboxPath));}
+    public String sign(Map<String,Object> payload){require();return jwt(payload,secret(settingInboxPath()));}
     /** 使用回调专用密钥验证原生JWT，完全采用已签名负载，不合并未签名JSON字段。 */
     @SuppressWarnings("unchecked")
     public Map<String,Object> nativePayload(String token,boolean header) {
-        require();Map<String,Object> payload=verify(token,secret(outboxPath));Object nested=payload.get("payload");
+        require();Map<String,Object> payload=verify(token,secret(settingOutboxPath()));Object nested=payload.get("payload");
         if(header){if(!(nested instanceof Map<?,?>))throw ApiFault.denied();return (Map<String,Object>)nested;}
         return payload;
     }
     /** 校验实际文档服务版本，防止部署升级后继续按未验收的回调协议工作。 */
-    public void verifyVersion(){var result=command(Map.of("c","version"));if(!version.equals(result.get("version")))throw new ApiFault(503,"OFFICE_VERSION_MISMATCH","Office服务版本与已配置版本不一致");}
+    public void verifyVersion(){var result=command(Map.of("c","version"));if(!settingVersion().equals(result.get("version")))throw new ApiFault(503,"OFFICE_VERSION_MISMATCH","Office服务版本与已配置版本不一致");}
     /** 命令返回成功仅表示已接收，平台保存成功由后续回调和真实检测决定。 */
     @SuppressWarnings("unchecked") public Map<String,Object> command(Map<String,Object> payload) {
-        require();try {var body=new LinkedHashMap<>(payload);body.put("token",sign(payload));var request=HttpRequest.newBuilder(URI.create(serverOrigin+"/command")).timeout(Duration.ofSeconds(15)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(Crypto.json(body))).build();
+        require();try {var body=new LinkedHashMap<>(payload);body.put("token",sign(payload));var request=HttpRequest.newBuilder(URI.create(settingServerOrigin()+"/command")).timeout(Duration.ofSeconds(15)).header("Content-Type","application/json").POST(HttpRequest.BodyPublishers.ofString(Crypto.json(body))).build();
             var response=exchange(request,HttpResponse.BodyHandlers.ofByteArray(),65536,15);if(response.statusCode()!=200)throw SystemFailure.OFFICE_REQUEST_FAILED.fault();return Crypto.JSON.readValue(response.body(),Map.class);
         }catch(ApiFault fault){throw fault;}catch(Exception failure){if(failure instanceof InterruptedException)Thread.currentThread().interrupt();throw new ApiFault(503,"OFFICE_UNAVAILABLE","Office服务请求失败，保存结果尚未确认，请先查询保存记录",failure);}
     }
@@ -82,7 +93,7 @@ public class OfficeGateway {
     public Path convertArchive(UUID conversion,String inputType)throws IOException{return convert(conversion,inputType,"pdf",archiveConversionSource(conversion));}
     @SuppressWarnings("unchecked") private Path convert(UUID conversion,String inputType,String outputType,String source) throws IOException {
         require();String key="ims-convert-"+conversion;var body=Sql.map("async",false,"key",key,"filetype",inputType,"outputtype",outputType,"title","converted."+outputType,"url",source);body.put("token",sign(body));
-        try {var request=HttpRequest.newBuilder(URI.create(serverOrigin+"/converter?shardkey="+key)).timeout(Duration.ofSeconds(120)).header("Content-Type","application/json").header("Accept","application/json").POST(HttpRequest.BodyPublishers.ofString(Crypto.json(body))).build();
+        try {var request=HttpRequest.newBuilder(URI.create(settingServerOrigin()+"/converter?shardkey="+key)).timeout(Duration.ofSeconds(120)).header("Content-Type","application/json").header("Accept","application/json").POST(HttpRequest.BodyPublishers.ofString(Crypto.json(body))).build();
             var response=exchange(request,HttpResponse.BodyHandlers.ofByteArray(),65536,120);if(response.statusCode()!=200)throw new ApiFault(503,"OFFICE_CONVERSION_UNAVAILABLE","Office转换服务暂不可用，请稍后重试");Map<String,Object> result=Crypto.JSON.readValue(response.body(),Map.class);
             if(result.get("error") instanceof Number error&&error.intValue()!=0)throw new ApiFault(422,"OFFICE_CONVERSION_FAILED","Office未能转换该文件，请检查格式、密码或原件内容");
             if(!Boolean.TRUE.equals(result.get("endConvert"))||!outputType.equals(result.get("fileType")))throw new ApiFault(503,"OFFICE_CONVERSION_PENDING","转换尚未确认完成，请稍后重试");return candidate(Inputs.text(result,"fileUrl",8192));
@@ -90,9 +101,9 @@ public class OfficeGateway {
     }
     /** 下载限制同时覆盖正文大小与整体耗时，慢正文不能长期占住转换工作位。 */
     public Path candidate(String address) throws IOException {
-        require();URI uri=URI.create(address),base=URI.create(serverOrigin);
+        require();URI uri=URI.create(address),base=URI.create(settingServerOrigin());
         if(!Objects.equals(uri.getScheme(),base.getScheme())||!Objects.equals(uri.getHost(),base.getHost())||uri.getPort()!=base.getPort()||uri.getUserInfo()!=null||uri.getFragment()!=null||!uri.getPath().startsWith("/cache/files/")||uri.getPath().contains(".."))throw ApiFault.denied();
-        Path directory=PrivateFiles.directory(tempPath),target=Files.createTempFile(directory,"office-",".candidate");PrivateFiles.restrict(target);boolean complete=false;
+        Path directory=PrivateFiles.directory(settingTempPath()),target=Files.createTempFile(directory,"office-",".candidate");PrivateFiles.restrict(target);boolean complete=false;
         try {var request=HttpRequest.newBuilder(uri).timeout(Duration.ofSeconds(45)).GET().build();var response=exchange(request,HttpResponse.BodyHandlers.ofFile(target),maximum,45);
             if(response.statusCode()!=200||Files.size(target)==0)throw SystemFailure.OFFICE_RESPONSE_INVALID.fault();complete=true;return target;
         }catch(InterruptedException failure){Thread.currentThread().interrupt();throw SystemFailure.OFFICE_REQUEST_FAILED.fault(failure);}finally{if(!complete)Files.deleteIfExists(target);}

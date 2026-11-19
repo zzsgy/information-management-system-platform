@@ -44,6 +44,12 @@
     <!-- 前端先由 scripts/java/build 构建，再打入同一个 JAR；运行服务器不需要 Node。 -->
     <resources>
       <resource><directory>src/main/resources</directory></resource>
+      <!-- 独立执行器随JAR提供下载，仅包含公开脚本和模板，不包含部署凭据。 -->
+      <resource><directory>../scripts/platform</directory><targetPath>deployment-agent</targetPath><includes>
+        <include>operations-agent.cjs</include><include>operations-runner.cjs</include><include>maintenance.cjs</include><include>Install-OperationsAgent.ps1</include><include>Set-OperationsService.ps1</include>
+      </includes></resource>
+      <resource><directory>../docs</directory><targetPath>deployment-agent</targetPath><includes><include>service-configuration.md</include></includes></resource>
+      <resource><directory>../docs/deployment-backup-restore</directory><targetPath>deployment-agent</targetPath><includes><include>maintenance.template.json</include></includes></resource>
       <resource><directory>${ims.web.directory}</directory><targetPath>static</targetPath></resource>
     </resources>
     <plugins><plugin><groupId>org.springframework.boot</groupId><artifactId>spring-boot-maven-plugin</artifactId><configuration><mainClass>${ims.main.class}</mainClass></configuration></plugin></plugins>

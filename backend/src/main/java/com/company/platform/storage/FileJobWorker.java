@@ -9,7 +9,7 @@ import java.util.*;
 
 /** 显式启用的有界文件工作器；大文件扫描不占用HTTP线程，任务仍受当前用户授权约束。 */
 @Component
-@ConditionalOnProperty(prefix="platform.file-worker",name="enabled",havingValue="true")
+
 public class FileJobWorker {
     /** 有界工作器共享服务，阅读与扫描分别执行各自的授权。 */
     private final Sql db;private final IdentityService identity;private final UploadAssembly assembly;private final FileInspectionService inspection;private final ControlledReadService reading;
@@ -17,8 +17,10 @@ public class FileJobWorker {
     private final ObjectProvider<FileDomainJobs> domains;
     public FileJobWorker(Sql db,IdentityService identity,UploadAssembly assembly,FileInspectionService inspection,ControlledReadService reading,ObjectProvider<FileDomainJobs> domains) { this.db=db;this.identity=identity;this.assembly=assembly;this.inspection=inspection;this.reading=reading;this.domains=domains; }
     /** 每轮最多处理两件；行锁和租约负责多实例竞争，不在内存无限堆积。 */
+    @org.springframework.beans.factory.annotation.Autowired private org.springframework.core.env.Environment environment;
     @Scheduled(fixedDelayString="${platform.file-worker.delay-ms:3000}")
     public void tick() {
+        if(!environment.getProperty("platform.file-worker.enabled",Boolean.class,false))return;
         for(var job:db.rows("SELECT id,job_type,requester_session_id FROM ops.job WHERE job_type IN ('FILE_ASSEMBLY_CHECK','FILE_CHECK','PREVIEW_METADATA','ARCHIVE_PREVIEW','ARCHIVE_EXPORT') AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) AND requester_session_id IS NOT NULL AND (next_run_at IS NULL OR next_run_at<=CURRENT_TIMESTAMP) ORDER BY id LIMIT 2")) {
             UUID request=UUID.randomUUID();
             try {

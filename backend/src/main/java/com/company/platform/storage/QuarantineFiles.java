@@ -28,7 +28,7 @@ public final class QuarantineFiles {
     private void prepare(Path root) throws IOException {
         for(Path p=root;p!=null;p=p.getParent()) if(Files.isSymbolicLink(p)) throw SystemFailure.STORAGE_PATH_INVALID.fault();
         if(!Files.exists(root,LinkOption.NOFOLLOW_LINKS)) {
-            Files.createDirectory(root); PrivateFiles.restrict(root);
+            Files.createDirectories(root); PrivateFiles.restrict(root);
             Files.writeString(root.resolve("platform-instance"),instance.toString(),StandardOpenOption.CREATE_NEW);
         }
         Path marker=root.resolve("platform-instance");

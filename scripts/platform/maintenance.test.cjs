@@ -133,3 +133,10 @@ test("合法隔离配置通过并保留独立持久根", () => {
   assert.equal(current.url.port, "55444");
   assert.notEqual(current.roots.primary, current.roots.secondary);
 });
+
+test("明确指定本机部署源库才能备份正式库名，不能靠此放宽远程或恢复边界",()=>{
+  const accepted=config({IMS_PLATFORM_DB_URL:"jdbc:postgresql://127.0.0.1:5432/ims_company",IMS_BACKUP_SOURCE_DATABASE:"ims_company"});
+  assert.equal(tool.settings(accepted).name,"ims_company");
+  assert.throws(()=>tool.settings(config({IMS_PLATFORM_DB_URL:"jdbc:postgresql://127.0.0.1:5432/other",IMS_BACKUP_SOURCE_DATABASE:"ims_company"})));
+  assert.throws(()=>tool.settings(config({IMS_PLATFORM_DB_URL:"jdbc:postgresql://192.168.20.222:5432/ims_company",IMS_BACKUP_SOURCE_DATABASE:"ims_company"})));
+});

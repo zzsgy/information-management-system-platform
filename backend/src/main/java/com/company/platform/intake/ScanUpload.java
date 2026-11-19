@@ -19,6 +19,10 @@ public class ScanUpload {
     /** 检测器专用身份与调度开关；模拟验收关闭调度后显式执行任务。 */
     private final ServiceIdentities services;private final String scannerId;private final boolean enabled;
     public ScanUpload(Sql db,ScanIntake intake,StorageFiles files,FileScanEngine scanner,ReadingRuntime runtime,PlatformTransactionManager manager,ServiceIdentities services,@Value("${platform.scanner.archive-service-id:}") String scannerId,@Value("${platform.scan-intake.worker-enabled:true}") boolean enabled){this.db=db;this.services=services;this.intake=intake;this.files=files;this.scanner=scanner;this.runtime=runtime;this.tx=new TransactionTemplate(manager);this.scannerId=scannerId;this.enabled=enabled;}
+    @org.springframework.beans.factory.annotation.Autowired(required=false)
+    private com.company.platform.operations.DeploymentSettings deployment;
+    private boolean settingEnabled(){return deployment==null?enabled:deployment.flag("platform.scan-intake.worker-enabled",enabled);}
+
     /** 创建设备分片会话；同一稳定操作号不能重新指向另一档案或另一轮返工。 */
     @Transactional
     public Map<String,Object> create(UUID service,UUID operation,Map<String,Object> body){
@@ -43,7 +47,7 @@ public class ScanUpload {
     }
     /** 小批量租约调度，多个服务实例不会同时提交同一检测结果。 */
     @Scheduled(fixedDelayString="${platform.scan-intake.worker-delay-ms:5000}")
-    public void tick(){if(!enabled)return;for(var job:db.rows("SELECT id FROM ops.job WHERE job_type='SCAN_FILE_CHECK' AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) ORDER BY id LIMIT 2"))try{process((UUID)job.get("id"));}catch(Exception failure){
+    public void tick(){if(!settingEnabled())return;for(var job:db.rows("SELECT id FROM ops.job WHERE job_type='SCAN_FILE_CHECK' AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) ORDER BY id LIMIT 2"))try{process((UUID)job.get("id"));}catch(Exception failure){
             // 领取之前的撤权或轮次变化也形成失败状态，不能长期阻塞队列的前两项。
             tx.executeWithoutResult(status->{int changed=db.update("UPDATE ops.job SET state='FAILED',error_code='SCAN_SCOPE_OR_PROTECTION_INVALID',lease_owner=NULL,lease_until=NULL WHERE id=? AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP))",job.get("id"));if(changed>0){var context=db.one("SELECT s.service_identity_id,i.batch_id,i.id FROM ops.job j JOIN storage.upload_session s ON s.id=j.business_ref::uuid JOIN archive.scan_upload_binding u ON u.upload_session_id=s.id JOIN archive.scan_item i ON i.id=u.item_id WHERE j.id=?",job.get("id"));if(context!=null)intake.event((UUID)context.get("batch_id"),(UUID)context.get("id"),"FILE_CHECK_FAILED",null,(UUID)context.get("service_identity_id"),Sql.map("jobId",job.get("id"),"errorCode","SCAN_SCOPE_OR_PROTECTION_INVALID"));}});
         }}
