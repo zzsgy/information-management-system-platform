@@ -1083,8 +1083,9 @@ function replyLabel(reply?: string) {
             class="flow-dialog-section"
           >
             <h3>会后待办与反馈</h3>
-            <ul v-if="detail.items.length" class="meeting-history">
+            <ul v-if="detail.items.length" class="meeting-history meeting-follow-up-list">
               <li v-for="task in detail.items" :key="task.id">
+                <div class="meeting-follow-up-copy">
                 <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{
                   plainPreview(task.content)
                 }}</a>
@@ -1096,6 +1097,12 @@ function replyLabel(reply?: string) {
                   >
                   · 截止 {{ portalTime(task.dueAt) }}</small
                 >
+                </div>
+                <a v-if="task.canOpen" class="secondary meeting-follow-up-action"
+                  :href="'#/meetings?item=' + task.id">
+                  {{ task.assigneeId === profile?.user.id && ['PENDING', 'RETURNED'].includes(task.state ?? '')
+                    ? '填写反馈' : '查看待办' }}
+                </a>
               </li>
             </ul>
             <p v-else class="booking-count">
@@ -1617,5 +1624,30 @@ function replyLabel(reply?: string) {
 }
 .meeting-page .meeting-section > button {
   justify-self: start;
+}
+</style>
+
+<style scoped>
+/* 操作入口位于事项右侧，窄屏时自然换行。 */
+.meeting-follow-up-list > li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.meeting-follow-up-copy {
+  flex: 1 1 260px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.meeting-follow-up-action {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  min-height: 40px;
+  padding: 8px 16px;
+  white-space: nowrap;
 }
 </style>
