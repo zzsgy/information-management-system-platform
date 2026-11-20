@@ -417,6 +417,36 @@ class MeetingIntegrationTest {
 
     /** 覆盖表格冲突、按人确认阅读与从会中结论分派会后反馈。 */
     @Test
+    void companyCoordinationAcceptsEmployeesAcrossDepartments() {
+        UUID company = (UUID) db.required("SELECT id FROM iam.department WHERE code='ROOT'").get("id");
+        UUID otherDepartment = (UUID) db.required("SELECT id FROM iam.department WHERE code='PD'").get("id");
+        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?", otherDepartment, outsider.userId());
+        String keyword = outsider.user().get("employeeNo").toString();
+        assertTrue(values(bookings.people(employee, Map.of("departmentId", company.toString(), "keyword", keyword)), "items").isEmpty());
+        assertEquals(outsider.userId(), values(bookings.people(employee, Map.of("departmentId", company.toString(),
+                "scope", "COORDINATION", "keyword", keyword)), "items").getFirst().get("id"));
+        assertTrue(values(bookings.people(employee, Map.of("departmentId", department.toString(),
+                "scope", "COORDINATION", "keyword", keyword)), "items").isEmpty());
+
+        var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        booking.put("materialTypes", List.of("COORDINATION"));
+        UUID id = bookings.create(organizer, request(), booking);
+        var item = ownedCoordination(Map.of("subject", "跨部门协调", "expected", "完成"));
+        item.put("personId", outsider.userId().toString());
+        var body = Map.<String, Object>of("kind", "COORDINATION", "rows", List.of(item));
+        assertEquals(400, assertThrows(ApiFault.class, () -> bookings.materials(employee, id, request(), body)).status);
+        item.put("category", "COMPANY");
+        item.put("departmentId", company.toString());
+        bookings.materials(employee, id, request(), body);
+        var material = values(attendee(organizer, id, employee), "materials").getFirst();
+        bookings.start(organizer, id, request());
+        bookings.end(organizer, id, request());
+        bookings.saveCoordination(organizer, id, Map.of("key", material.get("attendeeId") + ":0",
+                "conclusion", "由公司协调", "assigneeId", outsider.userId().toString()));
+        assertEquals(outsider.userId().toString(), values(bookings.detail(organizer, id), "coordinationResults").getFirst().get("assigneeId"));
+    }
+
+    @Test
     void importedMaterialsReadingAndCoordinationWorkThroughPublishing() throws IOException {
         var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
         booking.put("subject", "周报");
@@ -434,7 +464,6 @@ class MeetingIntegrationTest {
         assertFalse(attendee(employee, id, outsider).containsKey("readMaterialAt"));
 
         byte[] template = workbooks.download(organizer, id, true);
-        String departmentCode = db.required("SELECT code FROM iam.department WHERE id=?", department).get("code").toString();
         var wrongAuthor = filledWorkbook(template, "错误归属", "", Map.of("F", "姓名不符 " +
                 attendee(organizer, id, employee).get("employeeNo")));
         assertEquals(400, assertThrows(ApiFault.class, () -> workbooks.importMaterials(organizer, id, request(),
@@ -445,7 +474,7 @@ class MeetingIntegrationTest {
                 Map.of("kind", "COORDINATION", "rows", List.of(outsideDepartment)))).status);
         String file = filledWorkbook(template, "线下冲突内容", "", Map.of(
                 "B", "协调合同", "C", "确定条款", "D", "确认合同", "F", employeeLabel(employee),
-                "G", departmentCode, "H", employeeLabel(employee), "I", "需公司协调"));
+                "G", "ROOT", "H", employeeLabel(employee), "I", "需公司协调"));
         assertEquals(404, assertThrows(ApiFault.class, () -> workbooks.download(employee, id, false)).status);
         var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
         assertEquals(List.of(), preview.get("errors"));

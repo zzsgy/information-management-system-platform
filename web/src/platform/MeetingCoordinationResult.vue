@@ -102,6 +102,7 @@ async function save() {
             v-model="draft.assigneeId"
             :department-id="departmentId"
             :selected-name="draft.assigneeName"
+            :append-to="dialog"
             label="责任人（唯一）"
           />
         </label>

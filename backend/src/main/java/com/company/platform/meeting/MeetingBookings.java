@@ -51,12 +51,14 @@ public class MeetingBookings {
         this.audit = audit;
     }
 
-    /** 候选员工只返回可发起业务的在职个人，不返回通用账号及邮箱等字段。 */
+    /** 候选名单只返回在职个人的基础资料。协调事宜选择公司时，查询覆盖全部部门。 */
     public Map<String, Object> people(Actor actor, Map<String, String> query) {
         if (!actor.systemAdministrator()) employee(actor.userId());
-        Inputs.only(query, "keyword", "departmentId", "page");
+        Inputs.only(query, "keyword", "departmentId", "page", "scope");
         String keyword = optional(query, "keyword", 128);
         UUID department = Inputs.nullableUuid(query.get("departmentId"));
+        if ("COORDINATION".equals(Inputs.choice(query.getOrDefault("scope", "DEPARTMENT"), "DEPARTMENT", "COORDINATION")))
+            department = coordinationDepartmentScope(department);
         int page = Inputs.integer(query.get("page"), 1, 1, 100000);
         var rows = db.rows("""
                 SELECT id,name,employee_no,department_id FROM iam.user_account
@@ -573,10 +575,18 @@ public class MeetingBookings {
 
     /** 线上填报、Excel 导入与发起人修改共用配合部门的在职员工范围。 */
     private Map<String, Object> coordinationAssignee(UUID assignee, UUID department) {
+        UUID scope = coordinationDepartmentScope(department);
         var person = db.one("SELECT name FROM iam.user_account WHERE id=? AND " + ACTIVE_EMPLOYEE
-                + " AND (?::uuid IS NULL OR department_id=?)", assignee, department, department);
-        if (person == null) throw ApiFault.invalid("责任人须为配合部门的有效员工");
+                + " AND (?::uuid IS NULL OR department_id=?)", assignee, scope, scope);
+        if (person == null) throw ApiFault.invalid(scope == null ? "责任人须为公司的有效员工" : "责任人须为配合部门的有效员工");
         return person;
+    }
+
+    /** 公司根节点代表全公司，普通部门只包含本部门。空值兼容旧协调事项。 */
+    private UUID coordinationDepartmentScope(UUID department) {
+        if (department != null && db.one("SELECT id FROM iam.department WHERE id=? AND code='ROOT'", department) != null)
+            return null;
+        return department;
     }
 
     /** 作者取所归属的受邀员工，代填后仍显示外地填报人的姓名和部门。 */
