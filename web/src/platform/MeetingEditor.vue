@@ -203,13 +203,21 @@ async function save() {
                 autofocus
               />
             </label>
-            <label v-if="!original && options.canWeekly">
-              会议类型
-              <select v-model="data.kind">
-                <option value="ORDINARY">普通会议</option>
-                <option value="WEEKLY">周会</option>
-              </select>
-            </label>
+            <div v-if="!original" class="booking-kind">
+              <label>
+                会议类型
+                <select
+                  v-model="data.kind"
+                  :aria-describedby="options.canWeekly ? undefined : 'meeting-weekly-requirement'"
+                >
+                  <option value="ORDINARY">普通会议</option>
+                  <option value="WEEKLY" :disabled="!options.canWeekly">周会</option>
+                </select>
+              </label>
+              <small v-if="!options.canWeekly" id="meeting-weekly-requirement">
+                发起周会需要「周会组织人员」角色。
+              </small>
+            </div>
             <div class="booking-wide booking-time-zone">
               会议时间（北京时间）
             </div>
@@ -474,6 +482,11 @@ async function save() {
 }
 .booking-fields {
   gap: 14px 20px;
+}
+.booking-kind {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 .booking-time-zone {
   color: var(--text-secondary);
