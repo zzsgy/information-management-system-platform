@@ -151,7 +151,7 @@ public class ImportService implements StorageDomainPolicy {
             if(!Crypto.equal(digest(type,scope,checked),(String)locked.get("validation_digest"))
                 || (type.equals("EMPLOYEE")?valid.isEmpty():valid.size()!=checked.size()))
                 throw ApiFault.conflict("人员、部门、模板或目录已变化，请重新上传预检；本批未写入任何业务记录");
-            if(type.equals("ARCHIVE"))archive.apply(context.actor(),id,valid);else applyDirectory(id,type,valid);
+            if(type.equals("ARCHIVE"))archive.apply(context.actor(),id,valid);else applyDirectory(id,type,valid,context.actor().userId());
             db.update("UPDATE ops.import_batch SET state='CONFIRMED',confirmed_at=CURRENT_TIMESTAMP,row_version=row_version+1 WHERE id=?",id);return detail(context.actor(),id);
         };
         if(local)return commands.run(context,body,"IMPORT_BATCH",id,"CONFIRM_IMPORT",
@@ -343,7 +343,7 @@ public class ImportService implements StorageDomainPolicy {
     }
 
     /** 先创建同批主管或上级部门，再创建下属，整批仍在同一事务提交。 */
-    private void applyDirectory(UUID batch,String type,List<ArchiveImport.Prepared> rows){
+    private void applyDirectory(UUID batch,String type,List<ArchiveImport.Prepared> rows,UUID operatorId){
         boolean employee=type.equals("EMPLOYEE");
         Map<String,UUID> created=new HashMap<>();
         List<ArchiveImport.Prepared> remaining=new ArrayList<>(rows);
@@ -362,7 +362,7 @@ public class ImportService implements StorageDomainPolicy {
                     if(!created.containsKey(parent))continue;
                     body.put("parentId",created.get(parent).toString());
                 }
-                var object=employee?directory.createImportedUser(body):directory.createDepartment(body);
+                var object=employee?directory.createImportedUser(body,operatorId):directory.createDepartment(body);
                 UUID id=Inputs.uuid(object.get("id"));
                 created.put((String)body.get(employee?"employeeNo":"code"),id);
                 db.update("UPDATE ops.import_row SET object_type=?,object_id=?,result='CREATED' WHERE batch_id=? AND row_no=?",type,id,batch,row.number());

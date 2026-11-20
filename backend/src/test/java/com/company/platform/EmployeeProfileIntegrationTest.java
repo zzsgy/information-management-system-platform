@@ -1,5 +1,7 @@
 package com.company.platform;
 
+import com.company.platform.intake.ImportService;
+import com.company.platform.intake.ImportWorkbook;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -11,7 +13,7 @@ import static org.junit.jupiter.api.Assertions.*;
 
 /** 使用真实事务、认证与组织表验证人员编辑；合成账号只存在于本批独立库。 */
 @EnabledIfEnvironmentVariable(named="IMS_EMPLOYEE_EDIT_INTEGRATION",matches="yes")
-@SpringBootTest(classes=PlatformApplication.class,webEnvironment=SpringBootTest.WebEnvironment.NONE,properties={"spring.config.name=platform","server.ssl.enabled=false","platform.messaging.schedule-enabled=false","platform.notifications.schedule-enabled=false","platform.file-worker.enabled=false","platform.scan-intake.worker-enabled=false","platform.operations.schedule-enabled=false"})
+@SpringBootTest(classes=PlatformApplication.class,webEnvironment=SpringBootTest.WebEnvironment.NONE,properties={"spring.config.name=platform","server.ssl.enabled=false","platform.messaging.schedule-enabled=false","platform.notifications.schedule-enabled=false","platform.file-worker.enabled=false","platform.scan-intake.worker-enabled=false","platform.operations.schedule-enabled=false","platform.employee-import.local-workbook=true"})
 class EmployeeProfileIntegrationTest {
     @DynamicPropertySource static void isolated(DynamicPropertyRegistry registry) {
         if(!System.getenv("IMS_PLATFORM_DB_URL").matches("jdbc:postgresql://127\\.0\\.0\\.1:55475/ims_platform_dev_[0-9]+"))throw new IllegalStateException("只允许人员编辑专用隔离库");
@@ -21,6 +23,7 @@ class EmployeeProfileIntegrationTest {
     @Autowired DirectoryService directory;
     @Autowired Commands commands;
     @Autowired AccountRecovery recovery;
+    @Autowired ImportService imports;
     private Actor admin;
     private UUID employee;
     private static final String PASSWORD="isolated-profile-password";
@@ -133,7 +136,31 @@ class EmployeeProfileIntegrationTest {
         for(String weak:List.of("12345678","abcdefgh","Abc1234",no))assertThrows(ApiFault.class,()->identity.password(initial,Sql.map("temporaryPassword",no,"newPassword",weak),true,UUID.randomUUID()));
         identity.password(initial,Sql.map("temporaryPassword",no,"newPassword","Welcome8"),true,UUID.randomUUID());
         assertThrows(ApiFault.class,()->identity.background(initial.sessionId()));assertThrows(CredentialFault.class,()->login(no,no));
-        assertFalse(login(no,"Welcome8").setupRequired());assertEquals(0,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD' AND consumed_at IS NULL",user));
+        Actor active=login(no,"Welcome8");
+        assertFalse(active.setupRequired());
+        assertEquals(List.of("ARCHIVE.STAFF","DRIVE.STAFF","PLATFORM.MEMBER"),
+                active.roles().stream().map(role->role.get("module")+"."+role.get("code")).toList());
+        assertEquals(0,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD' AND consumed_at IS NULL",user));
+    }
+
+    @Test void employeeWorkbookAssignsAllDefaultRoles() {
+        String no="IMPORT-"+employee;
+        byte[] workbook=ImportWorkbook.workbook("EMPLOYEE",List.of(Sql.map("employeeNo",no,
+                "name","隔离导入员工","departmentCode","AD","companyEmail",no+"@biolink.com")));
+        var preview=imports.createEmployeeWorkbook(credentialContext("IMPORT_BATCH",ApiController.COLLECTION,"CREATE_IMPORT",null),
+                Sql.map("workbook",Base64.getEncoder().encodeToString(workbook),"templateVersion",ImportWorkbook.VERSION));
+        assertEquals("READY",preview.get("state"),preview.toString());
+        UUID batch=Inputs.uuid(preview.get("id"));
+        var confirmed=imports.confirm(credentialContext("IMPORT_BATCH",batch,"CONFIRM_IMPORT",1),batch,
+                Sql.map("validationDigest",preview.get("validationDigest")));
+        assertEquals("CONFIRMED",confirmed.get("state"));
+        var roles=db.rows("""
+                SELECT ur.module || '.' || ur.role_code AS role FROM iam.user_role ur
+                JOIN iam.user_account u ON u.id=ur.user_id
+                WHERE u.employee_no=? AND ur.assigned_by=? AND ur.state='ACTIVE' ORDER BY ur.module
+                """,no,admin.userId());
+        assertEquals(List.of("ARCHIVE.STAFF","DRIVE.STAFF","PLATFORM.MEMBER"),
+                roles.stream().map(role->role.get("role")).toList());
     }
     @Test void repeatedResetOfSameEmployeeNumberIsValidAndIdempotent(){
         var result=createWithEmployeePassword();UUID user=Inputs.uuid(result.get("id"));String no=result.get("employeeNo").toString();Actor old=login(no,no);

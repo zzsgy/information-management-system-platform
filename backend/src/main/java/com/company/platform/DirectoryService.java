@@ -177,15 +177,15 @@ public class DirectoryService {
 
     /** 初始密码使用工号，24小时内完成强制改密后才可进入业务。 */
     public Map<String, Object> createUser(Commands.Context ctx, Map<String, Object> body) {
-        return createUser(body, true);
+        return createUser(body, true, ctx.actor().userId());
     }
 
     /** 已确认的员工批次允许空白名片字段，沿用账号创建和初始凭据流程。 */
-    public Map<String, Object> createImportedUser(Map<String, Object> body) {
-        return createUser(body, false);
+    public Map<String, Object> createImportedUser(Map<String, Object> body, UUID operatorId) {
+        return createUser(body, false, operatorId);
     }
 
-    private Map<String, Object> createUser(Map<String, Object> body, boolean requireProfile) {
+    private Map<String, Object> createUser(Map<String, Object> body, boolean requireProfile, UUID operatorId) {
         Inputs.only(body, "employeeNo", "name", "departmentId", "companyEmail", "organizationName", "jobTitle", "supervisorId", "mobilePhone", "contactEmail");
         UUID department = Inputs.uuid(body.get("departmentId"));
         activeDepartment(department);
@@ -203,6 +203,7 @@ public class DirectoryService {
                 """, id, employee, name, department, email, Crypto.password(temporary),
                 Objects.requireNonNullElse(details.organization(), DEFAULT_EMPLOYEE_ORGANIZATION),
                 details.title(), details.supervisor(), details.phone(), details.contactEmail());
+        db.rows("SELECT iam.assign_employee_default_roles(?,?)", id, operatorId);
         delivery.issue(id, employee, email);
         return user(id);
     }
