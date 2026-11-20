@@ -178,7 +178,7 @@ public class MeetingWorkbooks {
     }
 
 
-    /** 汇总导出沿用提交时的姓名和部门，协调结论按原事项行关联。 */
+    /** 汇总保留填报人信息，配合部门与责任人优先展示发起人改派结果。 */
     private List<Map<String, Object>> exportRows(UUID id, Map<String, Object> meeting) {
         var results = new HashMap<Object, Map<String, Object>>();
         for (var result : bookings.coordinationResults(meeting)) results.put(result.get("key"), result);
@@ -199,8 +199,10 @@ public class MeetingWorkbooks {
                         var line = new LinkedHashMap<>(author);
                         line.put("category", "COMPANY".equals(value(row, "category")) ? "需公司协调" : "需其他部门配合");
                         line.put("coord", value(row, "subject"));
-                        for (String field : List.of("support", "expected", "department")) line.put(field, value(row, field));
+                        for (String field : List.of("support", "expected")) line.put(field, value(row, field));
                         var result = results.get(material.get("attendee_id") + ":" + index);
+                        line.put("department", result != null && result.get("department") != null
+                                ? result.get("department") : value(row, "department"));
                         line.put("assignee", result != null && result.get("assigneeName") != null
                                 ? result.get("assigneeName") : value(row, "assigneeName"));
                         if (result != null) {

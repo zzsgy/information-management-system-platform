@@ -56,7 +56,8 @@ public class MeetingFollowUp {
             for (var result : coordination) {
                 if (!Boolean.TRUE.equals(result.get("followUp"))) continue;
                 items.add(new DraftItem(result.get("subject") + "\n" + result.get("conclusion"),
-                        Inputs.uuid(result.get("assigneeId")), MeetingBookings.inputTime(result.get("dueAt"))));
+                        Inputs.uuid(result.get("assigneeId")), MeetingBookings.inputTime(result.get("dueAt")),
+                        (String) result.get("key")));
             }
         }
         if (!trackFollowUp && !items.isEmpty()) throw ApiFault.invalid("未开启会后反馈跟踪，不能分派会后待办");
@@ -76,13 +77,89 @@ public class MeetingFollowUp {
             for (var item : items) {
                 UUID itemId = UUID.randomUUID();
                 db.update("""
-                        INSERT INTO portal.meeting_item(id,meeting_id,assignee_id,content,due_at) VALUES (?,?,?,?,?)
-                        """, itemId, id, item.assignee(), item.content(), Timestamp.from(item.due()));
+                        INSERT INTO portal.meeting_item(id,meeting_id,assignee_id,content,due_at,coordination_key) VALUES (?,?,?,?,?,?)
+                        """, itemId, id, item.assignee(), item.content(), Timestamp.from(item.due()), item.coordinationKey());
                 bookings.notify(id, itemId, item.assignee(), "MEETING_ITEM_ASSIGNED", "你有一项会后待办");
             }
             bookings.notifyAttendees(id, "MEETING_MINUTES_PUBLISHED", "会议纪要已发布 " + meeting.get("subject"));
         }
         bookings.event(actor, request, id, publish ? "MEETING_MINUTES_PUBLISH" : "MEETING_MINUTES_SAVE");
+    }
+
+    /** 仅发起人更正已发布的决议，保留发布时间、共享范围和已生成待办。 */
+    @Transactional
+    public void reviseDecisions(Actor actor, UUID id, UUID request, int version, Map<String, Object> body) {
+        Inputs.only(body, "decisions");
+        if (!body.containsKey("decisions")) throw ApiFault.invalid("缺少会议决议");
+        String decisions = MeetingBookings.optional(body, "decisions", 12000);
+        identity.lockActor(actor);
+        var meeting = bookings.owned(actor, id);
+        MeetingBookings.checkVersion(meeting, version);
+        if (meeting.get("minutes_published_at") == null) throw ApiFault.conflict("请先发布会议纪要");
+        if (decisions == null && bookings.coordinationResults(meeting).isEmpty())
+            throw ApiFault.invalid("请填写会议决议");
+        db.update("""
+                UPDATE portal.meeting_booking SET minutes=jsonb_set(minutes,'{decisions}',?::jsonb),
+                    row_version=row_version+1 WHERE id=?
+                """, Crypto.json(decisions), id);
+        bookings.event(actor, request, id, "MEETING_DECISIONS_REVISE");
+    }
+
+    /** 发起人更正协调结果时，已关联的待办在同一事务同步。 */
+    @Transactional
+    public void saveCoordination(Actor actor, UUID id, UUID request, Map<String, Object> body) {
+        identity.lockActor(actor);
+        var meeting = bookings.owned(actor, id);
+        var result = bookings.saveCoordination(meeting, id, body);
+        if (meeting.get("minutes_published_at") != null && result.followUp()) {
+            var item = db.one("""
+                    SELECT * FROM portal.meeting_item WHERE meeting_id=? AND coordination_key=? FOR NO KEY UPDATE
+                    """, id, result.key());
+            if (item != null) {
+                reviseItem(actor, id, item, new DraftItem(result.subject() + "\n" + result.conclusion(),
+                        result.assignee(), result.due(), result.key()));
+            }
+        }
+        bookings.event(actor, request, id, "MEETING_COORDINATION_SAVE");
+    }
+
+    /** 仅发起人可更正手工待办。关联待办通过原协调事项更新，保持两处一致。 */
+    @Transactional
+    public void reviseItem(Actor actor, UUID id, UUID request, Map<String, Object> body) {
+        var draft = draftItem(body);
+        identity.lockActor(actor);
+        UUID meetingId = (UUID) db.required("SELECT meeting_id FROM portal.meeting_item WHERE id=?", id).get("meeting_id");
+        var meeting = bookings.owned(actor, meetingId);
+        if (meeting.get("minutes_published_at") == null) throw ApiFault.conflict("请先发布会议纪要");
+        var item = db.required("SELECT * FROM portal.meeting_item WHERE id=? FOR NO KEY UPDATE", id);
+        if (item.get("coordination_key") != null) throw ApiFault.invalid("请在关联协调事项中更正此待办");
+        bookings.employee(draft.assignee());
+        reviseItem(actor, meetingId, item, draft);
+        bookings.event(actor, request, meetingId, "MEETING_ITEM_REVISE");
+    }
+
+    /** 变更责任人或任务内容需按新要求重新反馈，单独调整截止时间保留已有办理状态。 */
+    private void reviseItem(Actor actor, UUID meeting, Map<String, Object> item, DraftItem draft) {
+        boolean newFeedback = !draft.assignee().equals(item.get("assignee_id")) || !draft.content().equals(item.get("content"));
+        if (!newFeedback && draft.due().equals(MeetingBookings.time(item, "due_at"))) return;
+        UUID id = (UUID) item.get("id");
+        var entry = Sql.map("state", "CORRECTED", "actorName", actor.user().get("name"), "at", bookings.now().toString(),
+                "text", newFeedback ? "任务内容或责任人已更正，需重新反馈。" : "截止时间已更正。",
+                "previous", Sql.map("content", item.get("content"), "assigneeId", item.get("assignee_id"),
+                        "dueAt", item.get("due_at"), "state", item.get("state")));
+        db.update("""
+                UPDATE portal.meeting_item SET content=?,assignee_id=?,due_at=?,
+                    state=CASE WHEN ? THEN 'PENDING' ELSE state END,
+                    confirmed_at=CASE WHEN ? THEN NULL ELSE confirmed_at END,
+                    history=history||jsonb_build_array(?::jsonb) WHERE id=?
+                """, draft.content(), draft.assignee(), Timestamp.from(draft.due()), newFeedback, newFeedback, Crypto.json(entry), id);
+        if (newFeedback) {
+            db.update("""
+                    UPDATE portal.meeting_booking SET closed_at=NULL,row_version=row_version+1 WHERE id=? AND closed_at IS NOT NULL
+                    """, meeting);
+        }
+        bookings.notify(meeting, id, draft.assignee(), "MEETING_ITEM_ASSIGNED",
+                newFeedback ? "会后待办已更正，请按最新要求反馈" : "会后待办的截止时间已调整");
     }
 
     /** 旧预约沿用原有逐项共享设置。 */
@@ -169,12 +246,12 @@ public class MeetingFollowUp {
                 """, state, Crypto.json(entry), state, id);
     }
 
-    private record DraftItem(String content, UUID assignee, Instant due) {}
+    private record DraftItem(String content, UUID assignee, Instant due, String coordinationKey) {}
 
     private DraftItem draftItem(Map<String, Object> body) {
         Inputs.only(body, "content", "assigneeId", "dueAt");
         return new DraftItem(Inputs.text(body, "content", 4000), Inputs.uuid(body.get("assigneeId")),
-                MeetingBookings.inputTime(body.get("dueAt")));
+                MeetingBookings.inputTime(body.get("dueAt")), null);
     }
 }
 

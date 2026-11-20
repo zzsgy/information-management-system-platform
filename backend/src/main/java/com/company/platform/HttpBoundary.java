@@ -51,7 +51,10 @@ public class HttpBoundary extends OncePerRequestFilter {
                 boolean employeeWorkbook=method.equals("POST")&&path.matches("/api/v1/imports/employee-workbook/(inspect|batches)");
                 // 会议 XLSX 同样使用 4 MiB 文件与 Base64 包装的正文上限。
                 boolean meetingWorkbook=method.equals("POST")&&path.matches("/api/v1/meetings/[0-9a-f-]+/workbooks/import");
-                long limit=employeeWorkbook||meetingWorkbook?6L*1024*1024:minutes?16L*1024*1024:part?8L*1024*1024:meetingMaterials?1024L*1024:importBatch?512L*1024:65536;
+                // 仅反馈正文和回复允许携带三张截图的 Base64 内容。
+                boolean feedback=method.equals("POST")&&(path.equals("/api/v1/portal/feedback")
+                        ||path.matches("/api/v1/admin/portal/feedback/[0-9a-f-]+/replies"));
+                long limit=feedback?9L*1024*1024:employeeWorkbook||meetingWorkbook?6L*1024*1024:minutes?16L*1024*1024:part?8L*1024*1024:meetingMaterials?1024L*1024:importBatch?512L*1024:65536;
                 if (request.getContentLengthLong()>limit || (request.getContentLengthLong()<0 && request.getHeader("Transfer-Encoding")!=null)) throw ApiFault.invalid("请求正文超过该接口上限");
             }
             // 托盘助手不依赖浏览器会话，仅这一条 POST 由提醒服务校验专用凭据。

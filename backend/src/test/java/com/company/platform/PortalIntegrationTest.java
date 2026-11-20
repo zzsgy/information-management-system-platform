@@ -16,6 +16,9 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.time.*;
 import java.net.URI;
 import java.net.http.*;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayOutputStream;
+import javax.imageio.ImageIO;
 import java.util.*;
 import java.util.concurrent.*;
 import static org.junit.jupiter.api.Assertions.*;
@@ -341,6 +344,56 @@ class PortalIntegrationTest {
     @ParameterizedTest @ValueSource(strings={"javascript:alert(1)","data:text/html,x","//example.test","https://user:pass@example.test/"}) void rejectsUnsafeSite(String url){status(400,()->site(admin,Sql.map("name","错误链接","url",url,"sortOrder",0,"enabled",true)));}
     @Test void feedbackIsPrivateAndReplayDoesNotDuplicate() {UUID op=UUID.randomUUID();var body=Sql.map("category","SUGGESTION","content","完善首页指引");UUID id=(UUID)work.submit(employee,op,UUID.randomUUID(),body).get("id");assertEquals(id,work.submit(employee,op,UUID.randomUUID(),body).get("id"));status(404,()->work.feedback(other,id,false));assertEquals(0L,work.feedbackList(other,Map.of(),false).get("total"));assertEquals(id,work.feedback(admin,id,true).get("id"));body.put("content","替换内容");status(409,()->work.submit(employee,op,UUID.randomUUID(),body));}
     @Test void concurrentFeedbackRetryCreatesOneRecord() throws Exception {UUID op=UUID.randomUUID();var body=Sql.map("category","OTHER","content","并发提交验收");try(var pool=Executors.newFixedThreadPool(2)){var a=pool.submit(()->work.submit(employee,op,UUID.randomUUID(),body));var b=pool.submit(()->work.submit(employee,op,UUID.randomUUID(),body));assertEquals(a.get(20,TimeUnit.SECONDS).get("id"),b.get(20,TimeUnit.SECONDS).get("id"));}assertEquals(1,db.count("SELECT count(*) FROM portal.feedback WHERE applicant_id=? AND operation_id=?",employee.userId(),op));}
+    @Test void markdownImagesInheritFeedbackVisibilityAndRollbackWithInvalidData() throws Exception {
+        var png = new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(2, 1, BufferedImage.TYPE_INT_RGB), "png", png);
+        UUID key = UUID.randomUUID(), operation = UUID.randomUUID();
+        var images = List.of(Sql.map("id",key.toString(),"data",Base64.getEncoder().encodeToString(png.toByteArray())));
+        String text = "**验收正文**\n\n![截图](feedback-image/" + key + ")";
+        var body = Sql.map("category","ISSUE","content",text,"contentFormat","MARKDOWN","images",images);
+        var submitted = work.submit(employee,operation,UUID.randomUUID(),body);
+        UUID id = (UUID) submitted.get("id");
+        assertEquals("MARKDOWN",submitted.get("contentFormat"));
+        assertEquals(text,submitted.get("content"));
+        assertEquals(id,work.submit(employee,operation,UUID.randomUUID(),body).get("id"));
+        assertEquals(1,db.count("SELECT count(*) FROM portal.feedback_image WHERE feedback_id=?",id));
+
+        var invalid = Sql.map("category","ISSUE","content",text,"contentFormat","MARKDOWN","images",
+                List.of(Sql.map("id",key.toString(),"data",Base64.getEncoder().encodeToString("not an image".getBytes(java.nio.charset.StandardCharsets.UTF_8)))));
+        UUID rejected = UUID.randomUUID();
+        status(400,() -> work.submit(employee,rejected,UUID.randomUUID(),invalid));
+        assertEquals(0,db.count("SELECT count(*) FROM portal.feedback WHERE operation_id=?",rejected));
+
+        var replyBody = Sql.map("body",text,"state","RESOLVED","contentFormat","MARKDOWN","images",images);
+        var context = context(admin,"PORTAL_FEEDBACK",id,"REPLY_FEEDBACK",1);
+        var replied = commands.run(context,replyBody,"PORTAL_FEEDBACK",id,"REPLY_FEEDBACK",
+                ()->admin.require("PLATFORM.FEEDBACK_MANAGE"),()->work.reply(context,id,replyBody),target->work.feedback(admin,target,true));
+        var reply = (Map<?,?>)((List<?>)replied.get("replies")).getFirst();
+        assertEquals("MARKDOWN",reply.get("contentFormat"));
+        assertEquals("LEGACY",feedback().get("contentFormat"));
+
+        String original = "/portal/feedback/" + id + "/images/" + id + "/" + key;
+        String response = "/portal/feedback/" + id + "/images/" + reply.get("id") + "/" + key;
+        var employeeImage = getFeedbackImage(employee, original);
+        assertEquals(200,employeeImage.statusCode());
+        assertEquals("image/png",employeeImage.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals("no-store",employeeImage.headers().firstValue("Cache-Control").orElseThrow());
+        assertEquals(2,ImageIO.read(new java.io.ByteArrayInputStream(employeeImage.body())).getWidth());
+        assertEquals(200,getFeedbackImage(admin,original).statusCode());
+        assertEquals(200,getFeedbackImage(employee,response).statusCode());
+        assertEquals(404,getFeedbackImage(other,original).statusCode());
+        assertEquals(404,getFeedbackImage(editor,response).statusCode());
+    }
+
+    /** 图片 GET 使用真实会话，覆盖办结答复的员工读取权限。 */
+    private HttpResponse<byte[]> getFeedbackImage(Actor actor,String path) throws Exception {
+        var token = identity.login(Sql.map("employeeNo",actor.user().get("employeeNo"),"password",passwords.get(actor.userId())),
+                UUID.randomUUID(),"feedback-image-test-"+UUID.randomUUID()).get("token");
+        var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/v1"+path))
+                .header("Cookie","IMS_SESSION="+token).GET().build();
+        return HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.ofByteArray());
+    }
+
     @Test void replyCreatesOneMessageReadIsIdempotentAndForeignReadDenied(){UUID id=(UUID)feedback().get("id");var body=Sql.map("body","已处理，请核对","state","RESOLVED");var ctx=context(admin,"PORTAL_FEEDBACK",id,"REPLY_FEEDBACK",1);for(int i=0;i<2;i++)commands.run(ctx,body,"PORTAL_FEEDBACK",id,"REPLY_FEEDBACK",()->admin.require("PLATFORM.FEEDBACK_MANAGE"),()->work.reply(ctx,id,body),key->work.feedback(admin,key,true));var messages=items(work.inbox(employee,Map.of("unreadOnly","true")));assertEquals(1,messages.size());UUID message=(UUID)messages.getFirst().get("id");status(403,()->work.readMessage(other,message));assertEquals("#/feedback?id="+id,work.readMessage(employee,message).get("entry"));var first=db.required("SELECT read_at FROM portal.feedback_reply WHERE id=?",message).get("read_at");work.readMessage(employee,message);assertEquals(first,db.required("SELECT read_at FROM portal.feedback_reply WHERE id=?",message).get("read_at"));assertEquals(0L,work.summary(employee).get("unreadCount"));}
     @Test void handlingQueueAndSummaryUseActualOpenFeedback(){long before=((Number)((Map<?,?>)work.summary(admin).get("todoSummary")).get("handling")).longValue();UUID id=(UUID)feedback().get("id");assertEquals(before+1,((Number)((Map<?,?>)work.summary(admin).get("todoSummary")).get("handling")).longValue());assertTrue(items(work.tasks(admin,Map.of("pageSize","100","category","HANDLING"))).stream().anyMatch(t->t.get("id").equals(id)));assertEquals(0L,work.tasks(employee,Map.of()).get("total"));}
     /** 带档案入口的空工作台也必须执行全部真实SQL分支，不能只覆盖平台管理员。 */

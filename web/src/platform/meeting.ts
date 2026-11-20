@@ -108,6 +108,8 @@ export interface MeetingDetail extends MeetingSummary {
   items: (Omit<MeetingItem, "state"> & {
     canOpen: boolean;
     state: string | null;
+    /** 由协调结论分派的待办指向该行的更正入口。 */
+    coordinationKey?: string | null;
   })[];
 }
 
@@ -122,6 +124,7 @@ export const meetingStates: Record<string, string> = {
   SUBMITTED: "待确认",
   RETURNED: "退回补充",
   CONFIRMED: "已确认",
+  CORRECTED: "发起人更正",
 };
 
 /** 日期输入与工作台同用上海时区，浏览器所在时区不改变预约时段。 */
@@ -161,6 +164,9 @@ export interface MaterialRow {
 export interface CoordinationResult {
   key: string;
   conclusion: string | null;
+  /** 改派后的配合部门，旧协调结果可能没有这两个字段。 */
+  departmentId?: string | null;
+  department?: string | null;
   assigneeId: string | null;
   assigneeName: string | null;
   dueAt: string | null;

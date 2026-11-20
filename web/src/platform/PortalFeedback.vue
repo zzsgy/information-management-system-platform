@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import RichTextView from "./RichTextView.vue";
-import RichTextEditor from "./RichTextEditor.vue";
+import FeedbackMarkdownEditor from "./FeedbackMarkdownEditor.vue";
+import FeedbackMarkdownView from "./FeedbackMarkdownView.vue";
+import { feedbackMarkdownPayload, type FeedbackImageDraft } from "./feedbackMarkdown";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
@@ -13,6 +15,7 @@ interface Feedback {
   id: string;
   category: string;
   content: string;
+  contentFormat?: "LEGACY" | "MARKDOWN";
   state: string;
   createdAt: string;
   rowVersion: number;
@@ -20,6 +23,7 @@ interface Feedback {
   replies: {
     id: string;
     body: string;
+    contentFormat?: "LEGACY" | "MARKDOWN";
     authorName: string;
     createdAt: string;
   }[];
@@ -30,9 +34,12 @@ const items = ref<Feedback[]>([]),
   total = ref(0),
   category = ref("SUGGESTION"),
   content = ref(""),
+  contentImages = ref<FeedbackImageDraft[]>([]),
   reply = ref(""),
+  replyImages = ref<FeedbackImageDraft[]>([]),
   replyState = ref("RESOLVED"),
   busy = ref(false),
+  preparing = ref(false),
   error = ref(""),
   creating = ref(false);
 const askPassword =
@@ -73,17 +80,20 @@ async function open(id: string) {
   try {
     detail.value = await api<Feedback>(`${prefix()}/${id}`);
     reply.value = "";
+    replyImages.value = [];
   } catch (e) {
     error.value = (e as Error).message;
   }
 }
 async function submit() {
+  if (busy.value || preparing.value) return;
   busy.value = true;
   error.value = "";
   try {
     const body = JSON.stringify({
       category: category.value,
       content: content.value,
+      ...feedbackMarkdownPayload(content.value, contentImages.value),
     });
     if (pending?.body !== body)
       pending = { body, operation: crypto.randomUUID() };
@@ -95,6 +105,7 @@ async function submit() {
     pending = null;
     creating.value = false;
     content.value = "";
+    contentImages.value = [];
     await load();
   } catch (e) {
     error.value = (e as Error).message;
@@ -103,7 +114,7 @@ async function submit() {
   }
 }
 async function respond() {
-  if (!detail.value) return;
+  if (!detail.value || busy.value || preparing.value) return;
   busy.value = true;
   error.value = "";
   try {
@@ -112,7 +123,7 @@ async function respond() {
     detail.value = await mutate<Feedback>(
       `${prefix()}/${detail.value.id}/replies`,
       "POST",
-      { body: reply.value, state: replyState.value },
+      { body: reply.value, state: replyState.value, ...feedbackMarkdownPayload(reply.value, replyImages.value) },
       detail.value.id,
       "PORTAL_FEEDBACK",
       "REPLY_FEEDBACK",
@@ -120,6 +131,7 @@ async function respond() {
       detail.value.rowVersion,
     );
     reply.value = "";
+    replyImages.value = [];
     await load();
   } catch (e) {
     error.value = (e as Error).message;
@@ -139,11 +151,10 @@ const listFilters = ref(recentWeekFilters("created"));
   <section>
     <div class="portal-heading">
       <div>
-        <span class="eyebrow">一起改进工作体验</span>
         <h1>{{ manage ? "反馈办理" : "意见反馈" }}</h1>
       </div>
       <button
-        v-if="!manage"
+        v-if="!manage && !detail && !creating"
         class="primary"
         @click="
           creating = true;
@@ -154,6 +165,7 @@ const listFilters = ref(recentWeekFilters("created"));
       ><button
         v-if="detail || creating"
         class="secondary"
+        :disabled="busy || preparing"
         @click="
           detail = null;
           creating = false;
@@ -171,13 +183,14 @@ const listFilters = ref(recentWeekFilters("created"));
           </option>
         </select></label
       >
-      <RichTextEditor v-model="content" label="反馈内容" :rows="8" :limit="1000" required
+      <FeedbackMarkdownEditor v-model="content" v-model:images="contentImages" v-model:preparing="preparing"
+        label="反馈内容" :rows="8" :limit="1000" :disabled="busy"
         placeholder="请描述遇到的问题、操作步骤或改进建议。" />
       <p class="muted">
         反馈由 IT 处理，你可在此查看答复。
       </p>
       <div class="portal-actions">
-        <button class="primary" :disabled="busy || !content.trim()">
+        <button class="primary" :disabled="busy || preparing || !content.trim()">
           提交
         </button>
       </div>
@@ -191,7 +204,9 @@ const listFilters = ref(recentWeekFilters("created"));
         <span>{{ detail.applicantName }}</span
         ><time>{{ portalTime(detail.createdAt) }}</time>
       </div>
-      <RichTextView class="portal-plain-text" :value="detail.content" />
+      <FeedbackMarkdownView v-if="detail.contentFormat === 'MARKDOWN'" class="feedback-body"
+        :value="detail.content" :feedback-id="detail.id" :message-id="detail.id" />
+      <RichTextView v-else class="portal-plain-text feedback-body" :value="detail.content" />
       <h3>处理记录</h3>
       <article
         v-for="item in detail.replies"
@@ -202,7 +217,9 @@ const listFilters = ref(recentWeekFilters("created"));
           <strong>{{ item.authorName }}</strong
           ><time>{{ portalTime(item.createdAt) }}</time>
         </div>
-        <RichTextView class="portal-plain-text" :value="item.body" />
+        <FeedbackMarkdownView v-if="item.contentFormat === 'MARKDOWN'"
+          :value="item.body" :feedback-id="detail.id" :message-id="item.id" />
+        <RichTextView v-else class="portal-plain-text" :value="item.body" />
       </article>
       <p v-if="!detail.replies.length" class="muted">
         反馈已收到，等待 IT 处理。
@@ -211,7 +228,8 @@ const listFilters = ref(recentWeekFilters("created"));
         v-if="manage && detail.state !== 'RESOLVED'"
         @submit.prevent="respond"
       >
-        <RichTextEditor v-model="reply" label="回复员工" :rows="5" :limit="2000" required />
+        <FeedbackMarkdownEditor v-model="reply" v-model:images="replyImages" v-model:preparing="preparing"
+          label="回复员工" :rows="5" :limit="2000" :disabled="busy" />
         <label
           >办理结果<select v-model="replyState">
             <option value="PROCESSING">继续处理中</option>
@@ -219,7 +237,7 @@ const listFilters = ref(recentWeekFilters("created"));
           </select></label
         >
         <div class="portal-actions">
-          <button class="primary" :disabled="busy">发送回复</button>
+          <button class="primary" :disabled="busy || preparing || !reply.trim()">发送回复</button>
         </div>
       </form>
     </section>
@@ -297,3 +315,9 @@ const listFilters = ref(recentWeekFilters("created"));
     </section>
   </section>
 </template>
+
+<style scoped>
+.feedback-body {
+  margin: 10px 0 24px;
+}
+</style>

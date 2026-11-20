@@ -10,6 +10,8 @@ import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingMaterialForm from "./MeetingMaterialForm.vue";
 import MeetingMinutes from "./MeetingMinutes.vue";
 import MeetingLiveDecision from "./MeetingLiveDecision.vue";
+import MeetingPublishedDecisions from "./MeetingPublishedDecisions.vue";
+import MeetingPublishedItemEditor from "./MeetingPublishedItemEditor.vue";
 import MeetingReading from "./MeetingReading.vue";
 import MeetingWorkbookPanel from "./MeetingWorkbookPanel.vue";
 import MeetingIncompleteExport from "./MeetingIncompleteExport.vue";
@@ -160,6 +162,11 @@ async function reloadDetail() {
   } catch (e) {
     error.value = (e as Error).message;
   }
+}
+
+/** 关联待办从同一个协调结果表单更正，避免两套独立输入。 */
+function openLinkedCoordination(key: string) {
+  document.getElementById("meeting-coordination-" + key)?.click();
 }
 
 /** 同一会议页承接工作台和消息跳转。换路由时清除上一个业务对象的表单。 */
@@ -1023,7 +1030,7 @@ function replyLabel(reply?: string) {
             :initial="detail.liveDecisions ?? null"
             :disabled="busy"
           />
-          <section v-else-if="detail.liveDecisions" class="flow-dialog-section">
+          <section v-else-if="detail.liveDecisions && !detail.minutes?.publishedAt" class="flow-dialog-section">
             <h3>会议决议</h3>
             <RichTextView class="meeting-text" :value="detail.liveDecisions" />
           </section>
@@ -1050,6 +1057,10 @@ function replyLabel(reply?: string) {
               :types="detail.minutes.summaryTypes"
               :submissions="detail.minutes.materialTables"
               :results="detail.coordinationResults"
+              :editing="organizer && detail.minutes.publishedAt && options
+                ? { meetingId: detail.id, departments: options.departments, trackFollowUp: detail.trackFollowUp, published: true }
+                : undefined"
+              @saved="reloadDetail"
             />
             <template v-if="detail.minutes.materialsText">
               <h3>会前材料汇总</h3>
@@ -1063,7 +1074,10 @@ function replyLabel(reply?: string) {
               <h3>会议总结</h3>
               <RichTextView class="meeting-text" :value="detail.minutes.summary" />
             </template>
-            <template v-if="detail.minutes.decisions">
+            <MeetingPublishedDecisions v-if="organizer && detail.minutes.publishedAt"
+              :meeting-id="detail.id" :version="detail.rowVersion" :value="detail.minutes.decisions"
+              @saved="reloadDetail" />
+            <template v-else-if="detail.minutes.decisions">
               <h3>会议决议</h3>
               <RichTextView class="meeting-text" :value="detail.minutes.decisions" />
             </template>
@@ -1100,11 +1114,19 @@ function replyLabel(reply?: string) {
                   · 截止 {{ portalTime(task.dueAt) }}</small
                 >
                 </div>
-                <a v-if="task.canOpen" class="secondary meeting-follow-up-action"
-                  :href="'#/meetings?item=' + task.id">
-                  {{ task.assigneeId === profile?.user.id && ['PENDING', 'RETURNED'].includes(task.state ?? '')
-                    ? '填写反馈' : '查看待办' }}
-                </a>
+                <div class="meeting-follow-up-actions">
+                  <template v-if="organizer && options">
+                    <button v-if="task.coordinationKey" type="button" class="secondary"
+                      @click="openLinkedCoordination(task.coordinationKey)">编辑关联协调结果</button>
+                    <MeetingPublishedItemEditor v-else :item="task" :departments="options.departments"
+                      @saved="reloadDetail" />
+                  </template>
+                  <a v-if="task.canOpen" class="secondary meeting-follow-up-action"
+                    :href="'#/meetings?item=' + task.id">
+                    {{ task.assigneeId === profile?.user.id && ['PENDING', 'RETURNED'].includes(task.state ?? '')
+                      ? '填写反馈' : '查看待办' }}
+                  </a>
+                </div>
               </li>
             </ul>
             <p v-else class="booking-count">
@@ -1642,6 +1664,12 @@ function replyLabel(reply?: string) {
   flex: 1 1 260px;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+.meeting-follow-up-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .meeting-follow-up-action {
   display: inline-flex;

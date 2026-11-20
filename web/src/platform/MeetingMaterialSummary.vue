@@ -18,6 +18,7 @@ const props = defineProps<{
     meetingId: string;
     departments: MeetingOption[];
     trackFollowUp: boolean;
+    published?: boolean;
   };
 }>();
 const emit = defineEmits<{ saved: [] }>();
@@ -91,7 +92,7 @@ const tables = computed(() => {
             <td>{{ row.expected }}</td>
             <td>{{ row.author.department }}</td>
             <td>{{ row.author.name }}</td>
-            <td>{{ row.department }}</td>
+            <td>{{ row.result?.department ?? row.department }}</td>
             <td>{{ row.result?.assigneeName ?? row.assigneeName }}</td>
             <template v-if="editing || results?.length">
               <td>{{ row.result?.conclusion }}</td>
@@ -102,11 +103,14 @@ const tables = computed(() => {
                   :subject="row.subject"
                   :initial="row.result"
                   :department-id="row.departmentId"
+                  :department-name="row.department"
                   :assignee-id="row.assigneeId"
                   :assignee-name="row.assigneeName"
                   :meeting-id="editing.meetingId"
                   :departments="editing.departments"
                   :track-follow-up="editing.trackFollowUp"
+                  :published="editing.published"
+                  :trigger-id="editing.published ? 'meeting-coordination-' + row.key : undefined"
                   @saved="emit('saved')"
                 />
               </td>

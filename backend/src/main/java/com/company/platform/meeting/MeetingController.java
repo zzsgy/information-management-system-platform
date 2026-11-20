@@ -127,12 +127,12 @@ public class MeetingController {
         return saved(meeting, r);
     }
 
-    /** 只有发起人可在开会后、纪要发布前调整本场的事项结果。 */
+    /** 只有发起人可在开会后更正事项，发布后同步关联待办。 */
     @PutMapping("/meetings/{id}/coordination")
     public Map<String, Object> coordination(@PathVariable String id, @RequestBody Map<String, Object> body,
             HttpServletRequest r) {
         UUID meeting = Inputs.uuid(id);
-        bookings.saveCoordination(actor(r), meeting, body);
+        followUp.saveCoordination(actor(r), meeting, ApiController.requestId(r), body);
         return saved(meeting, r);
     }
 
@@ -173,6 +173,22 @@ public class MeetingController {
     @GetMapping("/meetings/items/{id}")
     public Map<String, Object> item(@PathVariable String id, HttpServletRequest r) {
         return ok(followUp.item(actor(r), Inputs.uuid(id)), r);
+    }
+
+    /** 纪要发布后仅发起人能更正决议，旧版本返回409。 */
+    @PutMapping("/meetings/{id}/minutes/decisions")
+    public Map<String, Object> reviseDecisions(@PathVariable String id, @RequestBody Map<String, Object> body, HttpServletRequest r) {
+        UUID meeting = Inputs.uuid(id);
+        followUp.reviseDecisions(actor(r), meeting, ApiController.requestId(r), version(r), body);
+        return saved(meeting, r);
+    }
+
+    /** 发起人更正独立待办。属于协调事项的待办须从协调结果修改。 */
+    @PutMapping("/meetings/items/{id}")
+    public Map<String, Object> reviseItem(@PathVariable String id, @RequestBody Map<String, Object> body, HttpServletRequest r) {
+        UUID item = Inputs.uuid(id);
+        followUp.reviseItem(actor(r), item, ApiController.requestId(r), body);
+        return saved(item, r);
     }
 
     @PostMapping("/meetings/items/{id}/feedback")

@@ -15,18 +15,30 @@ public class PortalWork {
     private final IdentityService identity;
     private final Audit audit;
     private final BusinessNotifications notifications;
+    private final FeedbackImages feedbackImages;
     /** 实物待办理复用档案当前职责，不由平台管理员身份推断。 */
     private final ArchiveAuthority authority;
-    public PortalWork(Sql db,IdentityService identity,Audit audit,BusinessNotifications notifications,ArchiveAuthority authority){this.db=db;this.identity=identity;this.audit=audit;this.notifications=notifications;this.authority=authority;}
+    public PortalWork(Sql db,IdentityService identity,Audit audit,BusinessNotifications notifications,ArchiveAuthority authority,FeedbackImages feedbackImages){this.db=db;this.identity=identity;this.audit=audit;this.notifications=notifications;this.authority=authority;this.feedbackImages=feedbackImages;}
 
     /** 员工反馈不需要管理再验证；同一账号、操作号和内容只创建一次。 */
     @Transactional
     public Map<String,Object> submit(Actor actor,UUID operation,UUID request,Map<String,Object> body){
-        Inputs.only(body,"category","content");String category=Inputs.choice(body.get("category"),"SUGGESTION","ISSUE","OTHER"),content=Inputs.text(body,"content",1000);
-        identity.lockActor(actor);String digest=Crypto.hash(Crypto.json(Sql.map("category",category,"content",content)));
+        Inputs.only(body,"category","content","contentFormat","images");
+        String category=Inputs.choice(body.get("category"),"SUGGESTION","ISSUE","OTHER"),content=Inputs.text(body,"content",1000);
+        String format=feedbackFormat(body);
+        var digestBody=Sql.map("category",category,"content",content);
+        if ("MARKDOWN".equals(format)) {
+            digestBody.put("contentFormat",format);
+            digestBody.put("images",body.get("images"));
+        }
+        identity.lockActor(actor);String digest=Crypto.hash(Crypto.json(digestBody));
         var prior=db.one("SELECT id,request_digest FROM portal.feedback WHERE applicant_id=? AND operation_id=?",actor.userId(),operation);
         if(prior!=null){if(!Crypto.equal(digest,prior.get("request_digest").toString()))throw ApiFault.conflict("同一操作号不能用于不同反馈");return feedback(actor,(UUID)prior.get("id"),false);}
-        UUID id=UUID.randomUUID();db.update("INSERT INTO portal.feedback(id,applicant_id,category,content,operation_id,request_digest) VALUES(?,?,?,?,?,?)",id,actor.userId(),category,content,operation,digest);
+        var images=feedbackImages.prepare(body.get("images"));
+        UUID id=UUID.randomUUID();
+        db.update("INSERT INTO portal.feedback(id,applicant_id,category,content,operation_id,request_digest,content_format) VALUES(?,?,?,?,?,?,?)",
+                id,actor.userId(),category,content,operation,digest,format);
+        feedbackImages.save(id,null,images);
         audit.event(actor.userId(),"PLATFORM","PORTAL_FEEDBACK",id,"SUBMIT_FEEDBACK","SUCCEEDED",request);
         return feedback(actor,id,false);
     }
@@ -45,16 +57,31 @@ public class PortalWork {
     public Map<String,Object> feedback(Actor actor,UUID id,boolean manage){
         if(manage)actor.require("PLATFORM.FEEDBACK_MANAGE");
         var row=manage?db.required("SELECT f.*,u.name AS applicant_name FROM portal.feedback f JOIN iam.user_account u ON u.id=f.applicant_id WHERE f.id=?",id):db.required("SELECT f.*,u.name AS applicant_name FROM portal.feedback f JOIN iam.user_account u ON u.id=f.applicant_id WHERE f.id=? AND f.applicant_id=?",id,actor.userId());
-        var result=Sql.view(row,"id,category,content,state,created_at,row_version,applicant_name");
-        result.put("replies",db.rows("SELECT id,body,author_name,created_at,read_at FROM portal.feedback_reply WHERE feedback_id=? ORDER BY created_at,id",id).stream().map(r->Sql.view(r,"id,body,author_name,created_at,read_at")).toList());return result;
+        var result=Sql.view(row,"id,category,content,content_format,state,created_at,row_version,applicant_name");
+        result.put("replies",db.rows("SELECT id,body,content_format,author_name,created_at,read_at FROM portal.feedback_reply WHERE feedback_id=? ORDER BY created_at,id",id).stream().map(r->Sql.view(r,"id,body,content_format,author_name,created_at,read_at")).toList());return result;
     }
     /** IT答复和办理状态在同一管理事务写入；每条答复自然形成一条本人消息。 */
     public Map<String,Object> reply(Commands.Context ctx,UUID id,Map<String,Object> body){
-        Inputs.only(body,"body","state");String text=Inputs.text(body,"body",2000),state=Inputs.choice(body.get("state"),"PROCESSING","RESOLVED");
+        Inputs.only(body,"body","state","contentFormat","images");
+        String text=Inputs.text(body,"body",2000),state=Inputs.choice(body.get("state"),"PROCESSING","RESOLVED");
+        String format=feedbackFormat(body);
         var row=db.required("SELECT * FROM portal.feedback WHERE id=? FOR UPDATE",id);Commands.version(ctx,row);
         if("RESOLVED".equals(row.get("state")))throw ApiFault.conflict("该反馈已办结，请刷新查看处理结果");
-        db.update("INSERT INTO portal.feedback_reply(id,feedback_id,body,author_id,author_name) SELECT ?,?,?,id,name FROM iam.user_account WHERE id=?",UUID.randomUUID(),id,text,ctx.actor().userId());
+        var images=feedbackImages.prepare(body.get("images"));
+        UUID reply=UUID.randomUUID();
+        db.update("INSERT INTO portal.feedback_reply(id,feedback_id,body,content_format,author_id,author_name) SELECT ?,?,?,?,id,name FROM iam.user_account WHERE id=?",
+                reply,id,text,format,ctx.actor().userId());
+        feedbackImages.save(id,reply,images);
         db.update("UPDATE portal.feedback SET state=?,row_version=row_version+1 WHERE id=?",state,id);return feedback(ctx.actor(),id,true);
+    }
+
+    /** 老客户端省略格式时沿用原正文，新客户端显式声明 Markdown。 */
+    private String feedbackFormat(Map<String,Object> body) {
+        if (!body.containsKey("contentFormat")) {
+            if (body.containsKey("images")) throw ApiFault.invalid("截图需要随 Markdown 正文提交");
+            return "LEGACY";
+        }
+        return Inputs.choice(body.get("contentFormat"),"MARKDOWN");
     }
     /** 联合收件箱采用同一排序和分页；业务消息继续受原来源有效性函数控制。 */
     public Map<String,Object> inbox(Actor actor,Map<String,String> query){

@@ -708,6 +708,8 @@ onUnmounted(() => {
         <a
           class="portal-account-link"
           href="#/feedback"
+          target="_blank"
+          rel="noopener"
           :class="{ active: allowedRoute === 'feedback' }"
           :aria-current="allowedRoute === 'feedback' ? 'page' : undefined"
           >意见反馈</a

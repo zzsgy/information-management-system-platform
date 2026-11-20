@@ -166,13 +166,13 @@ public class MeetingBookings {
         }
         result.put("minutes", minutes);
         result.put("items", published ? db.rows("""
-                SELECT i.id,i.content,i.assignee_id,u.name AS assignee_name,i.due_at,
+                SELECT i.id,i.content,i.assignee_id,u.name AS assignee_name,i.due_at,i.coordination_key,
                     CASE WHEN ? OR i.assignee_id=? THEN i.state END AS state,
                     (? OR i.assignee_id=?) AS can_open
                 FROM portal.meeting_item i JOIN iam.user_account u ON u.id=i.assignee_id
                 WHERE i.meeting_id=? AND (? OR i.assignee_id=?) ORDER BY i.created_at,i.id
                 """, full, actor.userId(), full, actor.userId(), id, full || legacy, actor.userId()).stream()
-                .map(item -> Sql.view(item, "id,content,assignee_id,assignee_name,due_at,state,can_open")).toList() : List.of());
+                .map(item -> Sql.view(item, "id,content,assignee_id,assignee_name,due_at,coordination_key,state,can_open")).toList() : List.of());
         return result;
     }
 
@@ -256,7 +256,7 @@ public class MeetingBookings {
         Set<UUID> materials = legacy ? materialUsers(schedule, weekly, Boolean.TRUE.equals(row.get("collect_materials")))
                 : ((List<?>) row.get("material_types")).isEmpty() ? Set.of() : schedule.attendees();
         Set<UUID> occupying = new LinkedHashSet<>(schedule.attendees());
-        if (!timeChanged) occupying.removeIf(user -> current.containsKey(user) && "DECLINED".equals(current.get(user).get("reply")));
+        occupying.removeIf(user -> current.containsKey(user) && "DECLINED".equals(current.get(user).get("reply")));
         boolean urgent = Boolean.TRUE.equals(row.get("urgent"));
         if (timeChanged || roomChanged) {
             checkConflicts(id, actor.userId(), schedule.room(), schedule.starts(), schedule.ends(), occupying, urgent);
@@ -282,11 +282,8 @@ public class MeetingBookings {
                 if (legacy && !weekly) db.update("UPDATE portal.meeting_attendee SET material_required=? WHERE meeting_id=? AND user_id=?",
                         materials.contains(user), id, user);
                 if (timeChanged) {
-                    db.update("""
-                            UPDATE portal.meeting_attendee SET reply='PENDING',decline_reason=NULL,replied_at=NULL,invited_at=CURRENT_TIMESTAMP
-                            WHERE meeting_id=? AND user_id=?
-                            """, id, user);
-                    notify(id, null, user, "MEETING_RESCHEDULED", "会议已改期，请重新回复 " + subject);
+                    // 参会回复属于整场会议，改期只通知，不清空员工已作出的选择。
+                    notify(id, null, user, "MEETING_RESCHEDULED", "会议时间已调整，原参会回复保留 " + subject);
                 } else if (roomChanged) notify(id, null, user, "MEETING_ROOM_CHANGED", "会议地点已调整 " + subject);
             }
         }
@@ -344,21 +341,18 @@ public class MeetingBookings {
         db.update("UPDATE portal.meeting_booking SET live_decisions=? WHERE id=?", decisions, id);
     }
 
-    /** 发起人可在会议开始后、纪要发布前调整事项结论和责任人。 */
-    @Transactional
-    public void saveCoordination(Actor actor, UUID id, Map<String, Object> body) {
-        Inputs.only(body, "key", "conclusion", "assigneeId", "dueAt", "followUp");
+    /** 保存后提供已校验的字段，供已发布纪要同步关联待办。 */
+    record CoordinationUpdate(String key, String subject, String conclusion, UUID assignee, Instant due, boolean followUp) {}
+
+    /** 在发起人的保存事务中更新协调结果，发布后仍使用原材料行和原跟踪设置。 */
+    CoordinationUpdate saveCoordination(Map<String, Object> meeting, UUID id, Map<String, Object> body) {
+        Inputs.only(body, "key", "conclusion", "departmentId", "assigneeId", "dueAt", "followUp");
         String key = Inputs.text(body, "key", 48);
         String conclusion = optional(body, "conclusion", 3000);
         UUID assignee = Inputs.nullableUuid(body.get("assigneeId"));
         Instant due = body.get("dueAt") == null ? null : inputTime(body.get("dueAt"));
-        boolean followUp = flag(body, "followUp", false);
-        identity.lockActor(actor);
-        var meeting = owned(actor, id);
-        if (meeting.get("actual_started_at") == null || meeting.get("minutes_published_at") != null)
-            throw ApiFault.conflict("只能在会议开始后、纪要发布前修改协调事宜");
-        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null || conclusion == null))
-            throw ApiFault.invalid("生成会后待办须开启反馈跟踪并填写结论、责任人和截止时间");
+        if (meeting.get("actual_started_at") == null) throw ApiFault.conflict("会议开始后才可修改协调事宜");
+        boolean published = meeting.get("minutes_published_at") != null;
         tools.jackson.databind.JsonNode source = null;
         for (var table : minuteTables(id)) {
             if (!"COORDINATION".equals(table.get("kind"))) continue;
@@ -369,19 +363,31 @@ public class MeetingBookings {
             }
         }
         if (source == null) throw ApiFault.invalid("未找到本次会议的协调事项");
-        if (source.hasNonNull("assigneeId") && assignee == null) throw ApiFault.invalid("请选择一名责任人");
-        Object assigneeName = null;
-        if (assignee != null) {
-            UUID department = source.hasNonNull("departmentId") ? UUID.fromString(source.path("departmentId").asText()) : null;
-            assigneeName = coordinationAssignee(assignee, department).get("name");
+        var results = new ArrayList<>(coordinationResults(meeting));
+        var previous = results.stream().filter(result -> key.equals(result.get("key"))).findFirst().orElse(Map.of());
+        boolean wasTracked = Boolean.TRUE.equals(previous.get("followUp"));
+        boolean followUp = flag(body, "followUp", published && wasTracked);
+        if (published && followUp != wasTracked) throw ApiFault.invalid("纪要发布后不支持变更该事项的反馈跟踪设置");
+        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null || conclusion == null))
+            throw ApiFault.invalid("跟踪事项须填写结论、责任人和截止时间");
+        // 兼容未传部门的客户端。已经改派的部门优先于会前材料中的原部门。
+        var departmentId = previous.getOrDefault("departmentId", source.path("departmentId").asText(null));
+        UUID department = Inputs.nullableUuid(departmentId);
+        var departmentName = previous.getOrDefault("department", source.path("department").asText(null));
+        if (body.containsKey("departmentId")) {
+            department = Inputs.uuid(body.get("departmentId"));
+            departmentName = coordinationDepartmentName(department);
         }
-        var results = new ArrayList<Map<String, Object>>();
-        for (var result : coordinationResults(meeting)) {
-            if (!key.equals(result.get("key"))) results.add(result);
-        }
-        results.add(Sql.map("key", key, "subject", source.path("subject").asText(), "conclusion", conclusion, "assigneeId", assignee,
+        if (assignee == null && (source.hasNonNull("assigneeId") || body.containsKey("departmentId")))
+            throw ApiFault.invalid("请选择一名责任人");
+        Object assigneeName = assignee == null ? null : coordinationAssignee(assignee, department).get("name");
+        results.removeIf(result -> key.equals(result.get("key")));
+        String subject = source.path("subject").asText();
+        results.add(Sql.map("key", key, "subject", subject, "conclusion", conclusion,
+                "departmentId", department, "department", departmentName, "assigneeId", assignee,
                 "assigneeName", assigneeName, "dueAt", due == null ? null : due.toString(), "followUp", followUp));
         db.update("UPDATE portal.meeting_booking SET coordination_results=?::jsonb WHERE id=?", Crypto.json(results), id);
+        return new CoordinationUpdate(key, subject, conclusion, assignee, due, followUp);
     }
 
     /** 数据库映射保留结论快照，供详情、导出和发布纪要共同使用。 */
@@ -561,16 +567,22 @@ public class MeetingBookings {
             String support = optional(row, "support", 1000);
             if (support != null) entry.put("support", support);
             if (department == null) throw ApiFault.invalid("请选择配合部门");
-            var partner = db.one("SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department);
-            if (partner == null) throw ApiFault.invalid("请选择有效的配合部门");
+            String partner = coordinationDepartmentName(department);
             UUID assignee = Inputs.nullableUuid(row.get("personId"));
             if (assignee == null) throw ApiFault.invalid("请选择配合部门的一名责任人");
-            entry.put("department", partner.get("name"));
+            entry.put("department", partner);
             entry.put("departmentId", department);
             entry.put("assigneeId", assignee);
             entry.put("assigneeName", coordinationAssignee(assignee, department).get("name"));
         }
         return entry;
+    }
+
+    /** 会前填报与会中改派都要求新选部门处于启用状态。 */
+    private String coordinationDepartmentName(UUID department) {
+        var partner = db.one("SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department);
+        if (partner == null) throw ApiFault.invalid("请选择有效的配合部门");
+        return (String) partner.get("name");
     }
 
     /** 线上填报、Excel 导入与发起人修改共用配合部门的在职员工范围。 */
@@ -878,8 +890,8 @@ public class MeetingBookings {
     private void invite(UUID meeting, UUID user, boolean materialRequired) {
         db.update("""
                 INSERT INTO portal.meeting_attendee(id,meeting_id,user_id,material_required) VALUES (?,?,?,?)
-                ON CONFLICT (meeting_id,user_id) DO UPDATE SET reply='PENDING',decline_reason=NULL,replied_at=NULL,
-                    removed_at=NULL,invited_at=CURRENT_TIMESTAMP,material_required=EXCLUDED.material_required
+                ON CONFLICT (meeting_id,user_id) DO UPDATE SET removed_at=NULL,invited_at=CURRENT_TIMESTAMP,
+                    material_required=EXCLUDED.material_required
                 """, UUID.randomUUID(), meeting, user, materialRequired);
     }
 

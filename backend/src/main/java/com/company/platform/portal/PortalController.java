@@ -2,6 +2,9 @@ package com.company.platform.portal;
 
 import com.company.platform.*;
 import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import java.util.*;
 
@@ -12,10 +15,11 @@ public class PortalController {
     /** 内容、办理和统一管理命令入口。 */
     private final PortalContent content;
     private final PortalWork work;
+    private final FeedbackImages feedbackImages;
     private final Commands commands;
     private final EmployeeTodos todos;
     private final TodoReminders reminders;
-    public PortalController(PortalContent content,PortalWork work,Commands commands,EmployeeTodos todos,TodoReminders reminders){this.content=content;this.work=work;this.commands=commands;this.todos=todos;this.reminders=reminders;}
+    public PortalController(PortalContent content,PortalWork work,Commands commands,EmployeeTodos todos,TodoReminders reminders,FeedbackImages feedbackImages){this.content=content;this.work=work;this.commands=commands;this.todos=todos;this.reminders=reminders;this.feedbackImages=feedbackImages;}
     /** 可见公告分页，范围、状态及有效期由当前数据库事实决定。 */
     @GetMapping("/portal/announcements") public Map<String,Object> announcements(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(content.announcements(actor(r),query,false),r);}
     /** 查询正文并重验当前可见范围，越权返回404。 */
@@ -49,12 +53,19 @@ public class PortalController {
         return ok(commands.run(ctx,Map.of(),"PORTAL_SITE",target,"DELETE_SITE",()->ctx.actor().require("PLATFORM.SITES_MANAGE"),
             ()->content.deleteSite(ctx,target),key->Sql.map("id",key)),r);
     }
-    /** 反馈仅接受类型和1000字正文，员工无需管理再验证。 */
+    /** 员工反馈可附带截图，正文和图片一次保存，无需管理再验证。 */
     @PostMapping("/portal/feedback") public Map<String,Object> submit(@RequestBody Map<String,Object> body,HttpServletRequest r){return ok(work.submit(actor(r),Inputs.uuid(r.getHeader("X-Operation-Id")),ApiController.requestId(r),body),r);}
     /** 本人反馈分页。 */
     @GetMapping("/portal/feedback") public Map<String,Object> feedbackList(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(work.feedbackList(actor(r),query,false),r);}
     /** 他人反馈统一404。 */
     @GetMapping("/portal/feedback/{id}") public Map<String,Object> feedback(@PathVariable String id,HttpServletRequest r){return ok(work.feedback(actor(r),Inputs.uuid(id),false),r);}
+    /** 截图仅反馈人或反馈办理人员可见，返回经过校验的图片格式。 */
+    @GetMapping("/portal/feedback/{id}/images/{message}/{image}")
+    public ResponseEntity<byte[]> feedbackImage(@PathVariable String id,@PathVariable String message,@PathVariable String image,HttpServletRequest r){
+        var result=feedbackImages.read(actor(r),Inputs.uuid(id),Inputs.uuid(message),Inputs.uuid(image));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(result.mediaType()))
+                .cacheControl(CacheControl.noStore()).header("X-Content-Type-Options","nosniff").body(result.bytes());
+    }
     /** IT反馈办理分页，不依赖档案身份。 */
     @GetMapping("/admin/portal/feedback") public Map<String,Object> feedbackQueue(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(work.feedbackList(actor(r),query,true),r);}
     /** IT读取员工提交的反馈和答复历史。 */
