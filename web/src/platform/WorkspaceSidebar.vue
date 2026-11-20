@@ -76,15 +76,15 @@ defineProps<{
   gap: 6px;
   padding: 16px 12px;
   border-radius: 14px;
-  background: #092c4d;
+  background: var(--workspace-nav-background);
   box-shadow: var(--shadow);
-  color: #fff;
+  color: var(--workspace-nav-text);
 }
 
 .workspace-sidebar-brand {
   padding: 0 4px 14px;
   margin-bottom: 4px;
-  border-bottom: 1px solid #ffffff2e;
+  border-bottom: 1px solid var(--workspace-nav-line);
 }
 
 .workspace-sidebar-logo {
@@ -108,7 +108,7 @@ defineProps<{
   min-height: 45px;
   padding: 7px 9px;
   border-radius: 8px;
-  color: #e3edf8;
+  color: var(--workspace-nav-text);
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
@@ -116,18 +116,18 @@ defineProps<{
 
 .workspace-module-link:hover,
 .workspace-module-link:focus-visible {
-  background: #164569;
-  color: #fff;
+  background: var(--workspace-nav-hover);
+  color: var(--workspace-nav-text);
 }
 
 .workspace-module-link:focus-visible {
-  outline: 2px solid #62e0e0;
+  outline: 2px solid var(--workspace-nav-focus);
   outline-offset: 2px;
 }
 
 .workspace-module-link.active {
-  color: #8ff0ec;
-  background: #174967;
+  color: var(--workspace-nav-selected-text);
+  background: var(--workspace-nav-selected);
 }
 
 .workspace-sidebar .application-icon,
@@ -148,11 +148,11 @@ defineProps<{
 .workspace-subnav {
   margin-inline: 19px 2px;
   padding-left: 10px;
-  border-left: 1px solid #ffffff35;
+  border-left: 1px solid var(--workspace-nav-line);
 }
 
 .workspace-subnav h2 {
-  color: #a7c4dc;
+  color: var(--workspace-nav-muted);
   font-size: 11px;
   margin: 8px 6px 4px;
 }
@@ -161,14 +161,20 @@ defineProps<{
   display: block;
   padding: 6px;
   border-radius: 5px;
-  color: #e3edf8;
+  color: var(--workspace-nav-text);
   font-size: 12px;
 }
 
 .workspace-subnav a:hover,
+.workspace-subnav a:focus-visible,
 .workspace-subnav a[aria-current="page"] {
-  background: #174967;
-  color: #8ff0ec;
+  background: var(--workspace-nav-selected);
+  color: var(--workspace-nav-selected-text);
+}
+
+.workspace-subnav a:focus-visible {
+  outline: 2px solid var(--workspace-nav-focus);
+  outline-offset: 2px;
 }
 
 @media (max-width: 760px) {

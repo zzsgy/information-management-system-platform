@@ -7,6 +7,15 @@
   --success: #23744b; --success-soft: #edf8f0;
   --warning: #986715; --warning-soft: #fff8e6;
   --danger: #b53f3f; --danger-soft: #fff1f1;
+  /* 深色应用导航随当前强调色变化，避免新导航组件脱离全局主题。 */
+  --workspace-nav-background: color-mix(in srgb, var(--brand) 40%, #12213b);
+  --workspace-nav-text: #e8eef8;
+  --workspace-nav-muted: color-mix(in srgb, var(--workspace-nav-text) 72%, var(--workspace-nav-background));
+  --workspace-nav-line: #e8eef833;
+  --workspace-nav-hover: color-mix(in srgb, var(--brand) 20%, var(--workspace-nav-background));
+  --workspace-nav-selected: color-mix(in srgb, var(--brand) 40%, var(--workspace-nav-background));
+  --workspace-nav-selected-text: color-mix(in srgb, var(--brand) 20%, white);
+  --workspace-nav-focus: var(--workspace-nav-selected-text);
   color-scheme: light;
 }
 :root[data-theme="teal"] { --brand: #087f88; --brand-hover: #05646d; --brand-soft: #e8f5f5; }
@@ -44,6 +53,14 @@ body { background: var(--canvas); color: var(--ink); }
   --paper-gold-text: #866109;
   --focus-ring: #b8860b26;
   --shadow: 0 2px 8px #1a1a2e06;
+  --workspace-nav-background: #252332;
+  --workspace-nav-text: #f1ece4;
+  --workspace-nav-muted: #c0b8ac;
+  --workspace-nav-line: #f1ece433;
+  --workspace-nav-hover: #373243;
+  --workspace-nav-selected: #443c2a;
+  --workspace-nav-selected-text: #f2d88f;
+  --workspace-nav-focus: #f2d88f;
 }
 :root[data-theme="paper"] .platform-shell :is(.management-nav-group a.active, .portal-filters .selected, .portal-tabs .selected, .workspace-back) {
   color: var(--paper-gold-text);
