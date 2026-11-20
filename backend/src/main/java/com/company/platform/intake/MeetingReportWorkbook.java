@@ -117,9 +117,9 @@ public final class MeetingReportWorkbook {
                 var shared = parts.containsKey("xl/sharedStrings.xml")
                         ? elements(xml(parts.get("xl/sharedStrings.xml")), "si").stream().map(e -> text(e, "t")).toList()
                         : List.<String>of();
-                var work = readCells(parts.get(paths.get(0)), shared, 2, 8);
-                var plan = readCells(parts.get(paths.get(1)), shared, 2, 8);
-                var coordination = readCells(parts.get(paths.get(2)), shared, 1001, 9);
+                var work = readCells(parts.get(paths.get(0)), shared, 1001, 8, SHEETS.get(0));
+                var plan = readCells(parts.get(paths.get(1)), shared, 1001, 8, SHEETS.get(1));
+                var coordination = readCells(parts.get(paths.get(2)), shared, 1001, 9, SHEETS.get(2));
                 // 已下载的模板仍可按旧 H 列标题导入，责任人填写要求相同。
                 if ("责任人（唯一）".equals(coordination.get("H1"))) coordination.put("H1", HEADERS.get(7));
                 for (int i = 0; i < HEADERS.size(); i++) {
@@ -137,7 +137,7 @@ public final class MeetingReportWorkbook {
                     }
                     if (!data.isEmpty()) rows.add(new Row(row, data));
                 }
-                return new Report(author, work.get("A2"), plan.get("A2"), rows);
+                return new Report(author, narrative(work), narrative(plan), rows);
             } finally {
                 Files.deleteIfExists(temporary);
             }
@@ -148,12 +148,28 @@ public final class MeetingReportWorkbook {
         }
     }
 
-    private static Map<String, String> readCells(byte[] worksheet, List<String> shared, int lastRow, int lastColumn)
+    /** 合并单元格只读取其左上角正文，新增行和拆分列按原表顺序保留，标题行不进入材料。 */
+    private static String narrative(Map<String, String> cells) {
+        var lines = new ArrayList<String>();
+        for (int row = 2; row <= 1001; row++) {
+            var values = new ArrayList<String>();
+            for (char col = 'A'; col <= 'H'; col++) {
+                String value = cells.get(col + Integer.toString(row));
+                if (value != null) values.add(value);
+            }
+            if (!values.isEmpty()) lines.add(String.join("\t", values));
+        }
+        return lines.isEmpty() ? null : String.join("\n", lines);
+    }
+
+    private static Map<String, String> readCells(byte[] worksheet, List<String> shared, int lastRow, int lastColumn,
+            String sheetName)
             throws Exception {
         Map<String, String> cells = new HashMap<>();
         for (Element cell : elements(xml(worksheet), "c")) {
-            if (!elements(cell, "f").isEmpty()) throw ApiFault.invalid("会议 Excel 请填写文本，不使用公式");
             String type = cell.getAttribute("t"), ref = cell.getAttribute("r");
+            String position = "「" + sheetName + "」" + ref;
+            if (!elements(cell, "f").isEmpty()) throw ApiFault.invalid(position + " 请填写文本，不使用公式");
             String value = switch (type) {
                 case "inlineStr" -> text(cell, "t");
                 case "s" -> shared.get(Inputs.integer(text(cell, "v"), -1, 0, shared.size() - 1));
@@ -162,9 +178,10 @@ public final class MeetingReportWorkbook {
             };
             if (value.isBlank()) continue;
             if (!ref.matches("[A-I][1-9][0-9]{0,3}") || ref.charAt(0) >= 'A' + lastColumn
-                    || Integer.parseInt(ref.substring(1)) > lastRow || value.length() > 20000
-                    || cells.putIfAbsent(ref, value.strip()) != null)
-                throw ApiFault.invalid("会议 Excel 存在超出模板范围或重复的单元格");
+                    || Integer.parseInt(ref.substring(1)) > lastRow)
+                throw ApiFault.invalid(position + " 超出填写范围，请在 A2:" + (char) ('A' + lastColumn - 1) + lastRow + " 内填写");
+            if (value.length() > 20000) throw ApiFault.invalid(position + " 内容超过 20000 字符，请精简后导入");
+            if (cells.putIfAbsent(ref, value.strip()) != null) throw ApiFault.invalid(position + " 存在重复单元格，请检查文件结构");
         }
         return cells;
     }

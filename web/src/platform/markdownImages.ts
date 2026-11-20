@@ -1,13 +1,14 @@
 import MarkdownIt from "markdown-it";
+import { normalizeMarkdownNumbering } from "./markdownNumbering";
 
-/** 截图标识在编辑期间引用本地内容，提交后按反馈和消息查询。 */
-export interface FeedbackImageDraft {
+/** 图片标识在编辑期间引用本地文件，提交后按对应正文查询。 */
+export interface MarkdownImageDraft {
   id: string;
   dataUrl: string;
 }
 
 const imageReference =
-  /^feedback-image\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
+  /^(?:inline|feedback)-image\/([0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12})$/;
 const markdown = new MarkdownIt({ html: false, breaks: true });
 const renderImage = markdown.renderer.rules.image!;
 
@@ -26,37 +27,47 @@ markdown.renderer.rules.image = (tokens, index, options, context, renderer) => {
 };
 
 /** 预览与已提交正文共用解析，由调用页面确定图片所在范围。 */
-export function renderFeedbackMarkdown(
+export function renderMarkdownWithImages(
   value: string,
   imageUrl: (id: string) => string | undefined,
+  numbered = false,
 ) {
-  return markdown.render(value, { imageUrl });
+  return markdown.render(numbered ? normalizeMarkdownNumbering(value) : value, {
+    imageUrl,
+  });
 }
 
-/** 从正文移除图片引用时，该图片随即不参与提交。 */
-export function referencedImages(value: string, images: FeedbackImageDraft[]) {
-  const references = new Set(
+/** 只取能被 Markdown 解析的内联图片，代码中的示例链接不参与提交。 */
+export function markdownImageKeys(value: string, numbered = false) {
+  return new Set(
     markdown
-      .parse(value, {})
+      .parse(numbered ? normalizeMarkdownNumbering(value) : value, {})
       .flatMap((token) => token.children ?? [])
       .filter((token) => token.type === "image")
       .map(
         (token) => imageReference.exec(String(token.attrGet("src") ?? ""))?.[1],
       ),
   );
+}
+
+/** 从正文移除图片引用时，该图片随即不参与提交。 */
+export function referencedImages(
+  value: string,
+  images: MarkdownImageDraft[],
+  numbered = false,
+) {
+  const references = markdownImageKeys(value, numbered);
   return images.filter((image) => references.has(image.id));
 }
 
 /** 正文只保存 Markdown 引用，上传时单独提交其关联图片字节。 */
-export function feedbackMarkdownPayload(
+export function markdownImageUploads(
   value: string,
-  images: FeedbackImageDraft[],
+  images: MarkdownImageDraft[],
+  numbered = false,
 ) {
-  return {
-    contentFormat: "MARKDOWN",
-    images: referencedImages(value, images).map(({ id, dataUrl }) => ({
-      id,
-      data: dataUrl.slice(dataUrl.indexOf(",") + 1),
-    })),
-  };
+  return referencedImages(value, images, numbered).map(({ id, dataUrl }) => ({
+    id,
+    data: dataUrl.slice(dataUrl.indexOf(",") + 1),
+  }));
 }

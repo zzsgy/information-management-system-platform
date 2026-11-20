@@ -3,6 +3,7 @@ import { computed, ref, watch } from "vue";
 import { api, ApiError } from "./api";
 import { materialLabels, type MeetingAttendee } from "./meeting";
 import RichTextView from "./RichTextView.vue";
+import MeetingNarrativeView from "./MeetingNarrativeView.vue";
 import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 
 const props = defineProps<{
@@ -86,10 +87,7 @@ async function confirm() {
             v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
           >
             <h4>{{ materialLabels[material.kind] }}</h4>
-            <RichTextView
-              :value="material.data.text"
-              :html="material.data.html"
-            />
+            <MeetingNarrativeView :meeting-id="meetingId" :material="material" />
           </template>
         </template>
         <RichTextView v-if="person.report" :value="person.report" />

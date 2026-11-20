@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, ref } from "vue";
-import RichTextEditor from "./RichTextEditor.vue";
+import MarkdownImageEditor from "./MarkdownImageEditor.vue";
 import MeetingDepartmentAssignee from "./MeetingDepartmentAssignee.vue";
-import { formattedText } from "./formattedText";
+import { markdownImageKeys, markdownImageUploads, type MarkdownImageDraft } from "./markdownImages";
 import { api } from "./api";
 import { vNumbered } from "./meetingNumbered";
 import {
   materialLabels,
   coordinationLabels,
+  meetingMaterialImageBase,
   type MaterialKind,
   type MaterialRow,
   type MeetingMaterial,
@@ -22,10 +23,9 @@ const props = defineProps<{
   departments: MeetingOption[];
 }>();
 const emit = defineEmits<{ saved: [] }>();
-const editor = ref<InstanceType<typeof RichTextEditor>>();
-const narrative = ref(formattedText(
-  props.existing?.data.text ?? "", props.existing?.data.html ?? "",
-));
+const narrative = ref(props.existing?.data.markdown ?? props.existing?.data.text ?? "");
+const images = ref<MarkdownImageDraft[]>([]);
+const preparing = ref(false);
 let nextRowId = 0;
 function makeRow(values: MaterialRow = { subject: "", expected: "" }) {
   return { departmentId: null, category: "DEPARTMENT", support: "", ...values, assigneeId: values.assigneeId ?? "", rowId: nextRowId++ };
@@ -69,11 +69,16 @@ const rowErrors = computed(() => filledRows.value.flatMap(({ row, number }) => {
 /** 空材料保持待提交，已填写的行沿用字段校验。 */
 function collect() {
   if (props.kind === "REPORT" || props.kind === "WEEKLY_PLAN") {
-    const content = editor.value?.read();
-    if (!content?.text) return null;
-    if (content.text.length > 8000 || content.html.length > 12000)
-      throw new Error(materialLabels[props.kind] + "正文或格式超过长度限制");
-    return { kind: props.kind, ...content };
+    const markdown = narrative.value.trim();
+    if (!markdown) return null;
+    const references = markdownImageKeys(markdown, true);
+    const imageKeys = (props.existing?.data.imageKeys ?? []).filter((key) => references.has(key));
+    return {
+      kind: props.kind,
+      markdown,
+      imageKeys,
+      images: markdownImageUploads(markdown, images.value.filter(({ id }) => !imageKeys.includes(id)), true),
+    };
   }
   const entries = filledRows.value;
   return entries.length
@@ -89,6 +94,7 @@ function collect() {
 }
 /** 正文和议题独立提交，参会回复只处理是否参加。 */
 async function submit() {
+  if (busy.value || preparing.value) return;
   busy.value = true;
   error.value = "";
   try {
@@ -117,10 +123,12 @@ async function submit() {
     <p v-if="kind === 'REPORT'" class="material-author">
       发起人 {{ author.name }} · 发起部门 {{ author.department }}
     </p>
-    <RichTextEditor
+    <MarkdownImageEditor
       v-if="kind === 'REPORT' || kind === 'WEEKLY_PLAN'"
-      ref="editor" v-model="narrative"
-      :label="materialLabels[kind]" :rows="5"
+      v-model="narrative" v-model:images="images" v-model:preparing="preparing"
+      :label="materialLabels[kind]" :rows="5" :limit="8000" :disabled="busy"
+      :image-base="meetingMaterialImageBase(meetingId, existing)" :image-keys="existing?.data.imageKeys"
+      numbered
     />
     <template v-else>
       <div
@@ -256,7 +264,7 @@ async function submit() {
     <div class="meeting-actions">
       <button type="button" class="primary material-submit"
         :class="{ 'submitted-unchanged': submittedUnchanged }"
-        :disabled="busy" @click="submit">
+        :disabled="busy || preparing" @click="submit">
         提交{{ materialLabels[kind] }}
       </button>
       <small v-if="submittedSignature !== null"

@@ -414,12 +414,12 @@ class MeetingIntegrationTest {
         body.put("trackFollowUp", true);
         UUID id = bookings.create(organizer, request(), body);
         String entry = "#/meetings?id=" + id;
-        var row = attendeeTask(employee, entry);
+        var row = attendeeTask(employee, entry + "&action=reply");
         var taskId = row.get("id");
         assertEquals("MEETING_REPLY_PENDING", row.get("state"));
         bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED",
                 "materials", List.of(Map.of("kind", "REPORT", "html", "汇报", "text", "汇报"))));
-        assertEquals("MEETING_MATERIALS_PENDING", attendeeTask(employee, entry).get("state"));
+        assertEquals("MEETING_MATERIALS_PENDING", attendeeTask(employee, entry + "&action=materials").get("state"));
         bookings.start(organizer, id, request());
         assertEquals("MATERIAL_EXPIRED", attendeeTask(employee, entry).get("state"));
         bookings.end(organizer, id, request());
@@ -429,21 +429,30 @@ class MeetingIntegrationTest {
                 "dueAt", Instant.now().plusSeconds(3600).toString());
         followUp.saveMinutes(organizer, id, request(), 3, Map.of("decisions", "通过", "publish", true,
                 "items", List.of(first, second)));
-        assertEquals(taskId, attendeeTask(employee, entry).get("id"));
-        assertEquals("OVERDUE", attendeeTask(employee, entry).get("state"));
         var details = values(bookings.detail(employee, id), "items");
-        for (var item : details) {
-            followUp.feedback(employee, (UUID) item.get("id"), request(), Map.of("feedback", "已完成"));
-        }
-        assertEquals("MEETING_FEEDBACK_DONE", attendeeTask(employee, entry).get("state"));
-        assertEquals("COMPLETED", attendeeTask(employee, entry).get("category"));
-        assertEquals(taskId, attendeeTask(employee, entry).get("id"));
+        UUID firstItem = (UUID) details.stream().filter(item -> "第一项".equals(item.get("content")))
+                .findFirst().orElseThrow().get("id");
+        UUID secondItem = (UUID) details.stream().filter(item -> "第二项".equals(item.get("content")))
+                .findFirst().orElseThrow().get("id");
+        // 首页直达最早到期的一项，提交后同一条待办改为指向下一项。
+        String firstEntry = "#/meetings?item=" + firstItem;
+        assertEquals(taskId, attendeeTask(employee, firstEntry).get("id"));
+        assertEquals("OVERDUE", attendeeTask(employee, firstEntry).get("state"));
+        assertTrue(values(portal.tasks(employee, Map.of("category", "RECENT")), "items").stream()
+                .anyMatch(task -> taskId.equals(task.get("id")) && firstEntry.equals(task.get("entry"))));
+        followUp.feedback(employee, firstItem, request(), Map.of("feedback", "已完成"));
+        assertEquals(taskId, attendeeTask(employee, "#/meetings?item=" + secondItem).get("id"));
+        followUp.feedback(employee, secondItem, request(), Map.of("feedback", "已完成"));
+        var completed = attendeeTask(employee, entry + "&action=follow-up");
+        assertEquals("MEETING_FEEDBACK_DONE", completed.get("state"));
+        assertEquals("COMPLETED", completed.get("category"));
+        assertEquals(taskId, completed.get("id"));
         assertTrue(values(portal.tasks(employee, Map.of()), "items").stream()
                 .noneMatch(task -> details.stream().anyMatch(item -> item.get("id").equals(task.get("id")))));
-        followUp.review(organizer, (UUID) details.getFirst().get("id"), request(),
+        followUp.review(organizer, firstItem, request(),
                 Map.of("decision", "RETURNED", "reason", "继续补充"));
-        assertEquals("HANDLING", attendeeTask(employee, entry).get("category"));
-        assertEquals(taskId, attendeeTask(employee, entry).get("id"));
+        assertEquals("HANDLING", attendeeTask(employee, firstEntry).get("category"));
+        assertEquals(taskId, attendeeTask(employee, firstEntry).get("id"));
     }
 
     /** 覆盖表格冲突、按人确认阅读与从会中结论分派会后反馈。 */
@@ -613,6 +622,44 @@ class MeetingIntegrationTest {
         assertEquals("FOLLOW_UP", bookings.detail(organizer, id).get("state"));
         assertEquals(1, db.count("SELECT count(*) FROM portal.meeting_item WHERE meeting_id=?", id));
         assertTrue(workbooks.download(organizer, id, false).length > 0);
+    }
+
+    @Test
+    void markdownWeeklyMaterialImagesInheritVisibilityAndSurviveEditing() throws IOException {
+        Actor otherInvitee = person();
+        var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        body.put("attendeeIds", List.of(employee.userId().toString(), otherInvitee.userId().toString()));
+        body.put("materialTypes", List.of("REPORT", "WEEKLY_PLAN"));
+        body.put("shareAll", false);
+        UUID id = bookings.create(organizer, request(), body);
+        var png = new ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 1, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", png);
+        UUID image = request();
+        String markdown = "1. 完成事项\n  1.1. 细项\n\n![图片](inline-image/" + image + ")";
+        var upload = Map.of("id", image.toString(), "data", Base64.getEncoder().encodeToString(png.toByteArray()));
+        bookings.materials(employee, id, request(), Map.of("kind", "REPORT", "markdown", markdown, "images", List.of(upload)));
+        var report = values(attendee(organizer, id, employee), "materials").getFirst();
+        UUID attendeeId = (UUID) report.get("attendeeId");
+        var data = Crypto.JSON.valueToTree(report.get("data"));
+        assertEquals(markdown, data.path("markdown").asText());
+        assertTrue(data.path("text").asText().contains("[图片]"));
+        assertEquals("image/png", bookings.materialImage(organizer, id, attendeeId, "REPORT", image).mediaType());
+        assertNotNull(bookings.materialImage(employee, id, attendeeId, "REPORT", image));
+        assertEquals(404, assertThrows(ApiFault.class,
+                () -> bookings.materialImage(otherInvitee, id, attendeeId, "REPORT", image)).status);
+        db.update("UPDATE portal.meeting_booking SET share_all=true WHERE id=?", id);
+        assertNotNull(bookings.materialImage(otherInvitee, id, attendeeId, "REPORT", image));
+        assertEquals(404, assertThrows(ApiFault.class,
+                () -> bookings.materialImage(outsider, id, attendeeId, "REPORT", image)).status);
+
+        bookings.materials(employee, id, request(), Map.of("kind", "REPORT", "markdown", markdown + "\n\n补充",
+                "imageKeys", List.of(image.toString())));
+        assertNotNull(bookings.materialImage(organizer, id, attendeeId, "REPORT", image));
+        assertEquals(404, assertThrows(ApiFault.class,
+                () -> bookings.materialImage(organizer, id, attendeeId, "WEEKLY_PLAN", image)).status);
+        bookings.materials(employee, id, request(), Map.of("kind", "REPORT", "markdown", "已移除图片"));
+        assertEquals(404, assertThrows(ApiFault.class,
+                () -> bookings.materialImage(organizer, id, attendeeId, "REPORT", image)).status);
     }
 
     @Test
@@ -842,8 +889,10 @@ class MeetingIntegrationTest {
     }
 
     private boolean hasPending(Actor actor, UUID id) {
+        String entry = "#/meetings?id=" + id;
         return values(portal.tasks(actor, Map.of("category", "HANDLING")), "items").stream()
-                .anyMatch(row -> ("#/meetings?id=" + id).equals(row.get("entry")));
+                .map(row -> (String) row.get("entry"))
+                .anyMatch(link -> link.equals(entry) || link.startsWith(entry + "&"));
     }
 
     private Map<String, Object> attendee(Actor viewer, UUID meeting, Actor person) {

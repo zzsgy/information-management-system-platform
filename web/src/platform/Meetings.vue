@@ -8,6 +8,7 @@ import MeetingPermissionSettings from "./MeetingPermissionSettings.vue";
 import MeetingEditor from "./MeetingEditor.vue";
 import MeetingMaterialSummary from "./MeetingMaterialSummary.vue";
 import MeetingMaterialForm from "./MeetingMaterialForm.vue";
+import MeetingNarrativeView from "./MeetingNarrativeView.vue";
 import MeetingMinutes from "./MeetingMinutes.vue";
 import MeetingLiveDecision from "./MeetingLiveDecision.vue";
 import MeetingPublishedDecisions from "./MeetingPublishedDecisions.vue";
@@ -47,6 +48,7 @@ const page = ref(1),
   reason = ref(""),
   replyReason = ref("");
 const decline = ref(false),
+  replyError = ref(""),
   returning = ref(false),
   returnReason = ref("");
 const report = ref(""),
@@ -54,12 +56,12 @@ const report = ref(""),
 const roomName = ref(""),
   enabled = ref(true),
   roomId = ref("");
-const detailRevision = ref(0);
 
 const declineInput = ref<HTMLTextAreaElement>();
 const cancelInput = ref<HTMLTextAreaElement>();
 
 async function openDecline() {
+  replyError.value = "";
   decline.value = !decline.value;
   if (decline.value) {
     await nextTick();
@@ -126,6 +128,55 @@ const submissions = computed(
     detail.value?.attendees.flatMap((person) => person.materials ?? []) ?? [],
 );
 
+/** 本人事项优先；退回补充的事项仍需填写，未获授权读取的状态单独列出。 */
+const followUpOwners = computed(() => {
+  const tasks = detail.value?.items ?? [];
+  return [true, false]
+    .map((mine) => {
+      const assigned = tasks.filter(
+        (task) => (task.assigneeId === profile.value?.user.id) === mine,
+      );
+      return {
+        mine,
+        groups: [
+          { label: "未填写反馈", tasks: assigned.filter((task) => needsFeedback(task.state)) },
+          {
+            label: "已填写反馈",
+            tasks: assigned.filter((task) => task.state === "SUBMITTED" || task.state === "CONFIRMED"),
+          },
+          { label: "反馈状态未共享", tasks: assigned.filter((task) => task.state == null) },
+        ].filter((group) => group.tasks.length),
+      };
+    })
+    .filter((owner) => owner.groups.length);
+});
+
+/** 退回补充与初次分派均可填写反馈。 */
+function needsFeedback(state: string | null) {
+  return state === "PENDING" || state === "RETURNED";
+}
+
+/** 工作台入口在详情加载后定位到相应操作，保留已有的材料直达链接。 */
+function taskTarget() {
+  switch (params.value.get("action")) {
+    case "reply":
+      return "meeting-reply";
+    case "minutes":
+      return "meeting-minutes-editor";
+    case "follow-up":
+      return "meeting-follow-up";
+    case "materials": {
+      if (detail.value?.materialTypes == null) return "meeting-material-legacy";
+      const kind = missingMaterialKinds(formKinds.value, own.value?.materials ?? [])[0];
+      return kind ? "meeting-material-" + kind : undefined;
+    }
+    default: {
+      const kind = params.value.get("material");
+      return formKinds.value.some((entry) => entry === kind) ? "meeting-material-" + kind : undefined;
+    }
+  }
+}
+
 async function refresh() {
   if (itemId.value) {
     item.value = await api<MeetingItem>("/meetings/items/" + itemId.value);
@@ -134,16 +185,6 @@ async function refresh() {
     detail.value = record;
     report.value = own.value?.report ?? "";
     replyReason.value = own.value?.declineReason ?? "";
-    if (detailRevision.value === 0) {
-      const kind = params.value.get("material");
-      if (formKinds.value.some((entry) => entry === kind)) {
-        await nextTick();
-        document
-          .getElementById("meeting-material-" + kind)
-          ?.scrollIntoView({ block: "start" });
-      }
-    }
-    detailRevision.value++;
   } else if (configuring.value) {
     rooms.value = (
       await api<{ items: MeetingRoom[] }>("/admin/meetings/rooms")
@@ -177,7 +218,7 @@ watch(
     onCleanup(() => {
       current = false;
     });
-    error.value = reason.value = feedback.value = returnReason.value = "";
+    error.value = reason.value = feedback.value = returnReason.value = replyError.value = "";
     editor.value = cancelling.value = decline.value = returning.value = false;
     detail.value = undefined;
     item.value = undefined;
@@ -189,7 +230,14 @@ watch(
     } catch (e) {
       if (current) error.value = (e as Error).message;
     } finally {
-      if (current) loading.value = false;
+      if (current) {
+        loading.value = false;
+        const targetId = detail.value && taskTarget();
+        if (targetId) {
+          await nextTick();
+          if (current) document.getElementById(targetId)?.scrollIntoView({ block: "start" });
+        }
+      }
     }
   },
   { immediate: true },
@@ -208,10 +256,11 @@ async function act(
   body: object,
   success: string,
   method = "POST",
+  displayError = error,
 ) {
   if (busy.value) return;
   busy.value = true;
-  error.value = "";
+  displayError.value = "";
   try {
     await api(path, { method, body: JSON.stringify(body) });
     if (configuring.value) {
@@ -223,7 +272,7 @@ async function act(
     }
     return true;
   } catch (e) {
-    error.value = (e as Error).message;
+    displayError.value = (e as Error).message;
   } finally {
     busy.value = false;
   }
@@ -238,11 +287,13 @@ function cancelEditor() {
   else editor.value = false;
 }
 
-async function acceptMeeting(id: string) {
+async function replyMeeting(id: string, decision: "ACCEPTED" | "DECLINED") {
   await act(
     "/meetings/" + id + "/reply",
-    { decision: "ACCEPTED" },
-    "已参加",
+    decision === "ACCEPTED" ? { decision } : { decision, reason: replyReason.value },
+    decision === "ACCEPTED" ? "已参加" : "已回复不参加",
+    "POST",
+    replyError,
   );
 }
 /** 开始后留在详情查看材料，结束后滚动到纪要编辑区。 */
@@ -326,21 +377,24 @@ function timeRange(start: string, end: string) {
   );
 }
 
-function missingMaterials(
+/** Excel 导入的员工可以只有周报正文，无须补交空的协调事宜。 */
+function missingMaterialKinds(
   types: MaterialKind[],
   submitted: MeetingMaterial[],
 ) {
   const imported = submitted.some((entry) => entry.data.source === "EXCEL");
-  return types
-    .filter((kind) => !(imported && kind === "COORDINATION") && !submitted.some((entry) => entry.kind === kind))
-    .map((kind) => materialLabels[kind])
-    .join("、");
+  return types.filter((kind) => !(imported && kind === "COORDINATION") && !submitted.some((entry) => entry.kind === kind));
+}
+
+/** 受邀人员卡片展示实际缺少的材料名称。 */
+function missingMaterials(types: MaterialKind[], submitted: MeetingMaterial[]) {
+  return missingMaterialKinds(types, submitted).map((kind) => materialLabels[kind]).join("、");
 }
 function replyLabel(reply?: string) {
   return reply === "ACCEPTED"
     ? "参加"
     : reply === "DECLINED"
-      ? "不能参加"
+      ? "不参加"
       : "未回复";
 }
 </script>
@@ -692,7 +746,7 @@ function replyLabel(reply?: string) {
             </div>
           </div>
           <div
-            v-if="detail.canStart || detail.canEnd || detail.canEdit || detail.canReply"
+            v-if="detail.canStart || detail.canEnd || detail.canEdit"
             class="meeting-actions detail-actions"
             role="group"
             aria-label="会议操作"
@@ -733,18 +787,6 @@ function replyLabel(reply?: string) {
             >
               取消会议
             </button>
-            <template v-if="detail.canReply">
-              <button
-                class="primary"
-                :disabled="busy"
-                @click="acceptMeeting(detail.id)"
-              >
-                参加
-              </button>
-              <button class="secondary" :disabled="busy" @click="openDecline">
-                不能参加
-              </button>
-            </template>
           </div>
         </header>
         <div class="meeting-detail-body">
@@ -807,28 +849,6 @@ function replyLabel(reply?: string) {
                 />
               </label>
               <button class="primary" :disabled="busy">确认取消</button>
-            </form>
-            <form
-              v-if="detail.canReply && decline"
-              class="meeting-section"
-              @submit.prevent="
-                act(
-                  '/meetings/' + detail.id + '/reply',
-                  { decision: 'DECLINED', reason: replyReason },
-                  '已回复不能参加',
-                )
-              "
-            >
-              <label
-                >不能参加的理由<textarea v-numbered
-                  ref="declineInput"
-                  v-model="replyReason"
-                  required
-                  maxlength="1000"
-                  rows="3"
-                />
-              </label>
-              <button class="primary" :disabled="busy">提交回复</button>
             </form>
             <MeetingWorkbookPanel
               v-if="organizer"
@@ -948,9 +968,9 @@ function replyLabel(reply?: string) {
                       {{ material.data.author.name }} ·
                       {{ material.data.author.department }}
                     </p>
-                    <RichTextView
+                    <MeetingNarrativeView
                       v-if="material.kind === 'REPORT' || material.kind === 'WEEKLY_PLAN'"
-                      class="meeting-text" :value="material.data.text" :html="material.data.html"
+                      class="meeting-text" :meeting-id="detail.id" :material="material"
                     />
                     <ol v-else>
                       <li
@@ -1004,6 +1024,7 @@ function replyLabel(reply?: string) {
           </section>
           <form
             v-if="detail.canSubmitMaterials && detail.materialTypes == null"
+            id="meeting-material-legacy"
             class="flow-dialog-section"
             @submit.prevent="
               act(
@@ -1096,39 +1117,41 @@ function replyLabel(reply?: string) {
           </section>
           <section
             v-if="detail.trackFollowUp && detail.minutes?.publishedAt"
+            id="meeting-follow-up"
             class="flow-dialog-section"
           >
             <h3>会后待办与反馈</h3>
-            <ul v-if="detail.items.length" class="meeting-history meeting-follow-up-list">
-              <li v-for="task in detail.items" :key="task.id">
-                <div class="meeting-follow-up-copy">
-                <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{
-                  plainPreview(task.content)
-                }}</a>
-                <RichTextView v-else class="meeting-text" :value="task.content" />
-                <small
-                  >{{ task.assigneeName
-                  }}<template v-if="task.state">
-                    · {{ meetingStates[task.state] }}</template
-                  >
-                  · 截止 {{ portalTime(task.dueAt) }}</small
-                >
-                </div>
-                <div class="meeting-follow-up-actions">
-                  <template v-if="organizer && options">
-                    <button v-if="task.coordinationKey" type="button" class="secondary"
-                      @click="openLinkedCoordination(task.coordinationKey)">编辑关联协调结果</button>
-                    <MeetingPublishedItemEditor v-else :item="task" :departments="options.departments"
-                      @saved="reloadDetail" />
-                  </template>
-                  <a v-if="task.canOpen" class="secondary meeting-follow-up-action"
-                    :href="'#/meetings?item=' + task.id">
-                    {{ task.assigneeId === profile?.user.id && ['PENDING', 'RETURNED'].includes(task.state ?? '')
-                      ? '填写反馈' : '查看待办' }}
-                  </a>
-                </div>
-              </li>
-            </ul>
+            <template v-if="detail.items.length">
+              <div v-for="owner in followUpOwners" :key="String(owner.mine)" class="meeting-follow-up-owner">
+                <h4>{{ owner.mine ? '我的待办' : '其他待办' }}</h4>
+                <section v-for="group in owner.groups" :key="group.label" class="meeting-follow-up-group">
+                  <h5>{{ group.label }}</h5>
+                  <ul class="meeting-history meeting-follow-up-list">
+                    <li v-for="task in group.tasks" :key="task.id" :class="{ 'own-follow-up': owner.mine }">
+                      <div class="meeting-follow-up-copy">
+                        <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{ plainPreview(task.content) }}</a>
+                        <RichTextView v-else class="meeting-text" :value="task.content" />
+                        <small>
+                          {{ task.assigneeName }}<template v-if="task.state"> · {{ meetingStates[task.state] }}</template>
+                          · 截止 {{ portalTime(task.dueAt) }}
+                        </small>
+                      </div>
+                      <div v-if="task.canOpen || (organizer && options)" class="meeting-follow-up-actions">
+                        <template v-if="organizer && options">
+                          <button v-if="task.coordinationKey" type="button" class="secondary"
+                            @click="openLinkedCoordination(task.coordinationKey)">编辑关联协调结果</button>
+                          <MeetingPublishedItemEditor v-else :item="task" :departments="options.departments"
+                            @saved="reloadDetail" />
+                        </template>
+                        <a v-if="task.canOpen" class="secondary meeting-follow-up-action" :href="'#/meetings?item=' + task.id">
+                          {{ owner.mine && needsFeedback(task.state) ? '填写反馈' : '查看待办' }}
+                        </a>
+                      </div>
+                    </li>
+                  </ul>
+                </section>
+              </div>
+            </template>
             <p v-else class="booking-count">
               {{
                 detail.shareAll || detail.organizerId === profile?.user.id
@@ -1147,6 +1170,20 @@ function replyLabel(reply?: string) {
               确认会议办结
             </button>
           </section>
+          <footer v-if="detail.canReply" id="meeting-reply" class="meeting-reply-footer" aria-label="参会回复">
+            <div class="meeting-actions">
+              <button type="button" class="primary" :disabled="busy" @click="replyMeeting(detail.id, 'ACCEPTED')">参加</button>
+              <button type="button" class="secondary" :disabled="busy" :aria-expanded="decline" @click="openDecline">不参加</button>
+            </div>
+            <form v-if="decline" class="meeting-decline-form" @submit.prevent="replyMeeting(detail.id, 'DECLINED')">
+              <label>
+                不参加的理由
+                <textarea v-numbered ref="declineInput" v-model="replyReason" required maxlength="1000" rows="3" />
+              </label>
+              <button type="submit" class="primary" :disabled="busy">提交回复</button>
+            </form>
+            <p v-if="replyError" class="form-error" role="alert">{{ replyError }}</p>
+          </footer>
         </div>
       </div>
     </section>
@@ -1514,7 +1551,7 @@ function replyLabel(reply?: string) {
 .detail-attendees > header > h2 {
   font-size: 16px;
 }
-.meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, .material-form) {
+.meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, #meeting-material-legacy, #meeting-follow-up, #meeting-reply, .material-form) {
   scroll-margin-block-start: 92px;
 }
 .detail-workbook :is(a, button),
@@ -1652,6 +1689,21 @@ function replyLabel(reply?: string) {
 </style>
 
 <style scoped>
+.meeting-follow-up-owner + .meeting-follow-up-owner {
+  margin-block-start: 20px;
+}
+.meeting-follow-up-owner h4 {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+.meeting-follow-up-group + .meeting-follow-up-group {
+  margin-block-start: 12px;
+}
+.meeting-follow-up-group h5 {
+  margin: 0 0 4px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
 /* 操作入口位于事项右侧，窄屏时自然换行。 */
 .meeting-follow-up-list > li {
   display: flex;
@@ -1659,6 +1711,14 @@ function replyLabel(reply?: string) {
   justify-content: space-between;
   flex-wrap: wrap;
   gap: 12px;
+}
+.meeting-follow-up-list > li.own-follow-up {
+  padding-inline: 12px;
+  margin-block: 4px;
+  background: var(--brand-soft);
+  border: 0;
+  border-inline-start: 3px solid var(--brand);
+  border-radius: 6px;
 }
 .meeting-follow-up-copy {
   flex: 1 1 260px;
@@ -1670,6 +1730,23 @@ function replyLabel(reply?: string) {
   flex-wrap: wrap;
   align-items: center;
   gap: 8px;
+}
+.meeting-reply-footer {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  padding-block: 12px;
+}
+.meeting-reply-footer > .meeting-actions {
+  justify-content: center;
+}
+.meeting-decline-form {
+  width: min(100%, 600px);
+  display: grid;
+  gap: 12px;
+}
+.meeting-decline-form > button {
+  justify-self: center;
 }
 .meeting-follow-up-action {
   display: inline-flex;

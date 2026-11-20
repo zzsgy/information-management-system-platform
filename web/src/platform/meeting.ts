@@ -180,8 +180,17 @@ export interface MeetingMaterial {
   data: {
     html?: string;
     text?: string;
+    markdown?: string;
+    imageKeys?: string[];
     source?: "EXCEL";
     rows?: MaterialRow[];
     author: { name: string; department: string };
   };
+}
+
+/** 图片访问路径绑定到具体的会议、受邀人和材料类型。 */
+export function meetingMaterialImageBase(meetingId: string, material?: MeetingMaterial) {
+  return material?.attendeeId
+    ? `/api/v1/meetings/${meetingId}/materials/${material.attendeeId}/${material.kind}/images`
+    : undefined;
 }

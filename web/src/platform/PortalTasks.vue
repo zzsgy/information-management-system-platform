@@ -264,10 +264,12 @@ function switchFilter(value: string) {
       </button>
     </nav>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+    <!-- 工作台保留刷新前的行，会议操作入口须等最新流程阶段返回后才能打开。 -->
     <button
       v-for="item in items"
       :key="item.id"
       class="portal-list-row"
+      :disabled="compact && busy && item.source === 'MEETING'"
       @click="open(item)"
     >
       <span

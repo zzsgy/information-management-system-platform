@@ -34,7 +34,7 @@ public class PortalWork {
         identity.lockActor(actor);String digest=Crypto.hash(Crypto.json(digestBody));
         var prior=db.one("SELECT id,request_digest FROM portal.feedback WHERE applicant_id=? AND operation_id=?",actor.userId(),operation);
         if(prior!=null){if(!Crypto.equal(digest,prior.get("request_digest").toString()))throw ApiFault.conflict("同一操作号不能用于不同反馈");return feedback(actor,(UUID)prior.get("id"),false);}
-        var images=feedbackImages.prepare(body.get("images"));
+        var images=InlineImages.prepare(body.get("images"));
         UUID id=UUID.randomUUID();
         db.update("INSERT INTO portal.feedback(id,applicant_id,category,content,operation_id,request_digest,content_format) VALUES(?,?,?,?,?,?,?)",
                 id,actor.userId(),category,content,operation,digest,format);
@@ -67,7 +67,7 @@ public class PortalWork {
         String format=feedbackFormat(body);
         var row=db.required("SELECT * FROM portal.feedback WHERE id=? FOR UPDATE",id);Commands.version(ctx,row);
         if("RESOLVED".equals(row.get("state")))throw ApiFault.conflict("该反馈已办结，请刷新查看处理结果");
-        var images=feedbackImages.prepare(body.get("images"));
+        var images=InlineImages.prepare(body.get("images"));
         UUID reply=UUID.randomUUID();
         db.update("INSERT INTO portal.feedback_reply(id,feedback_id,body,content_format,author_id,author_name) SELECT ?,?,?,?,id,name FROM iam.user_account WHERE id=?",
                 reply,id,text,format,ctx.actor().userId());
@@ -244,7 +244,12 @@ public class PortalWork {
                 SELECT a.id,'会议待办 · '||m.subject,
                     CASE WHEN stage.pre_pending OR f.pending_due IS NOT NULL THEN 'HANDLING' ELSE 'COMPLETED' END,
                     COALESCE(f.pending_due,f.last_due,m.actual_started_at),
-                    '#/meetings?id='||m.id,'MEETING',
+                    CASE WHEN f.pending_item IS NOT NULL THEN '#/meetings?item='||f.pending_item
+                         ELSE '#/meetings?id='||m.id||CASE
+                             WHEN stage.pre_pending AND a.reply='PENDING' THEN '&action=reply'
+                             WHEN stage.pre_pending THEN '&action=materials'
+                             WHEN f.last_due IS NOT NULL THEN '&action=follow-up'
+                             ELSE '' END END,'MEETING',
                     CASE WHEN f.pending_due<CURRENT_TIMESTAMP THEN 'OVERDUE'
                          WHEN f.pending_due IS NOT NULL THEN 'MEETING_FEEDBACK_PENDING'
                          WHEN stage.pre_pending AND a.reply='PENDING' THEN 'MEETING_REPLY_PENDING'
@@ -275,6 +280,8 @@ public class PortalWork {
                 ) stage
                 CROSS JOIN LATERAL (
                     SELECT min(i.due_at) FILTER (WHERE i.state IN ('PENDING','RETURNED')) AS pending_due,
+                           (array_agg(i.id ORDER BY i.due_at,i.created_at,i.id)
+                               FILTER (WHERE i.state IN ('PENDING','RETURNED')))[1] AS pending_item,
                            max(i.due_at) AS last_due,
                            max(COALESCE((i.history->-1->>'at')::timestamptz,i.created_at)) AS activity_at
                     FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.assignee_id=a.user_id
@@ -298,7 +305,8 @@ public class PortalWork {
                 WHERE m.organizer_id=? AND i.state='SUBMITTED'
                 UNION ALL
                 SELECT md5('meeting-organizer:'||m.id)::uuid,CASE WHEN m.minutes_published_at IS NULL THEN '发布会议纪要 · ' ELSE '确认会议办结 · ' END||m.subject,
-                    'HANDLING',NULL::timestamptz,'#/meetings?id='||m.id,'MEETING',NULL,
+                    'HANDLING',NULL::timestamptz,'#/meetings?id='||m.id||CASE
+                        WHEN m.minutes_published_at IS NULL THEN '&action=minutes' ELSE '&action=follow-up' END,'MEETING',NULL,
                     COALESCE(m.minutes_published_at,m.actual_ended_at),NULL
                 FROM portal.meeting_booking m
                 WHERE m.organizer_id=? AND m.cancelled_at IS NULL AND m.closed_at IS NULL

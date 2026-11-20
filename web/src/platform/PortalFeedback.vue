@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import RichTextView from "./RichTextView.vue";
-import FeedbackMarkdownEditor from "./FeedbackMarkdownEditor.vue";
-import FeedbackMarkdownView from "./FeedbackMarkdownView.vue";
-import { feedbackMarkdownPayload, type FeedbackImageDraft } from "./feedbackMarkdown";
+import MarkdownImageEditor from "./MarkdownImageEditor.vue";
+import MarkdownImageView from "./MarkdownImageView.vue";
+import { markdownImageUploads, type MarkdownImageDraft } from "./markdownImages";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
@@ -34,9 +34,9 @@ const items = ref<Feedback[]>([]),
   total = ref(0),
   category = ref("SUGGESTION"),
   content = ref(""),
-  contentImages = ref<FeedbackImageDraft[]>([]),
+  contentImages = ref<MarkdownImageDraft[]>([]),
   reply = ref(""),
-  replyImages = ref<FeedbackImageDraft[]>([]),
+  replyImages = ref<MarkdownImageDraft[]>([]),
   replyState = ref("RESOLVED"),
   busy = ref(false),
   preparing = ref(false),
@@ -93,7 +93,8 @@ async function submit() {
     const body = JSON.stringify({
       category: category.value,
       content: content.value,
-      ...feedbackMarkdownPayload(content.value, contentImages.value),
+      contentFormat: "MARKDOWN",
+      images: markdownImageUploads(content.value, contentImages.value),
     });
     if (pending?.body !== body)
       pending = { body, operation: crypto.randomUUID() };
@@ -123,7 +124,7 @@ async function respond() {
     detail.value = await mutate<Feedback>(
       `${prefix()}/${detail.value.id}/replies`,
       "POST",
-      { body: reply.value, state: replyState.value, ...feedbackMarkdownPayload(reply.value, replyImages.value) },
+      { body: reply.value, state: replyState.value, contentFormat: "MARKDOWN", images: markdownImageUploads(reply.value, replyImages.value) },
       detail.value.id,
       "PORTAL_FEEDBACK",
       "REPLY_FEEDBACK",
@@ -183,7 +184,7 @@ const listFilters = ref(recentWeekFilters("created"));
           </option>
         </select></label
       >
-      <FeedbackMarkdownEditor v-model="content" v-model:images="contentImages" v-model:preparing="preparing"
+      <MarkdownImageEditor v-model="content" v-model:images="contentImages" v-model:preparing="preparing"
         label="反馈内容" :rows="8" :limit="1000" :disabled="busy"
         placeholder="请描述遇到的问题、操作步骤或改进建议。" />
       <p class="muted">
@@ -204,8 +205,8 @@ const listFilters = ref(recentWeekFilters("created"));
         <span>{{ detail.applicantName }}</span
         ><time>{{ portalTime(detail.createdAt) }}</time>
       </div>
-      <FeedbackMarkdownView v-if="detail.contentFormat === 'MARKDOWN'" class="feedback-body"
-        :value="detail.content" :feedback-id="detail.id" :message-id="detail.id" />
+      <MarkdownImageView v-if="detail.contentFormat === 'MARKDOWN'" class="feedback-body"
+        :value="detail.content" :image-base="`/api/v1/portal/feedback/${detail.id}/images/${detail.id}`" />
       <RichTextView v-else class="portal-plain-text feedback-body" :value="detail.content" />
       <h3>处理记录</h3>
       <article
@@ -217,8 +218,8 @@ const listFilters = ref(recentWeekFilters("created"));
           <strong>{{ item.authorName }}</strong
           ><time>{{ portalTime(item.createdAt) }}</time>
         </div>
-        <FeedbackMarkdownView v-if="item.contentFormat === 'MARKDOWN'"
-          :value="item.body" :feedback-id="detail.id" :message-id="item.id" />
+        <MarkdownImageView v-if="item.contentFormat === 'MARKDOWN'"
+          :value="item.body" :image-base="`/api/v1/portal/feedback/${detail.id}/images/${item.id}`" />
         <RichTextView v-else class="portal-plain-text" :value="item.body" />
       </article>
       <p v-if="!detail.replies.length" class="muted">
@@ -228,7 +229,7 @@ const listFilters = ref(recentWeekFilters("created"));
         v-if="manage && detail.state !== 'RESOLVED'"
         @submit.prevent="respond"
       >
-        <FeedbackMarkdownEditor v-model="reply" v-model:images="replyImages" v-model:preparing="preparing"
+        <MarkdownImageEditor v-model="reply" v-model:images="replyImages" v-model:preparing="preparing"
           label="回复员工" :rows="5" :limit="2000" :disabled="busy" />
         <label
           >办理结果<select v-model="replyState">

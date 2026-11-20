@@ -530,18 +530,46 @@ public class MeetingBookings {
     private void saveStructuredMaterial(Actor actor, UUID id, UUID request, Map<String, Object> body,
             String kind, Map<String, Object> meeting, Map<String, Object> attendee) {
         var payload = structuredPayload(body, kind, meeting, attendee);
-        storeMaterial((UUID) attendee.get("id"), kind, payload);
+        UUID attendeeId = (UUID) attendee.get("id");
+        var uploaded = InlineImages.prepare(body.get("images"));
+        if (payload.containsKey("markdown")) {
+            if (!(body.getOrDefault("imageKeys", List.of()) instanceof List<?> keys) || keys.size() > 3)
+                throw ApiFault.invalid("每项材料最多添加 3 张图片");
+            var retained = keys.stream().map(Inputs::uuid).toList();
+            var stored = db.rows("SELECT image_key FROM portal.meeting_material_image WHERE attendee_id=? AND kind=?", attendeeId, kind);
+            if (!stored.stream().map(row -> row.get("image_key")).toList().containsAll(retained))
+                throw ApiFault.invalid("材料中的图片已变更，请刷新后重试");
+            var imageKeys = new LinkedHashSet<>(retained);
+            imageKeys.addAll(uploaded.keySet());
+            if (imageKeys.size() > 3) throw ApiFault.invalid("每项材料最多添加 3 张图片");
+            payload.put("imageKeys", List.copyOf(imageKeys));
+        }
+        storeMaterial(attendeeId, kind, payload);
+        // 已提交的图片标识不覆盖，重复提交沿用同一张图片。
+        uploaded.forEach((key, image) -> db.update("""
+                INSERT INTO portal.meeting_material_image(attendee_id,kind,image_key,media_type,image_bytes)
+                VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING
+                """, attendeeId, kind, key, image.mediaType(), image.bytes()));
         event(actor, request, id, "MEETING_MATERIALS");
     }
 
     /** 线上填报和代导入共用字段规则，材料作者取被填报的受邀员工。 */
     Map<String, Object> structuredPayload(Map<String, Object> body, String kind,
             Map<String, Object> meeting, Map<String, Object> attendee) {
-        Inputs.only(body, "kind", "html", "text", "rows");
+        Inputs.only(body, "kind", "html", "text", "rows", "markdown", "images", "imageKeys");
         if (!(meeting.get("material_types") instanceof List<?> types) || !types.contains(kind))
             throw ApiFault.denied();
+        boolean narrative = kind.equals("REPORT") || kind.equals("WEEKLY_PLAN");
+        boolean markdown = body.containsKey("markdown");
+        if ((!narrative && markdown) || ((!markdown || !narrative) && (body.containsKey("images") || body.containsKey("imageKeys"))))
+            throw ApiFault.invalid("只有 Markdown 周报材料可以附带图片");
         Map<String,Object> payload;
-        if (kind.equals("REPORT") || kind.equals("WEEKLY_PLAN")) {
+        if (markdown) {
+            String source = Inputs.text(body, "markdown", 8000);
+            // 现有 Excel 导出和纪要底稿保留文字，图片在会议材料内按权限查看。
+            String text = source.replaceAll("!\\[[^\\]\\r\\n]*\\]\\((?:inline|feedback)-image/[0-9a-f-]{36}[^)\\r\\n]*\\)", "[图片]");
+            payload = Sql.map("markdown", source, "text", text);
+        } else if (narrative) {
             payload = Sql.map("text", Inputs.text(body,"text",8000));
             if(body.containsKey("html"))payload.put("html",Inputs.text(body,"html",12000));
         } else {
@@ -618,6 +646,29 @@ public class MeetingBookings {
                 ON CONFLICT(attendee_id,kind) DO UPDATE SET payload=EXCLUDED.payload,submitted_at=CURRENT_TIMESTAMP
                 WHERE portal.meeting_material.payload IS DISTINCT FROM EXCLUDED.payload
                 """, attendeeId,kind,Crypto.json(payload));
+        if (kind.equals("REPORT") || kind.equals("WEEKLY_PLAN")) {
+            db.update("""
+                    DELETE FROM portal.meeting_material_image WHERE attendee_id=? AND kind=?
+                    AND image_key::text NOT IN (SELECT jsonb_array_elements_text(?::jsonb))
+                    """, attendeeId, kind, Crypto.json(payload.getOrDefault("imageKeys", List.of())));
+        }
+    }
+
+    /** 图片与原周报使用同一可见范围，包括已发布的旧版共享汇报。 */
+    public InlineImages.Image materialImage(Actor actor, UUID meeting, UUID attendee, String kind, UUID key) {
+        Inputs.choice(kind, "REPORT", "WEEKLY_PLAN");
+        boolean manager = generalManager(actor.userId());
+        var row = db.required("""
+                SELECT i.media_type,i.image_bytes FROM portal.meeting_material_image i
+                JOIN portal.meeting_attendee a ON a.id=i.attendee_id AND a.removed_at IS NULL
+                JOIN portal.meeting_booking m ON m.id=a.meeting_id
+                WHERE m.id=? AND i.attendee_id=? AND i.kind=? AND i.image_key=? AND
+                """ + VISIBLE + """
+                AND (a.user_id=? OR m.organizer_id=? OR (m.kind='WEEKLY' AND ?) OR m.share_all
+                    OR (m.share_all IS NULL AND m.minutes_published_at IS NOT NULL AND i.kind='REPORT'
+                        AND m.minutes->'sharedSummaries'->>'REPORT'='true'))
+                """, meeting, attendee, kind, key, actor.userId(), manager, actor.userId(), actor.userId(), actor.userId(), manager);
+        return new InlineImages.Image((String) row.get("media_type"), (byte[]) row.get("image_bytes"));
     }
 
     /** 管理员可查询配置，包括停用地点。 */

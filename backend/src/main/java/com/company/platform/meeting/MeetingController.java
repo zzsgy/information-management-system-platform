@@ -3,6 +3,7 @@ package com.company.platform.meeting;
 import com.company.platform.*;
 import jakarta.servlet.http.HttpServletRequest;
 import com.company.platform.intake.ImportWorkbook;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -115,6 +116,15 @@ public class MeetingController {
         UUID meeting = Inputs.uuid(id);
         bookings.materials(actor(r), meeting, ApiController.requestId(r), body);
         return saved(meeting, r);
+    }
+
+    /** 读取受会议材料可见范围限制的内联图片。 */
+    @GetMapping("/meetings/{id}/materials/{attendee}/{kind}/images/{image}")
+    public ResponseEntity<byte[]> materialImage(@PathVariable String id, @PathVariable String attendee,
+            @PathVariable String kind, @PathVariable String image, HttpServletRequest r) {
+        var result = bookings.materialImage(actor(r), Inputs.uuid(id), Inputs.uuid(attendee), kind, Inputs.uuid(image));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(result.mediaType()))
+                .cacheControl(CacheControl.noStore()).header("X-Content-Type-Options", "nosniff").body(result.bytes());
     }
 
     /** 本场受邀员工确认阅读；版本过期须刷新后再次确认。 */

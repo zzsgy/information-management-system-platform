@@ -277,9 +277,11 @@ const managementGroups = computed(() =>
 );
 const allowedRoute = computed(() => {
   const requested = route.value.split("?")[0];
-  // 兼容管理员收藏的原会议入口，统一进入管理中心。
-  if (requested === "meetings" && systemAdministrator.value)
-    return "meeting-config";
+  // 管理员的会议模块入口仍进配置，带具体会议或事项的链接交由业务接口鉴权。
+  if (requested === "meetings" && systemAdministrator.value) {
+    const meetingParams = new URLSearchParams(route.value.split("?")[1]);
+    return meetingParams.get("id") || meetingParams.get("item") ? "meetings" : "meeting-config";
+  }
   if (
     requested === "physical" &&
     can("ARCHIVE.ACCESS") &&

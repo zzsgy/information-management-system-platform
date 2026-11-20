@@ -1,7 +1,12 @@
 <script setup lang="ts">
 import { nextTick, ref, useId } from "vue";
-import FeedbackMarkdownView from "./FeedbackMarkdownView.vue";
-import { referencedImages, type FeedbackImageDraft } from "./feedbackMarkdown";
+import MarkdownImageView from "./MarkdownImageView.vue";
+import {
+  markdownImageKeys,
+  referencedImages,
+  type MarkdownImageDraft,
+} from "./markdownImages";
+import { markdownNumberingEdit } from "./markdownNumbering";
 
 const props = defineProps<{
   label: string;
@@ -9,20 +14,24 @@ const props = defineProps<{
   rows: number;
   placeholder?: string;
   disabled?: boolean;
+  numbered?: boolean;
+  imageBase?: string;
+  imageKeys?: string[];
 }>();
 const content = defineModel<string>({ required: true });
-const images = defineModel<FeedbackImageDraft[]>("images", { required: true });
+const images = defineModel<MarkdownImageDraft[]>("images", { required: true });
 const preparing = defineModel<boolean>("preparing", { required: true });
 const editorId = useId();
 const editor = ref<HTMLTextAreaElement>();
 const chooser = ref<HTMLInputElement>();
 const previewing = ref(false);
+const autoNumbering = ref(true);
 const error = ref("");
 const maxImages = 3;
 const maxImageBytes = 2 * 1024 * 1024;
 
 /** 预览使用浏览器读取的图片，不在提交前上传。 */
-function readImage(file: File): Promise<FeedbackImageDraft> {
+function readImage(file: File): Promise<MarkdownImageDraft> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () =>
@@ -40,8 +49,14 @@ async function addImages(files: File[]) {
   const end = editor.value?.selectionEnd ?? start;
   const before = content.value.slice(0, start);
   const after = content.value.slice(end);
-  const kept = referencedImages(before + after, images.value);
-  if (kept.length + files.length > maxImages) {
+  const remaining = before + after;
+  const kept = referencedImages(remaining, images.value, props.numbered);
+  const references = markdownImageKeys(remaining, props.numbered);
+  const keptKeys = new Set([
+    ...kept.map(({ id }) => id),
+    ...(props.imageKeys ?? []).filter((id) => references.has(id)),
+  ]);
+  if (keptKeys.size + files.length > maxImages) {
     error.value = "最多可添加 3 张截图";
     return;
   }
@@ -60,7 +75,8 @@ async function addImages(files: File[]) {
     const added = await Promise.all(files.map(readImage));
     const markup = added
       .map(
-        ({ id }, i) => `![截图 ${kept.length + i + 1}](feedback-image/${id})`,
+        ({ id }, i) =>
+          `![${props.numbered ? "图片" : "截图"} ${keptKeys.size + i + 1}](inline-image/${id})`,
       )
       .join("\n\n");
     const block = (before ? "\n\n" : "") + markup + "\n\n";
@@ -100,13 +116,48 @@ function selectFiles(event: Event) {
   input.value = "";
   void addImages(files);
 }
+
+/** 仅在有序列表内处理回车和缩进，普通段落和输入法保持浏览器行为。 */
+function numberList(event: KeyboardEvent) {
+  const field = editor.value;
+  if (
+    !props.numbered ||
+    !autoNumbering.value ||
+    !field ||
+    event.isComposing ||
+    event.altKey ||
+    event.ctrlKey ||
+    event.metaKey ||
+    field.selectionStart !== field.selectionEnd ||
+    (event.key !== "Enter" && event.key !== "Tab")
+  )
+    return;
+  const caret = field.selectionStart;
+  const edit = markdownNumberingEdit(
+    field.value,
+    caret,
+    event.key,
+    event.shiftKey,
+  );
+  if (
+    !edit ||
+    field.value.length + edit.text.length - (edit.end - edit.start) >
+      props.limit
+  )
+    return;
+  event.preventDefault();
+  field.setRangeText(edit.text, edit.start, edit.end);
+  const next = caret + edit.text.length - (edit.end - edit.start);
+  field.setSelectionRange(next, next);
+  field.dispatchEvent(new Event("input", { bubbles: true }));
+}
 </script>
 
 <template>
-  <div class="feedback-editor">
+  <div class="markdown-image-editor">
     <label :for="editorId">{{ label }}</label>
-    <div class="feedback-editor-box">
-      <div class="feedback-editor-toolbar">
+    <div class="markdown-image-editor-box">
+      <div class="markdown-image-editor-toolbar">
         <button
           type="button"
           class="text-button"
@@ -126,15 +177,24 @@ function selectFiles(event: Event) {
           预览
         </button>
         <button
+          v-if="numbered"
           type="button"
-          class="text-button feedback-add-image"
+          class="text-button"
+          :aria-pressed="autoNumbering"
+          @click="autoNumbering = !autoNumbering"
+        >
+          自动编号
+        </button>
+        <button
+          type="button"
+          class="text-button markdown-add-image"
           :disabled="disabled || preparing"
           @click="
             previewing = false;
             chooser?.click();
           "
         >
-          添加截图
+          {{ numbered ? "添加图片" : "添加截图" }}
         </button>
         <input
           ref="chooser"
@@ -156,34 +216,41 @@ function selectFiles(event: Event) {
         :disabled="disabled || preparing"
         :aria-describedby="editorId + '-help'"
         @paste="paste"
+        @keydown="numberList"
       />
-      <div v-if="previewing" class="feedback-editor-preview">
-        <FeedbackMarkdownView
+      <div v-if="previewing" class="markdown-image-editor-preview">
+        <MarkdownImageView
           v-if="content.trim()"
           :value="content"
           :images="images"
+          :image-base="imageBase"
+          :image-keys="imageKeys"
+          :numbered="numbered"
         />
         <p v-else class="muted">还没有内容可预览。</p>
       </div>
     </div>
-    <p :id="editorId + '-help'" class="muted feedback-editor-help">
-      支持 Markdown 和直接粘贴截图，最多 3 张 PNG 或 JPEG，每张不超过 2 MB。
+    <p :id="editorId + '-help'" class="muted markdown-image-editor-help">
+      支持 Markdown 和直接粘贴图片，最多 3 张 PNG 或 JPEG，每张不超过 2 MB。
+      <template v-if="numbered"
+        >回车续号，Tab 增加一级，Shift+Tab 返回上一级。</template
+      >
     </p>
     <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   </div>
 </template>
 
 <style scoped>
-.feedback-editor > label {
+.markdown-image-editor > label {
   display: block;
   margin-bottom: 6px;
 }
-.feedback-editor-box {
+.markdown-image-editor-box {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
 }
-.feedback-editor-toolbar {
+.markdown-image-editor-toolbar {
   display: flex;
   align-items: center;
   gap: 4px;
@@ -191,20 +258,20 @@ function selectFiles(event: Event) {
   border-bottom: 1px solid var(--line);
   background: var(--surface-muted);
 }
-.feedback-editor-toolbar button {
+.markdown-image-editor-toolbar button {
   min-height: 32px;
   padding: 4px 9px;
   border-radius: 5px;
 }
-.feedback-editor-toolbar button[aria-pressed="true"] {
+.markdown-image-editor-toolbar button[aria-pressed="true"] {
   color: var(--ink);
   font-weight: 600;
   background: var(--surface);
 }
-.feedback-add-image {
+.markdown-add-image {
   margin-left: auto;
 }
-.feedback-editor textarea {
+.markdown-image-editor textarea {
   display: block;
   width: 100%;
   padding: 12px;
@@ -214,11 +281,11 @@ function selectFiles(event: Event) {
   line-height: 1.6;
   resize: vertical;
 }
-.feedback-editor-preview {
+.markdown-image-editor-preview {
   min-height: 160px;
   padding: 12px;
 }
-.feedback-editor-help {
+.markdown-image-editor-help {
   margin-block: 6px 0;
   font-size: 13px;
 }
