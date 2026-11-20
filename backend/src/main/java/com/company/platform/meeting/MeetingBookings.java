@@ -468,7 +468,7 @@ public class MeetingBookings {
     }
 
     /** 每个作者的材料版本依据内容和提交时间，排除已移出会议的员工。 */
-    private List<Map<String, Object>> readingMaterials(UUID meeting) {
+    List<Map<String, Object>> readingMaterials(UUID meeting) {
         return db.rows("""
                 SELECT a.user_id, md5(jsonb_build_array(a.report, NULL::text, a.material_at,
                     jsonb_agg(jsonb_build_array(m.kind,m.submitted_at,m.payload) ORDER BY m.kind))::text) AS revision
@@ -479,7 +479,7 @@ public class MeetingBookings {
     }
 
     /** 本人材料改动不会使本人的阅读确认失效。 */
-    private static String readingRevision(List<Map<String, Object>> materials, UUID viewer) {
+    static String readingRevision(List<Map<String, Object>> materials, UUID viewer) {
         var others = materials.stream().filter(row -> !viewer.equals(row.get("user_id"))).toList();
         return others.isEmpty() ? null : Crypto.hash(Crypto.json(others));
     }

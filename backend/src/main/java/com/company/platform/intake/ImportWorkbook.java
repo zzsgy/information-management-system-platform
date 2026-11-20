@@ -123,10 +123,15 @@ public final class ImportWorkbook {
         return workbook("MEETING", sheet, marker, columns, data);
     }
 
+    /** 未完成情况报表使用普通表头、冻结行与筛选，仍以文本单元格防止工号变形和公式执行。 */
+    public static byte[] meetingStatusWorkbook(String sheet,String note,List<String> columns,List<Map<String,Object>> data){
+        return workbook("MEETING_STATUS",sheet,note,columns,data);
+    }
+
     /** 将业务数据按固定列顺序写为文本单元格。 */
     private static byte[] workbook(String type,String sheetName,String marker,List<String> columns,List<Map<String,Object>> data){
         try(var bytes=new ByteArrayOutputStream();var zip=new ZipOutputStream(bytes)){
-            boolean meeting=type.equals("MEETING");
+            boolean report=type.equals("MEETING_STATUS"),meeting=type.equals("MEETING")||report;
             String stylesType=meeting?"<Override PartName=\"/xl/styles.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml\"/>":"";
             put(zip,"[Content_Types].xml","<Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>"+stylesType+"</Types>");
             put(zip,"_rels/.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>");
@@ -135,11 +140,13 @@ public final class ImportWorkbook {
             put(zip,"xl/_rels/workbook.xml.rels","<Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/>"+stylesRel+"</Relationships>");
             StringBuilder sheet=new StringBuilder("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\">");
             boolean meetingTemplate=meeting&&marker.startsWith("IMS-MEETING-1:");
+            if(report)sheet.append("<sheetViews><sheetView workbookViewId=\"0\"><pane ySplit=\"2\" topLeftCell=\"A3\" activePane=\"bottomLeft\" state=\"frozen\"/></sheetView></sheetViews>");
             if(meetingTemplate)sheet.append("<sheetViews><sheetView workbookViewId=\"0\" topLeftCell=\"A2\"><selection activeCell=\"A2\" sqref=\"A2\"/></sheetView></sheetViews>");
             if(meeting){
                 // 关闭自动数值转换，手工键入带前导零的员工工号也能保留文本。
-                put(zip,"xl/styles.xml",MEETING_STYLES);
-                sheet.append("<cols><col min=\"1\" max=\"").append(columns.size())
+                put(zip,"xl/styles.xml",report?MEETING_REPORT_STYLES:MEETING_STYLES);
+                if(report){sheet.append("<cols>");for(int c=1;c<=columns.size();c++)sheet.append("<col min=\"").append(c).append("\" max=\"").append(c).append("\" width=\"").append(c==7?60:c==1?32:22).append("\" style=\"1\" customWidth=\"1\"/>");sheet.append("</cols>");}
+                else sheet.append("<cols><col min=\"1\" max=\"").append(columns.size())
                         .append("\" width=\"30\" style=\"1\" customWidth=\"1\"/></cols>");
             }
             sheet.append("<sheetData>");
@@ -148,11 +155,18 @@ public final class ImportWorkbook {
                 // 会议识别码用于导入校验，隐藏技术行并保留旧模板的行号契约。
                 StringBuilder markerRow=new StringBuilder();
                 appendRow(markerRow,1,List.of(marker));
-                sheet.append(meetingTemplate?markerRow.toString().replace("<row ","<row hidden=\"1\" "):markerRow);
+                sheet.append(meetingTemplate?markerRow.toString().replace("<row ","<row hidden=\"1\" "):report?markerRow.toString().replace("<row ","<row ht=\"48\" customHeight=\"1\" ").replace("<c ","<c s=\"1\" "):markerRow);
             }
-            appendRow(sheet,headerRow,displayHeaders(type,columns));
-            for(int i=0;i<data.size();i++){Map<String,Object> row=data.get(i);appendRow(sheet,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());}
-            put(zip,"xl/worksheets/sheet1.xml",sheet.append("</sheetData></worksheet>").toString());zip.finish();return bytes.toByteArray();
+            if(report){StringBuilder header=new StringBuilder();appendRow(header,headerRow,displayHeaders(type,columns));sheet.append(header.toString().replace("<c ","<c s=\"2\" "));}
+            else appendRow(sheet,headerRow,displayHeaders(type,columns));
+            for(int i=0;i<data.size();i++){
+                Map<String,Object> row=data.get(i);StringBuilder line=report?new StringBuilder():sheet;
+                appendRow(line,i+headerRow+1,columns.stream().map(h->Objects.toString(row.get(h.split("\\|")[0]),"")).toList());
+                if(report)sheet.append(line.toString().replace("<c ","<c s=\"1\" "));
+            }
+            sheet.append("</sheetData>");
+            if(report){String last=""+(char)('A'+columns.size()-1);sheet.append("<autoFilter ref=\"A2:").append(last).append(data.size()+2).append("\"/><mergeCells count=\"1\"><mergeCell ref=\"A1:").append(last).append("1\"/></mergeCells>");}
+            put(zip,"xl/worksheets/sheet1.xml",sheet.append("</worksheet>").toString());zip.finish();return bytes.toByteArray();
         }catch(IOException failure){throw SystemFailure.WORKBOOK_GENERATION_FAILED.fault(failure);}
     }
     /** 会议模板将可填写列设为 Excel 内置文本格式。 */
@@ -167,9 +181,22 @@ public final class ImportWorkbook {
               <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
             </styleSheet>
             """;
+    /** 报表使用可读中文字体、换行正文与高对比表头，不改变已有填报模板样式。 */
+    private static final String MEETING_REPORT_STYLES="""
+            <styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+              <fonts count="2"><font><sz val="11"/><name val="Microsoft YaHei"/></font><font><b/><sz val="11"/><color rgb="FFFFFFFF"/><name val="Microsoft YaHei"/></font></fonts>
+              <fills count="3"><fill><patternFill patternType="none"/></fill><fill><patternFill patternType="gray125"/></fill><fill><patternFill patternType="solid"><fgColor rgb="FF274C77"/><bgColor indexed="64"/></patternFill></fill></fills>
+              <borders count="1"><border><left/><right/><top/><bottom/><diagonal/></border></borders>
+              <cellStyleXfs count="1"><xf numFmtId="0" fontId="0" fillId="0" borderId="0"/></cellStyleXfs>
+              <cellXfs count="3"><xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>
+              <xf numFmtId="49" fontId="0" fillId="0" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="top" wrapText="1"/></xf>
+              <xf numFmtId="49" fontId="1" fillId="2" borderId="0" xfId="0" applyAlignment="1"><alignment vertical="center" wrapText="1"/></xf></cellXfs>
+              <cellStyles count="1"><cellStyle name="Normal" xfId="0" builtinId="0"/></cellStyles>
+            </styleSheet>
+            """;
     /** 员工模板使用与添加表单对应的中文表头，其他类型保留原契约。 */
     private static List<String> displayHeaders(String type,List<String> columns){
-        return Set.of("EMPLOYEE", "MEETING").contains(type)
+        return Set.of("EMPLOYEE", "MEETING", "MEETING_STATUS").contains(type)
                 ? columns.stream().map(column->column.substring(column.indexOf('|')+1)).toList():columns;
     }
     /** 包内文件不释放到磁盘；每项 20MiB、总量 32MiB、最多 128 项。 */

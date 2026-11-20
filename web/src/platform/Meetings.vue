@@ -12,6 +12,7 @@ import MeetingMinutes from "./MeetingMinutes.vue";
 import MeetingLiveDecision from "./MeetingLiveDecision.vue";
 import MeetingReading from "./MeetingReading.vue";
 import MeetingWorkbookPanel from "./MeetingWorkbookPanel.vue";
+import MeetingIncompleteExport from "./MeetingIncompleteExport.vue";
 import { vNumbered } from "./meetingNumbered";
 import RichTextEditor from "./RichTextEditor.vue";
 import RichTextView from "./RichTextView.vue";
@@ -535,6 +536,7 @@ function replyLabel(reply?: string) {
     >
       <header class="room-panel-head booking-list-head">
         <h2>我的会议</h2>
+        <MeetingIncompleteExport />
         <span v-if="results.total" class="booking-count"
           >共 {{ results.total }} 场</span
         >

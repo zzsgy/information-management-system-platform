@@ -3,6 +3,7 @@ package com.company.platform;
 import com.company.platform.meeting.MeetingBookings;
 import com.company.platform.meeting.MeetingFollowUp;
 import com.company.platform.meeting.MeetingWorkbooks;
+import com.company.platform.meeting.MeetingIncompleteExport;
 import com.company.platform.portal.PortalWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -41,6 +42,7 @@ class MeetingIntegrationTest {
     @Autowired MeetingBookings bookings;
     @Autowired MeetingFollowUp followUp;
     @Autowired MeetingWorkbooks workbooks;
+    @Autowired MeetingIncompleteExport incomplete;
     @Autowired PortalWork portal;
 
     private Actor admin, organizer, employee, outsider;
@@ -537,6 +539,106 @@ class MeetingIntegrationTest {
             }
         }
         fail("会议汇总缺少数据工作表");
+    }
+
+    @Test
+    void incompleteExportDistinguishesReplyAndOnlineOrImportedMaterial()throws Exception{
+        var body=meeting(roomA,Instant.now().plusSeconds(3600),employee);
+        body.put("attendeeIds",List.of(employee.userId().toString(),outsider.userId().toString()));
+        body.put("materialTypes",List.of("REPORT","WEEKLY_PLAN","COORDINATION"));
+        UUID id=bookings.create(organizer,request(),body);
+        bookings.reply(employee,id,request(),Map.of("decision","ACCEPTED"));
+        bookings.materials(employee,id,request(),Map.of("kind","REPORT","text","无新增事项"));
+        String file=filledWorkbook(workbooks.download(organizer,id,true),"Excel已完成工作","无新增计划",Map.of("F",employeeLabel(outsider)));
+        var preview=workbooks.importMaterials(organizer,id,request(),Map.of("file",file));
+        workbooks.importMaterials(organizer,id,request(),Map.of("file",file,"preview",preview.get("preview")));
+        var rows=incompleteRows(incomplete.download(organizer,id));
+        assertEquals(3,rows.stream().filter(row->row.get("环节").equals("会前填写")).count());
+        assertEquals(Set.of("本周工作计划","协调事宜"),rows.stream().filter(row->row.get("姓名").equals(employee.user().get("name"))).map(row->row.get("具体事项")).collect(java.util.stream.Collectors.toSet()));
+        assertTrue(rows.stream().anyMatch(row->row.get("姓名").equals(outsider.user().get("name"))&&row.get("环节").equals("参会回复")));
+        assertFalse(rows.stream().anyMatch(row->row.get("具体事项").equals("上周工作内容")));
+        assertTrue(rows.stream().allMatch(row->row.get("逾期情况").equals("待完成（未到期）")));
+    }
+
+    @Test
+    void incompleteExportUsesCurrentSharedReadingRevisionAndSkipsDeclinedPeople()throws Exception{
+        var body=meeting(roomA,Instant.now().plusSeconds(3600),employee);
+        body.put("attendeeIds",List.of(employee.userId().toString(),outsider.userId().toString()));body.put("materialTypes",List.of("REPORT"));body.put("shareAll",true);
+        UUID id=bookings.create(organizer,request(),body);
+        bookings.materials(employee,id,request(),Map.of("kind","REPORT","text","第一版"));
+        String revision=bookings.detail(outsider,id).get("readingRevision").toString();
+        bookings.confirmReading(outsider,id,request(),revision);
+        assertFalse(incompleteRows(incomplete.download(organizer,id)).stream().anyMatch(row->row.get("环节").equals("会前资料确认")));
+        bookings.materials(employee,id,request(),Map.of("kind","REPORT","text","第二版"));
+        var rows=incompleteRows(incomplete.download(organizer,id));
+        assertEquals(1,rows.stream().filter(row->row.get("环节").equals("会前资料确认")&&row.get("姓名").equals(outsider.user().get("name"))).count());
+        bookings.reply(outsider,id,request(),Map.of("decision","DECLINED","reason","无法参会"));
+        assertFalse(incompleteRows(incomplete.download(organizer,id)).stream().anyMatch(row->row.get("姓名").equals(outsider.user().get("name"))));
+    }
+
+    @Test
+    void incompleteExportTracksActualPublishedFollowUpAndNextResponsiblePerson()throws Exception{
+        var body=meeting(roomA,Instant.now().plusSeconds(3600),employee);body.put("materialTypes",List.of());body.put("trackFollowUp",true);
+        UUID id=bookings.create(organizer,request(),body);bookings.reply(employee,id,request(),Map.of("decision","ACCEPTED"));
+        bookings.start(organizer,id,request());bookings.end(organizer,id,request());
+        var item=Map.of("content","=这是一项待办而不是公式","assigneeId",outsider.userId().toString(),"dueAt",Instant.now().minusSeconds(60).toString());
+        followUp.saveMinutes(organizer,id,request(),3,Map.of("decisions","落实安排","items",List.of(item),"publish",false));
+        assertTrue(incompleteRows(incomplete.download(organizer,id)).isEmpty());
+        followUp.saveMinutes(organizer,id,request(),4,Map.of("decisions","落实安排","items",List.of(item),"publish",true));
+        var rows=incompleteRows(incomplete.download(organizer,id));assertEquals(1,rows.size());assertEquals("已逾期",rows.getFirst().get("逾期情况"));
+        UUID task=(UUID)values(bookings.detail(organizer,id),"items").getFirst().get("id");
+        followUp.feedback(outsider,task,request(),Map.of("feedback","已完成，等待确认"));
+        var review=incompleteRows(incomplete.download(organizer,id)).getFirst();
+        assertEquals("待发起人确认",review.get("当前状态"));assertEquals(organizer.user().get("name"),review.get("下一步处理人"));assertEquals("不适用（未设置确认期限）",review.get("逾期情况"));
+        followUp.review(organizer,task,request(),Map.of("decision","RETURNED","reason","请补充凭据"));
+        assertEquals("退回待补充",incompleteRows(incomplete.download(organizer,id)).getFirst().get("当前状态"));
+        followUp.feedback(outsider,task,request(),Map.of("feedback","补充完成"));followUp.review(organizer,task,request(),Map.of("decision","CONFIRMED"));
+        assertTrue(incompleteRows(incomplete.download(organizer,id)).isEmpty());
+    }
+
+    @Test
+    void incompleteExportKeepsLegacyMergedMaterialRules()throws Exception{
+        var body=meeting(roomA,Instant.now().plusSeconds(3600),employee);
+        body.put("collectMaterials",true);body.put("materialUserIds",List.of(employee.userId().toString()));
+        UUID id=bookings.create(organizer,request(),body);
+        assertTrue(incompleteRows(incomplete.download(organizer,id)).stream().anyMatch(row->row.get("具体事项").equals("会前材料（原版合并填报）")));
+        bookings.materials(employee,id,request(),Map.of("report","已完成上周工作","topics","暂无新增议题"));
+        var rows=incompleteRows(incomplete.download(organizer,id));
+        assertEquals(1,rows.size());assertEquals("参会回复",rows.getFirst().get("环节"));
+        assertFalse(rows.stream().anyMatch(row->row.get("具体事项").equals("本周工作计划")));
+    }
+
+    @Test
+    void incompleteAggregateOnlyIncludesOwnMeetingsAndRetainsOlderRows()throws Exception{
+        var first=meeting(roomA,Instant.now().plusSeconds(3600),employee);first.put("subject","本人会议甲");first.put("materialTypes",List.of());
+        UUID a=bookings.create(organizer,request(),first);
+        var second=meeting(roomA,Instant.now().plusSeconds(7200),employee);second.put("subject","本人会议乙");second.put("materialTypes",List.of());UUID b=bookings.create(organizer,request(),second);
+        var other=meeting(roomB,Instant.now().plusSeconds(10800),employee);other.put("subject","他人会议");bookings.create(outsider,request(),other);
+        assertEquals(Set.of("本人会议甲","本人会议乙"),incompleteRows(incomplete.download(organizer,null)).stream().map(row->row.get("会议名称")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(404,assertThrows(ApiFault.class,()->incomplete.download(employee,a)).status);assertEquals(404,assertThrows(ApiFault.class,()->incomplete.download(admin,a)).status);
+        bookings.cancel(organizer,b,request(),Map.of("reason","取消安排"));
+        assertEquals(1,incompleteRows(incomplete.download(organizer,null)).size());
+        db.update("UPDATE portal.meeting_attendee SET removed_at=CURRENT_TIMESTAMP WHERE meeting_id=?",a);
+        assertTrue(incompleteRows(incomplete.download(organizer,null)).isEmpty());
+        assertTrue(incompleteRows(incomplete.download(admin,null)).isEmpty());
+    }
+
+    /** 读取实际XLSX的表头和单元格，并验证冻结、筛选及文本安全，不复制报表业务判定。 */
+    private static List<Map<String,String>> incompleteRows(byte[] workbook)throws Exception{
+        try(var zip=new ZipInputStream(new ByteArrayInputStream(workbook))){
+            for(ZipEntry entry;(entry=zip.getNextEntry())!=null;){
+                if(!entry.getName().equals("xl/worksheets/sheet1.xml"))continue;
+                var factory=javax.xml.parsers.DocumentBuilderFactory.newInstance();factory.setNamespaceAware(true);
+                var doc=factory.newDocumentBuilder().parse(new ByteArrayInputStream(zip.readAllBytes()));
+                assertEquals(0,doc.getElementsByTagNameNS("*","f").getLength());assertEquals(1,doc.getElementsByTagNameNS("*","autoFilter").getLength());assertEquals(1,doc.getElementsByTagNameNS("*","pane").getLength());
+                var rows=doc.getElementsByTagNameNS("*","row");var headers=new ArrayList<String>();var result=new ArrayList<Map<String,String>>();
+                for(int n=1;n<rows.getLength();n++){
+                    var cells=((org.w3c.dom.Element)rows.item(n)).getElementsByTagNameNS("*","c");var row=new LinkedHashMap<String,String>();
+                    for(int c=0;c<cells.getLength();c++){String value=cells.item(c).getTextContent();if(n==1)headers.add(value);else row.put(headers.get(c),value);}
+                    if(n>1)result.add(row);
+                }return result;
+            }
+        }throw new AssertionError("未生成未完成事项工作表");
     }
 
     private Map<String, Object> ownedCoordination(Map<String, String> material) {

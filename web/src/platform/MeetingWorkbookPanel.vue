@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import MeetingIncompleteExport from "./MeetingIncompleteExport.vue";
 import { api, ApiError, responseRequestId, profile, requestFetch, responseError } from "./api";
 import {
   coordinationLabels,
@@ -147,6 +148,7 @@ async function importMaterials() {
         <button class="secondary" :disabled="busy" @click="downloadWorkbook('summary')"
           >导出会议汇总</button
         >
+        <MeetingIncompleteExport :meeting-id="meetingId" />
       </div>
       <div v-if="canImport" class="meeting-actions workbook-upload">
         <input

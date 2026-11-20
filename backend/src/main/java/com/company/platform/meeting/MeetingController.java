@@ -20,9 +20,11 @@ public class MeetingController {
     /** 发起人下载、预检和导入本次会议的 Excel 服务。 */
     private final MeetingWorkbooks workbooks;
     private final Commands commands;
+    private final MeetingIncompleteExport incomplete;
 
     public MeetingController(MeetingBookings bookings, MeetingFollowUp followUp, MeetingPermissions permissions,
-            Commands commands, MeetingWorkbooks workbooks) {
+            Commands commands, MeetingWorkbooks workbooks, MeetingIncompleteExport incomplete) {
+        this.incomplete=incomplete;
         this.bookings = bookings;
         this.followUp = followUp;
         this.permissions = permissions;
@@ -132,6 +134,14 @@ public class MeetingController {
         UUID meeting = Inputs.uuid(id);
         bookings.saveCoordination(actor(r), meeting, body);
         return saved(meeting, r);
+    }
+
+    /** 发起人随时导出本场或本人全部会议的未完成事项，普通受邀人和其他发起人不可越权。 */
+    @GetMapping({"/meetings/incomplete-export","/meetings/{id}/incomplete-export"})
+    public ResponseEntity<byte[]> incomplete(@PathVariable(required=false) UUID id,HttpServletRequest r){
+        return ResponseEntity.ok().header("Cache-Control","no-store")
+                .header("Content-Disposition",ContentDisposition.attachment().filename(id==null?"我发起会议未完成汇总.xlsx":"本场会议未完成情况.xlsx",java.nio.charset.StandardCharsets.UTF_8).build().toString())
+                .contentType(MediaType.parseMediaType(ImportWorkbook.MEDIA)).body(incomplete.download(actor(r),id));
     }
 
     /** 发起人下载会前填报模板，或导出当前材料和会中结论。 */
