@@ -42,7 +42,6 @@ const PortalAdmin = defineAsyncComponent(() => import("./PortalAdmin.vue"));
 import PortalTasks from "./PortalTasks.vue";
 /** 会议业务按需加载，统一待办保留会议与事项深链接。 */
 const Meetings = defineAsyncComponent(() => import("./Meetings.vue"));
-const MeetingWeeklyExcelEditor = defineAsyncComponent(() => import("./MeetingWeeklyExcelEditor.vue"));
 import TodoReminderPopup from "./TodoReminderPopup.vue";
 /** 搜索直接进入原业务授权列表，不在首页另存文件索引。 */
 const searchText = ref("");
@@ -278,7 +277,6 @@ const managementGroups = computed(() =>
 );
 const allowedRoute = computed(() => {
   const requested = route.value.split("?")[0];
-  if (requested === "meeting-weekly-excel") return requested;
   // 管理员的会议模块入口仍进配置，带具体会议或事项的链接交由业务接口鉴权。
   if (requested === "meetings" && systemAdministrator.value) {
     const meetingParams = new URLSearchParams(route.value.split("?")[1]);
@@ -657,7 +655,6 @@ onUnmounted(() => {
       <footer>公司内部使用 · 保护账号与资料安全</footer>
     </section>
   </main>
-  <MeetingWeeklyExcelEditor v-else-if="allowedRoute === 'meeting-weekly-excel'" :key="route" :route="route" />
   <div
     v-else
     class="platform-shell"

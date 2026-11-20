@@ -65,8 +65,6 @@ public class MeetingWorkbooks {
         if (body.containsKey("preview")) bookings.lockWorkbookImport(actor);
         var meeting = bookings.owned(actor, id);
         MeetingBookings.requireNotStarted(meeting);
-        if (Boolean.TRUE.equals(meeting.get("online_weekly_report")))
-            throw ApiFault.conflict("本场使用在线周会表，请由各部门填写并提交");
         if (meeting.get("material_types") == null || columns(meeting).size() == 1)
             throw ApiFault.invalid("本场会议未开启可导入的材料征集");
         var report = MeetingReportWorkbook.read(bytes, id);

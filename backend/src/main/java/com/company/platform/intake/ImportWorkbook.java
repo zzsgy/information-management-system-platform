@@ -205,21 +205,14 @@ public final class ImportWorkbook {
     }
     /** 特定业务可声明其完整工作表清单，其他导入仍按原台账结构校验。 */
     static Map<String,byte[]> parts(Path path, List<String> expectedSheets) throws Exception {
-        return parts(path, expectedSheets, false);
-    }
-
-    /** 在线周报允许包内 PNG/JPEG 绘图，沿用其他 ZIP、XML 和外部链接检查。 */
-    static Map<String,byte[]> parts(Path path, List<String> expectedSheets, boolean pictures) throws Exception {
         Map<String,byte[]> entries=new HashMap<>();long total=0;
         try(ZipFile zip=new ZipFile(path.toFile())){var iterator=zip.entries();while(iterator.hasMoreElements()){
             ZipEntry entry=iterator.nextElement();String name=entry.getName();
             if(entries.size()>=128||name.contains("..")||name.startsWith("/")||name.contains("\\")||entries.containsKey(name))throw new IOException("invalid package");
             if(entry.isDirectory())continue;
-            boolean image=pictures&&name.matches("xl/media/[^/]+\\.(?i:png|jpe?g)");
-            if(!image&&!name.endsWith(".xml")&&!name.endsWith(".rels"))throw new IOException("embedded objects");
+            if(!name.endsWith(".xml")&&!name.endsWith(".rels"))throw new IOException("embedded objects");
             byte[] content;try(InputStream in=zip.getInputStream(entry)){content=in.readNBytes(20*1024*1024+1);}
             total+=content.length;if(content.length>20*1024*1024||total>32*1024*1024)throw new IOException("expanded limit");
-            if(image){entries.put(name,content);continue;}
             Document doc=xml(content);if(!elements(doc,"externalReference").isEmpty())throw new IOException("active content");
             for(Element cell:elements(doc,"c"))if(!elements(cell,"f").isEmpty()&&(!name.equals("xl/worksheets/sheet1.xml")||!ArchiveBoxWorkbook.allowedExpiryFormula(cell)))throw new IOException("active formula");
             for(Element rel:elements(doc,"Relationship"))if("External".equalsIgnoreCase(rel.getAttribute("TargetMode")))throw new IOException("external link");entries.put(name,content);
@@ -229,7 +222,7 @@ public final class ImportWorkbook {
         if (!expectedSheets.isEmpty()) {
             if (!sheets.stream().map(sheet -> sheet.getAttribute("name")).toList().equals(expectedSheets))
                 throw new IOException("unsupported worksheets");
-        } else if(!pictures&&sheets.size()!=1&&!(sheets.size()==2&&sheets.get(0).getAttribute("name").equals("档案汇总表")&&sheets.get(1).getAttribute("name").equals("部门及档案负责人")&&entries.containsKey("xl/worksheets/sheet2.xml")))throw new IOException("unsupported worksheets");
+        } else if(sheets.size()!=1&&!(sheets.size()==2&&sheets.get(0).getAttribute("name").equals("档案汇总表")&&sheets.get(1).getAttribute("name").equals("部门及档案负责人")&&entries.containsKey("xl/worksheets/sheet2.xml")))throw new IOException("unsupported worksheets");
         String types=new String(entries.get("[Content_Types].xml"),StandardCharsets.UTF_8);if(!types.contains("spreadsheetml.sheet.main+xml")||types.contains("macroEnabled"))throw new IOException("not XLSX");return entries;
     }
     /** 禁用外部实体、DOCTYPE 和 XInclude，不读取外部文件或网络。 */

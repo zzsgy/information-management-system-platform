@@ -52,9 +52,6 @@ const attendees = ref<MeetingPerson[]>(
   })) ?? [],
 );
 const materialTypes = ref<MaterialKind[]>([]);
-/** 新发起的周会默认使用部门协作表，可切回原会前材料流程。 */
-const onlineWeekly = ref(true);
-const useWeeklySheet = computed(() => data.kind === "WEEKLY" && onlineWeekly.value);
 const materialUsers = ref(
   original?.attendees.filter((a) => a.materialRequired).map((a) => a.userId) ??
     [],
@@ -145,7 +142,6 @@ async function save() {
                 kind: data.kind,
                 urgent: data.urgent,
                 materialTypes: materialTypes.value,
-                onlineWeeklyReport: useWeeklySheet.value,
                 trackFollowUp: data.trackFollowUp,
                 shareAll: data.shareAll,
               },
@@ -271,14 +267,11 @@ async function save() {
         >
           <h3>会议流程</h3>
           <div v-if="!original" class="booking-options">
-            <label v-if="data.kind === 'WEEKLY'" class="booking-check">
-              <input v-model="onlineWeekly" type="checkbox" />使用在线周会表
-            </label>
             <template
               v-for="(label, kind) in materialLabels"
               :key="kind"
             >
-              <label v-if="!useWeeklySheet && kind !== 'TOPICS'" class="booking-check">
+              <label v-if="kind !== 'TOPICS'" class="booking-check">
               <input
                 v-model="materialTypes"
                 type="checkbox"
@@ -303,10 +296,7 @@ async function save() {
             <p>共享后，受邀员工可查看彼此的回复、会前材料、会中决议、纪要和会后反馈。</p>
           </div>
           <div class="booking-flow-hints">
-            <p v-if="!original && useWeeklySheet">
-              同部门受邀员工可协作填写，由该部门负责人统一提交。请将各部门负责人加入受邀名单。
-            </p>
-            <p v-else-if="!original && materialTypes.length">
+            <p v-if="!original && materialTypes.length">
               受邀员工可先回复参会，并在会议开始前提交勾选的材料。
             </p>
             <p>会议结束后须填写并发布纪要。</p>

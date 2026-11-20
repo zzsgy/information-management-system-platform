@@ -247,7 +247,6 @@ public class PortalWork {
                     CASE WHEN f.pending_item IS NOT NULL THEN '#/meetings?item='||f.pending_item
                          ELSE '#/meetings?id='||m.id||CASE
                              WHEN stage.pre_pending AND a.reply='PENDING' THEN '&action=reply'
-                             WHEN stage.pre_pending AND m.online_weekly_report THEN '&action=weekly-report'
                              WHEN stage.pre_pending THEN '&action=materials'
                              WHEN f.last_due IS NOT NULL THEN '&action=follow-up'
                              ELSE '' END END,'MEETING',
@@ -266,10 +265,7 @@ public class PortalWork {
                         GREATEST(a.replied_at,materials.latest_at,m.cancelled_at,m.actual_started_at,m.minutes_published_at,f.activity_at) END
                 FROM portal.meeting_attendee a JOIN portal.meeting_booking m ON m.id=a.meeting_id
                 CROSS JOIN LATERAL (
-                    SELECT CASE WHEN m.online_weekly_report THEN EXISTS (
-                             SELECT 1 FROM portal.meeting_weekly_department w WHERE w.meeting_id=m.id
-                               AND w.department_id=a.weekly_department_id AND w.submitted_version IS NULL)
-                           WHEN m.material_types IS NULL THEN
+                    SELECT CASE WHEN m.material_types IS NULL THEN
                              a.material_required AND (m.kind='WEEKLY' OR a.reply<>'DECLINED') AND a.material_at IS NULL
                            ELSE count(*) FILTER (WHERE k.kind NOT IN ('TOPICS','COORDINATION') AND x.submitted_at IS NULL)>0
                              OR (count(*) FILTER (WHERE k.kind='COORDINATION' AND x.submitted_at IS NULL)>0

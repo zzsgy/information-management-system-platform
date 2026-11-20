@@ -15,7 +15,6 @@ import MeetingPublishedDecisions from "./MeetingPublishedDecisions.vue";
 import MeetingPublishedItemEditor from "./MeetingPublishedItemEditor.vue";
 import MeetingReading from "./MeetingReading.vue";
 import MeetingWorkbookPanel from "./MeetingWorkbookPanel.vue";
-import MeetingWeeklySheet from "./MeetingWeeklySheet.vue";
 import MeetingIncompleteExport from "./MeetingIncompleteExport.vue";
 import { vNumbered } from "./meetingNumbered";
 import RichTextEditor from "./RichTextEditor.vue";
@@ -162,8 +161,6 @@ function taskTarget() {
   switch (params.value.get("action")) {
     case "reply":
       return "meeting-reply";
-    case "weekly-report":
-      return "meeting-weekly-report";
     case "minutes":
       return "meeting-minutes-editor";
     case "follow-up":
@@ -858,18 +855,10 @@ function replyLabel(reply?: string) {
               :key="detail.id"
               class="detail-workbook"
               :meeting-id="detail.id"
-              :can-import="!detail.onlineWeeklyReport && detail.canStart && !!formKinds.length"
+              :can-import="detail.canStart && !!formKinds.length"
               @imported="reloadDetail"
             />
           </section>
-
-          <MeetingWeeklySheet
-            v-if="detail.onlineWeeklyReport && options"
-            id="meeting-weekly-report"
-            :meeting-id="detail.id"
-            :open="detail.state === 'SCHEDULED'"
-            @extracted="reloadDetail"
-          />
 
           <section class="flow-dialog-section detail-attendees" aria-labelledby="meeting-attendees-title">
             <header class="meeting-actions meeting-spread">
@@ -949,10 +938,8 @@ function replyLabel(reply?: string) {
                   class="material-results"
                 >
                   <small v-if="person.materials.some((entry) => entry.data.source === 'EXCEL')">Excel 已提交</small>
-                  <small v-else-if="person.materials.some((entry) => entry.data.source === 'ONLINE_WEEKLY')">在线周报已提取</small>
                   <p
                     v-if="
-                      !detail.onlineWeeklyReport &&
                       (organizer || person.userId === own?.userId) &&
                       person.reply !== 'DECLINED' &&
                       missingMaterials(formKinds, person.materials)
@@ -964,7 +951,7 @@ function replyLabel(reply?: string) {
                       missingMaterials(formKinds, person.materials)
                     }}
                   </p>
-                  <small v-else-if="!detail.onlineWeeklyReport && (organizer || person.userId === own?.userId) && formKinds.length
+                  <small v-else-if="(organizer || person.userId === own?.userId) && formKinds.length
                     && !person.materials.some((entry) => entry.data.source === 'EXCEL')">会前材料已提交</small>
                   <details
                     v-for="material in person.materials.filter(
@@ -1564,7 +1551,7 @@ function replyLabel(reply?: string) {
 .detail-attendees > header > h2 {
   font-size: 16px;
 }
-.meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, #meeting-material-legacy, #meeting-follow-up, #meeting-reply, #meeting-weekly-report, .material-form) {
+.meeting-detail-body :is(#meeting-detail-error, #meeting-minutes-editor, #meeting-material-legacy, #meeting-follow-up, #meeting-reply, .material-form) {
   scroll-margin-block-start: 92px;
 }
 .detail-workbook :is(a, button),

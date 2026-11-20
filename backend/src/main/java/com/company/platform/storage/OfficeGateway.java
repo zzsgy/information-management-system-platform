@@ -63,9 +63,6 @@ public class OfficeGateway {
     public String callback(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/callback/"+session;}
     /** 源文件地址仍需要文档服务outbox签名；看到URL的浏览器也不能直接下载。 */
     public String source(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/source/"+session;}
-    /** 周会与公盘分离取源和保存路由，文档服务凭据仍由同一个适配器签发。 */
-    public String weeklySource(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/weekly-source/"+session;}
-    public String weeklyCallback(UUID session){require();return settingCallbackOrigin()+"/integrations/onlyoffice/weekly-callback/"+session;}
     /** 转换源与编辑源分别绑定固定版本，不向浏览器签发原件下载凭据。 */
     public String conversionSource(UUID conversion){require();return settingCallbackOrigin()+"/integrations/onlyoffice/conversion-source/"+conversion;}
     /** 档案转换使用独立取源上下文，不能用公盘转换ID读取档案。 */

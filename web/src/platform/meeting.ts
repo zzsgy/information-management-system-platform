@@ -67,8 +67,6 @@ export interface MeetingItem {
   canReview: boolean;
 }
 export interface MeetingDetail extends MeetingSummary {
-  /** 周会使用部门共用草稿和负责人提交。 */
-  onlineWeeklyReport?: boolean;
   organizerId: string;
   organizerName: string;
   roomId: string | null;
@@ -184,7 +182,7 @@ export interface MeetingMaterial {
     text?: string;
     markdown?: string;
     imageKeys?: string[];
-    source?: "EXCEL" | "ONLINE_WEEKLY";
+    source?: "EXCEL";
     rows?: MaterialRow[];
     author: { name: string; department: string };
   };

@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { api, ApiError } from "./api";
-import { loadEditorScript } from "./officeClient";
 interface Editor {
   destroyEditor: () => void;
 }
@@ -259,6 +258,29 @@ async function joinEditor() {
     throw Error(
       "上次编辑的最终保存仍在处理中，请稍后重试或在文件详情查看协作与保存记录。",
     );
+}
+/** 先确认浏览器能加载编辑资源，再加入协作，避免加载失败留下待保存会话。 */
+async function loadEditorScript(url: string) {
+  if (window.DocsAPI) return;
+  await new Promise<void>((resolve, reject) => {
+    const script = document.createElement("script");
+    const fail = () => {
+      clearTimeout(timeout);
+      script.remove();
+      reject(
+        Error("无法加载Office编辑器，请检查文档服务连接及本机证书信任后重试。"),
+      );
+    };
+    const timeout = setTimeout(fail, 15000);
+    script.src = url;
+    script.onload = () => {
+      clearTimeout(timeout);
+      if (window.DocsAPI) resolve();
+      else fail();
+    };
+    script.onerror = fail;
+    document.head.appendChild(script);
+  });
 }
 window.addEventListener("pagehide", release);
 onUnmounted(() => {

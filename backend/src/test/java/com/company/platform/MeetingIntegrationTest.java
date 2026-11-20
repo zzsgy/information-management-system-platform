@@ -4,8 +4,6 @@ import com.company.platform.meeting.MeetingBookings;
 import com.company.platform.meeting.MeetingFollowUp;
 import com.company.platform.meeting.MeetingWorkbooks;
 import com.company.platform.meeting.MeetingIncompleteExport;
-import com.company.platform.meeting.MeetingWeeklyReports;
-import com.company.platform.intake.MeetingWeeklyWorkbook;
 import com.company.platform.portal.PortalWork;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,168 +43,10 @@ class MeetingIntegrationTest {
     @Autowired MeetingFollowUp followUp;
     @Autowired MeetingWorkbooks workbooks;
     @Autowired MeetingIncompleteExport incomplete;
-    @Autowired MeetingWeeklyReports weeklyReports;
     @Autowired PortalWork portal;
 
     private Actor admin, organizer, employee, outsider;
     private UUID roomA, roomB, department;
-
-    /** 原生 XLSX 从本部门已保存稿件进入既有会议材料，保留截图、填报人与提交原件。 */
-    @Test
-    void nativeWeeklyWorkbookIsSubmittedAndExtracted() throws IOException {
-        assignWeeklyTestDepartment(employee, department, true);
-        Actor host = grant(organizer, "MEETING_ORGANIZER");
-        var body = schedule(roomA, Instant.now().plusSeconds(3600), List.of(employee, outsider), List.of());
-        body.putAll(Map.of("kind", "WEEKLY", "subject", "Excel 周报", "onlineWeeklyReport", true));
-        UUID meeting = bookings.create(host, request(), body);
-        var png = new ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(4, 2, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", png);
-        var image = new InlineImages.Image("image/png", png.toByteArray());
-        String author = outsider.user().get("name") + "+" + outsider.user().get("employeeNo");
-        var sheets = List.of(
-                new MeetingWeeklyWorkbook.Sheet("协调事宜", MeetingWeeklyWorkbook.COORDINATION, List.of()),
-                new MeetingWeeklyWorkbook.Sheet("上周总结", MeetingWeeklyWorkbook.NARRATIVE, List.of(
-                        new MeetingWeeklyWorkbook.Line(2, List.of("1", "Excel 原生正文", "图像验收", author), List.of(image)))),
-                new MeetingWeeklyWorkbook.Sheet("本周计划", MeetingWeeklyWorkbook.NARRATIVE, List.of(
-                        new MeetingWeeklyWorkbook.Line(2, List.of("1", "下周安排", "", author), List.of()))));
-        byte[] workbook = MeetingWeeklyWorkbook.write(sheets);
-        assertEquals("Excel 原生正文", MeetingWeeklyWorkbook.read(workbook).get(1).lines().getFirst().cells().get(1));
-        assertEquals("image/png", MeetingWeeklyWorkbook.read(workbook).get(1).lines().getFirst().images().getFirst().mediaType());
-        db.update("INSERT INTO portal.meeting_weekly_excel(meeting_id,department_id,workbook) VALUES (?,?,?)", meeting, department, workbook);
-        UUID edit = request();
-        db.update("""
-                INSERT INTO portal.meeting_weekly_excel_session(id,meeting_id,department_id,state,base_revision)
-                VALUES (?,?,?,'EDITING',1)
-                """, edit, meeting, department);
-        assertEquals(409, assertThrows(ApiFault.class, () -> weeklyReports.submit(employee, meeting, department, request())).status);
-        assertEquals(409, assertThrows(ApiFault.class, () -> bookings.start(host, meeting, request())).status);
-        db.update("UPDATE portal.meeting_weekly_excel_session SET state='CLOSED' WHERE id=?", edit);
-        weeklyReports.submit(employee, meeting, department, request());
-        assertArrayEquals(workbook, (byte[]) db.required("""
-                SELECT workbook FROM portal.meeting_weekly_submission WHERE meeting_id=? AND department_id=?
-                """, meeting, department).get("workbook"));
-        assertEquals(1, weeklyReports.extract(host, meeting, request(), (String) weeklyReports.preview(host, meeting).get("token")));
-        assertTrue(values(attendee(host, meeting, employee), "materials").isEmpty());
-        var materials = values(attendee(host, meeting, outsider), "materials");
-        assertEquals(2, materials.size());
-        assertTrue(materials.toString().contains("Excel 原生正文"));
-        var keys = db.rows("""
-                SELECT image_key FROM portal.meeting_material_image WHERE attendee_id=? AND kind='REPORT'
-                """, attendee(host, meeting, outsider).get("id"));
-        assertEquals(1, keys.size());
-        assertEquals("image/png", bookings.materialImage(host, meeting, (UUID) attendee(host, meeting, outsider).get("id"),
-                "REPORT", (UUID) keys.getFirst().get("image_key")).mediaType());
-        try (var zip = new ZipInputStream(new ByteArrayInputStream(weeklyReports.summaryWorkbook(host, meeting)))) {
-            ZipEntry part;
-            boolean checked = false;
-            while ((part = zip.getNextEntry()) != null) {
-                if (!part.getName().equals("xl/workbook.xml")) continue;
-                String xml = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
-                assertTrue(xml.indexOf("协调事宜") < xml.indexOf("会议隔离验收部门"));
-                checked = true;
-            }
-            assertTrue(checked);
-        }
-    }
-
-    /** 两个同属质量检定的子部门独立协作，提取按原填报人保存并保留历史。 */
-    @Test
-    void onlineWeeklyDepartmentsCollaborateSubmitAndExtractIndependently() throws IOException {
-        UUID qc1 = weeklyTestDepartment("QC-1");
-        UUID qc2 = weeklyTestDepartment("QC-2");
-        Actor secondHead = person(), uninvited = person();
-        assignWeeklyTestDepartment(employee, qc1, true);
-        assignWeeklyTestDepartment(outsider, qc1, false);
-        assignWeeklyTestDepartment(secondHead, qc2, true);
-        Actor host = grant(organizer, "MEETING_ORGANIZER");
-        var draft = schedule(roomA, Instant.now().plusSeconds(3600), List.of(employee, outsider, secondHead), List.of());
-        draft.putAll(Map.of("kind", "WEEKLY", "subject", "部门在线周报", "onlineWeeklyReport", true, "shareAll", false));
-        UUID meeting = bookings.create(host, request(), draft);
-
-        assertEquals(List.of("QC-1", "QC-2"), values(weeklyReports.view(host, meeting), "departments").stream()
-                .map(sheet -> sheet.get("name")).sorted().toList());
-        assertEquals(qc1, weeklyReports.view(outsider, meeting).get("ownDepartmentId"));
-        assertEquals(1, values(weeklyReports.view(outsider, meeting), "departments").size());
-        assertEquals(404, assertThrows(ApiFault.class, () -> weeklyReports.view(uninvited, meeting)).status);
-        assertEquals(403, assertThrows(ApiFault.class, () -> weeklyReports.submit(outsider, meeting, qc1, request())).status);
-        assertEquals(403, assertThrows(ApiFault.class, () -> weeklyReports.submit(employee, meeting, qc2, request())).status);
-        assertEquals(400, assertThrows(ApiFault.class, () -> weeklyReports.submit(employee, meeting, qc1, request())).status);
-        bookings.reply(outsider, meeting, request(), Map.of("decision", "ACCEPTED"));
-        assertEquals("MEETING_MATERIALS_PENDING", attendeeTask(outsider, "#/meetings?id=" + meeting + "&action=weekly-report").get("state"));
-
-        UUID row = request(), image = request();
-        var png = new ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(new java.awt.image.BufferedImage(2, 1, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", png);
-        String screenshot = Base64.getEncoder().encodeToString(png.toByteArray());
-        String screenshotMarkup = "\n\n![截图](inline-image/" + image + ")";
-        weeklyReports.save(outsider, meeting, row, Map.of("kind", "REPORT", "markdown", "协作填报" + screenshotMarkup,
-                "images", List.of(Map.of("id", image.toString(), "data", screenshot))));
-        var edited = weeklyReports.save(employee, meeting, row, Map.of("kind", "REPORT", "version", 1,
-                "markdown", "负责人补充" + screenshotMarkup, "note", "周会备注"));
-        assertEquals(outsider.user().get("name"), edited.get("authorName"));
-        assertEquals(employee.user().get("name"), edited.get("updatedBy"));
-        assertEquals(409, assertThrows(ApiFault.class, () -> weeklyReports.save(outsider, meeting, row,
-                Map.of("kind", "REPORT", "version", 1, "markdown", "过期版本"))).status);
-        assertEquals(404, assertThrows(ApiFault.class, () -> weeklyReports.image(secondHead, meeting, row, image)).status);
-        assertEquals("image/png", weeklyReports.image(employee, meeting, row, image).mediaType());
-        weeklyReports.save(employee, meeting, request(), Map.of("kind", "WEEKLY_PLAN", "markdown", "完成验证"));
-        UUID coordination = request();
-        weeklyReports.save(outsider, meeting, coordination, Map.of("kind", "COORDINATION", "subject", "跨部门事项",
-                "expected", "完成会签", "departmentId", qc2.toString(), "personId", secondHead.userId().toString()));
-        weeklyReports.submit(employee, meeting, qc1, request());
-        assertEquals(409, assertThrows(ApiFault.class, () -> weeklyReports.save(outsider, meeting, request(),
-                Map.of("kind", "REPORT", "markdown", "提交后锁定"))).status);
-        assertEquals(404, assertThrows(ApiFault.class, () -> weeklyReports.preview(outsider, meeting)).status);
-        assertTrue(values(attendee(host, meeting, outsider), "materials").isEmpty());
-
-        var preview = weeklyReports.preview(host, meeting);
-        assertEquals(qc1, values(preview, "ready").getFirst().get("departmentId"));
-        assertEquals(qc2, values(preview, "missing").getFirst().get("departmentId"));
-        assertEquals(1, weeklyReports.extract(host, meeting, request(), (String) preview.get("token")));
-        var materials = values(attendee(host, meeting, outsider), "materials");
-        assertEquals(Set.of("REPORT", "COORDINATION"), materials.stream().map(item -> item.get("kind")).collect(java.util.stream.Collectors.toSet()));
-        assertTrue(materials.toString().contains("负责人补充"));
-        assertTrue(materials.toString().contains("周会备注"));
-        assertTrue(materials.toString().contains("跨部门事项"));
-        UUID author = (UUID) attendee(host, meeting, outsider).get("id");
-        assertEquals("image/png", bookings.materialImage(host, meeting, author, "REPORT", image).mediaType());
-        assertEquals(409, assertThrows(ApiFault.class, () -> weeklyReports.extract(host, meeting, request(),
-                (String) preview.get("token"))).status);
-        assertTrue(values(weeklyReports.preview(host, meeting), "ready").isEmpty());
-
-        weeklyReports.reopen(employee, meeting, qc1, request());
-        weeklyReports.delete(outsider, meeting, coordination, 1);
-        weeklyReports.save(outsider, meeting, row, Map.of("kind", "REPORT", "version", 2, "markdown", "第二版正文"));
-        weeklyReports.submit(employee, meeting, qc1, request());
-        assertTrue(weeklyReports.version(employee, meeting, qc1, 1).toString().contains("跨部门事项"));
-        assertEquals("image/png", weeklyReports.image(employee, meeting, row, image).mediaType());
-        assertEquals(1, weeklyReports.extract(host, meeting, request(), (String) weeklyReports.preview(host, meeting).get("token")));
-        var current = values(attendee(host, meeting, outsider), "materials");
-        assertEquals(1, current.size());
-        assertTrue(current.getFirst().toString().contains("第二版正文"));
-        assertEquals(404, assertThrows(ApiFault.class, () -> bookings.materialImage(host, meeting, author, "REPORT", image)).status);
-        bookings.start(host, meeting, request());
-        assertEquals(409, assertThrows(ApiFault.class, () -> weeklyReports.preview(host, meeting)).status);
-        assertEquals(2, values(weeklyReports.view(employee, meeting), "versions").size());
-    }
-
-    /** 测试为质量检定部创建真实的组织子节点，名称与生产页签相同。 */
-    private UUID weeklyTestDepartment(String name) {
-        UUID id = request();
-        db.update("""
-                INSERT INTO iam.department(id,code,name,parent_id) SELECT ?,?,?,id FROM iam.department WHERE code='QC'
-                """, id, name + "-" + id.toString().substring(0, 8), name);
-        return id;
-    }
-
-    /** 测试任职与平台生产权限使用同一数据源。 */
-    private void assignWeeklyTestDepartment(Actor actor, UUID unit, boolean head) {
-        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?", unit, actor.userId());
-        if (head) db.update("""
-                INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by)
-                VALUES (?,?,?,'DEPARTMENT_MANAGER',CURRENT_TIMESTAMP,'在线周报隔离验收',?)
-                """, request(), unit, actor.userId(), admin.userId());
-    }
 
     @BeforeEach
     void arrange() {
@@ -219,6 +59,53 @@ class MeetingIntegrationTest {
         outsider = person();
         roomA = bookings.saveRoom(admin, null, request(), Map.of("name", "隔离会议室 A " + request()));
         roomB = bookings.saveRoom(admin, null, request(), Map.of("name", "隔离会议室 B " + request()));
+    }
+
+    /** V81、V82 已保存的数据随部署保留，原在线周会回到会前填报、导入及正常开会流程。 */
+    @Test
+    void formerOnlineWeeklyMeetingUsesStandardMaterials() throws IOException {
+        Actor host = grant(organizer, "MEETING_ORGANIZER");
+        var body = schedule(roomA, Instant.now().plusSeconds(3600), List.of(employee), List.of());
+        body.putAll(Map.of("kind", "WEEKLY", "subject", "历史在线周会",
+                "materialTypes", List.of("REPORT", "WEEKLY_PLAN", "COORDINATION")));
+        UUID meeting = bookings.create(host, request(), body);
+        bookings.reply(employee, meeting, request(), Map.of("decision", "ACCEPTED"));
+        bookings.materials(employee, meeting, request(), Map.of("kind", "REPORT", "text", "已提取的上周汇报"));
+        UUID attendeeId = (UUID) attendee(host, meeting, employee).get("id");
+        byte[] workbook = workbooks.download(host, meeting, true);
+        db.update("UPDATE portal.meeting_booking SET online_weekly_report=true WHERE id=?", meeting);
+        db.update("UPDATE portal.meeting_attendee SET weekly_department_id=? WHERE id=?", department, attendeeId);
+        db.update("""
+                UPDATE portal.meeting_material SET payload=payload || '{"source":"ONLINE_WEEKLY"}'::jsonb
+                WHERE attendee_id=? AND kind='REPORT'
+                """, attendeeId);
+        db.update("INSERT INTO portal.meeting_weekly_department(meeting_id,department_id,name) VALUES (?,?,?)",
+                meeting, department, "历史填报部门");
+        db.update("INSERT INTO portal.meeting_weekly_excel(meeting_id,department_id,workbook) VALUES (?,?,?)",
+                meeting, department, workbook);
+        db.update("""
+                INSERT INTO portal.meeting_weekly_excel_session(id,meeting_id,department_id,state,base_revision)
+                VALUES (?,?,?,'EDITING',1)
+                """, request(), meeting, department);
+
+        assertEquals(true, bookings.detail(employee, meeting).get("canSubmitMaterials"));
+        assertEquals("MEETING_MATERIALS_PENDING", attendeeTask(employee, "#/meetings?id=" + meeting + "&action=materials").get("state"));
+        bookings.materials(employee, meeting, request(), Map.of("kind", "COORDINATION", "rows",
+                List.of(ownedCoordination(Map.of("subject", "协调工位", "expected", "确认可用工位")))));
+        String file = filledWorkbook(workbook, "", "Excel 导入的本周计划", Map.of("F", employeeLabel(employee)));
+        var preview = workbooks.importMaterials(host, meeting, request(), Map.of("file", file));
+        assertEquals(List.of(), preview.get("errors"));
+        assertEquals(1, workbooks.importMaterials(host, meeting, request(),
+                Map.of("file", file, "preview", preview.get("preview"))).get("imported"));
+
+        bookings.start(host, meeting, request());
+        assertEquals("IN_PROGRESS", bookings.detail(host, meeting).get("state"));
+        var materials = values(attendee(host, meeting, employee), "materials").toString();
+        assertTrue(materials.contains("已提取的上周汇报"));
+        assertTrue(materials.contains("Excel 导入的本周计划"));
+        assertArrayEquals(workbook, (byte[]) db.required("""
+                SELECT workbook FROM portal.meeting_weekly_excel WHERE meeting_id=? AND department_id=?
+                """, meeting, department).get("workbook"));
     }
 
     @Test
