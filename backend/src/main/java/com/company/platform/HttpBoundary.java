@@ -44,7 +44,8 @@ public class HttpBoundary extends OncePerRequestFilter {
                 boolean minutes=method.equals("PUT") && path.matches("/api/v1/meetings/[0-9a-f-]+/minutes");
                 // 回复兼容旧客户端的合并提交，独立提交可携带 30 条事项正文。
                 boolean meetingReply=method.equals("POST") && path.matches("/api/v1/meetings/[0-9a-f-]+/reply");
-                boolean meetingMaterials=method.equals("PUT") && path.matches("/api/v1/meetings/[0-9a-f-]+/materials");
+                boolean meetingMaterials=method.equals("PUT") && path.matches(
+                        "/api/v1/meetings/[0-9a-f-]+/(materials|weekly-report/rows/[0-9a-f-]+)");
                 // 千行员工表的批量拼音邮箱作为预检参数提交。
                 boolean importBatch=method.equals("POST")&&path.equals("/api/v1/imports/batches");
                 // 单机员工表专用入口接收 4 MiB XLSX 及其 Base64 包装。

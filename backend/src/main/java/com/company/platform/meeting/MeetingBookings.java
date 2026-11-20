@@ -109,6 +109,7 @@ public class MeetingBookings {
         var result = Sql.view(row, SUMMARY
                 + ",organizer_id,organizer_name,room_id,description,collect_materials,material_types,track_follow_up,cancel_reason,row_version,actual_started_at,actual_ended_at,share_all");
         result.put("canEdit", organizer && scheduled);
+        result.put("onlineWeeklyReport", row.get("online_weekly_report"));
         result.put("canStart", organizer && scheduled);
         result.put("canEnd", organizer && "IN_PROGRESS".equals(row.get("state")));
         result.put("canWriteMinutes", organizer && "AWAITING_MINUTES".equals(row.get("state")));
@@ -159,7 +160,8 @@ public class MeetingBookings {
                     JOIN iam.department d ON d.id=u.department_id WHERE u.id=?
                     """, actor.userId()), "name,department"));
         }
-        result.put("canSubmitMaterials", scheduled && own != null && eligibleForMaterials(row, own));
+        result.put("canSubmitMaterials", !Boolean.TRUE.equals(row.get("online_weekly_report"))
+                && scheduled && own != null && eligibleForMaterials(row, own));
         if (full && "IN_PROGRESS".equals(row.get("state"))) {
             result.put("liveDecisions", row.get("live_decisions"));
             if (row.get("live_notes") != null) result.put("liveNotes", row.get("live_notes"));
@@ -180,11 +182,13 @@ public class MeetingBookings {
     @Transactional
     public UUID create(Actor actor, UUID request, Map<String, Object> body) {
         Inputs.only(body, "subject", "description", "kind", "urgent", "startsAt", "endsAt", "roomId",
-                "attendeeIds", "collectMaterials", "materialUserIds", "trackFollowUp", "materialTypes", "shareAll");
+                "attendeeIds", "collectMaterials", "materialUserIds", "trackFollowUp", "materialTypes", "shareAll", "onlineWeeklyReport");
         String subject = Inputs.text(body, "subject", 200);
 
         String kind = Inputs.choice(body.get("kind"), "ORDINARY", "WEEKLY");
         boolean weekly = kind.equals("WEEKLY");
+        boolean onlineWeekly = flag(body, "onlineWeeklyReport", false);
+        if (onlineWeekly && !weekly) throw ApiFault.invalid("在线周会表仅用于周会");
         boolean urgent = flag(body, "urgent", false);
         Set<String> types = null;
         if (body.containsKey("materialTypes")) {
@@ -195,6 +199,7 @@ public class MeetingBookings {
                 if (!types.add(Inputs.choice(value, "REPORT", "WEEKLY_PLAN", "COORDINATION")))
                     throw ApiFault.invalid("会前材料类型不能重复");
         }
+        if (onlineWeekly) types = Set.of("REPORT", "WEEKLY_PLAN", "COORDINATION");
         boolean collect = weekly || (types == null ? flag(body, "collectMaterials", false) : !types.isEmpty());
         boolean followUp = flag(body, "trackFollowUp", false) || weekly;
         boolean shareAll = flag(body, "shareAll", false);
@@ -214,13 +219,13 @@ public class MeetingBookings {
         UUID id = UUID.randomUUID();
         db.update("""
                 INSERT INTO portal.meeting_booking
-                    (id,organizer_id,room_id,kind,subject,description,urgent,collect_materials,track_follow_up,starts_at,ends_at,material_types,share_all)
-                VALUES (?,?,?,?,?,?,?,?,?,?,?,?::text[],?)
+                    (id,organizer_id,room_id,kind,subject,description,urgent,collect_materials,track_follow_up,starts_at,ends_at,material_types,share_all,online_weekly_report)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?,?::text[],?,?)
                 """, id, actor.userId(), schedule.room(), kind, subject, description, urgent, collect, followUp,
                 Timestamp.from(schedule.starts()), Timestamp.from(schedule.ends()),
-                types == null ? null : "{" + String.join(",", types) + "}", shareAll);
+                types == null ? null : "{" + String.join(",", types) + "}", shareAll, onlineWeekly);
         for (UUID user : schedule.attendees()) {
-            invite(id, user, materials.contains(user));
+            invite(id, user, materials.contains(user), onlineWeekly);
             notify(id, null, user, "MEETING_INVITED", (urgent ? "紧急会议邀请 " : "会议邀请 ") + subject);
         }
         event(actor, request, id, "MEETING_CREATE");
@@ -275,7 +280,7 @@ public class MeetingBookings {
         }
         for (UUID user : schedule.attendees()) {
             if (added.contains(user)) {
-                invite(id, user, materials.contains(user));
+                invite(id, user, materials.contains(user), Boolean.TRUE.equals(row.get("online_weekly_report")));
                 notify(id, null, user, "MEETING_INVITED", invitation);
             } else {
                 // 周会保留对原受邀部门经理的会前安排，新增人员按发起修改时的任职判断。
@@ -529,6 +534,8 @@ public class MeetingBookings {
     /** 新材料按类型保存，填写人和所属部门从员工档案取值。 */
     private void saveStructuredMaterial(Actor actor, UUID id, UUID request, Map<String, Object> body,
             String kind, Map<String, Object> meeting, Map<String, Object> attendee) {
+        if (Boolean.TRUE.equals(meeting.get("online_weekly_report")))
+            throw ApiFault.conflict("请在在线周会表填写，由部门负责人提交");
         var payload = structuredPayload(body, kind, meeting, attendee);
         UUID attendeeId = (UUID) attendee.get("id");
         var uploaded = InlineImages.prepare(body.get("images"));
@@ -736,7 +743,7 @@ public class MeetingBookings {
             throw ApiFault.invalid("本场会议的受邀员工已达 500 人");
         if (!Boolean.TRUE.equals(meeting.get("urgent")))
             checkPeople(id, Set.of(user), time(meeting, "starts_at"), time(meeting, "ends_at"));
-        invite(id, user, true);
+        invite(id, user, true, false);
         db.update("UPDATE portal.meeting_booking SET row_version=row_version+1 WHERE id=?", id);
         notify(id, null, user, "MEETING_INVITED", "会议邀请 " + meeting.get("subject"));
         return (UUID) db.required("SELECT id FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=?", id, user).get("id");
@@ -938,12 +945,20 @@ public class MeetingBookings {
         return schedule.materialUsers();
     }
 
-    private void invite(UUID meeting, UUID user, boolean materialRequired) {
+    /** 在线周会按实际组织节点建页，同一场会议里同部门受邀员工共用一页。 */
+    private void invite(UUID meeting, UUID user, boolean materialRequired, boolean onlineWeekly) {
+        UUID department = onlineWeekly ? (UUID) db.required(
+                "SELECT department_id FROM iam.user_account WHERE id=?", user).get("department_id") : null;
+        if (department != null) db.update("""
+                INSERT INTO portal.meeting_weekly_department(meeting_id,department_id,name)
+                SELECT ?,id,name FROM iam.department WHERE id=? ON CONFLICT DO NOTHING
+                """, meeting, department);
         db.update("""
-                INSERT INTO portal.meeting_attendee(id,meeting_id,user_id,material_required) VALUES (?,?,?,?)
+                INSERT INTO portal.meeting_attendee(id,meeting_id,user_id,material_required,weekly_department_id) VALUES (?,?,?,?,?)
                 ON CONFLICT (meeting_id,user_id) DO UPDATE SET removed_at=NULL,invited_at=CURRENT_TIMESTAMP,
-                    material_required=EXCLUDED.material_required
-                """, UUID.randomUUID(), meeting, user, materialRequired);
+                    material_required=EXCLUDED.material_required,weekly_department_id=COALESCE(
+                        portal.meeting_attendee.weekly_department_id,EXCLUDED.weekly_department_id)
+                """, UUID.randomUUID(), meeting, user, materialRequired, department);
     }
 
     private void reservationLock() {

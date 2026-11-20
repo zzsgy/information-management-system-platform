@@ -22,15 +22,17 @@ public class MeetingController {
     private final MeetingWorkbooks workbooks;
     private final Commands commands;
     private final MeetingIncompleteExport incomplete;
+    private final MeetingWeeklyReports weeklyReports;
 
     public MeetingController(MeetingBookings bookings, MeetingFollowUp followUp, MeetingPermissions permissions,
-            Commands commands, MeetingWorkbooks workbooks, MeetingIncompleteExport incomplete) {
+            Commands commands, MeetingWorkbooks workbooks, MeetingIncompleteExport incomplete, MeetingWeeklyReports weeklyReports) {
         this.incomplete=incomplete;
         this.bookings = bookings;
         this.followUp = followUp;
         this.permissions = permissions;
         this.commands = commands;
         this.workbooks = workbooks;
+        this.weeklyReports = weeklyReports;
     }
 
     @GetMapping("/meetings/options")
@@ -123,6 +125,70 @@ public class MeetingController {
     public ResponseEntity<byte[]> materialImage(@PathVariable String id, @PathVariable String attendee,
             @PathVariable String kind, @PathVariable String image, HttpServletRequest r) {
         var result = bookings.materialImage(actor(r), Inputs.uuid(id), Inputs.uuid(attendee), kind, Inputs.uuid(image));
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(result.mediaType()))
+                .cacheControl(CacheControl.noStore()).header("X-Content-Type-Options", "nosniff").body(result.bytes());
+    }
+
+    /** 加载有权查看的部门页及草稿，受邀人与发起人沿用会议共享范围。 */
+    @GetMapping("/meetings/{id}/weekly-report")
+    public Map<String, Object> weeklyReport(@PathVariable UUID id, HttpServletRequest r) {
+        return ok(weeklyReports.view(actor(r), id), r);
+    }
+
+    /** 带版本保存本部门一行；同一行已更新时返回 409。 */
+    @PutMapping("/meetings/{id}/weekly-report/rows/{row}")
+    public Map<String, Object> weeklyRow(@PathVariable UUID id, @PathVariable UUID row,
+            @RequestBody Map<String, Object> body, HttpServletRequest r) {
+        return ok(weeklyReports.save(actor(r), id, row, body), r);
+    }
+
+    /** 本部门协作者可删除当前草稿行，已提交历史仍可查看。 */
+    @DeleteMapping("/meetings/{id}/weekly-report/rows/{row}")
+    public Map<String, Object> removeWeeklyRow(@PathVariable UUID id, @PathVariable UUID row, HttpServletRequest r) {
+        weeklyReports.delete(actor(r), id, row, version(r));
+        return saved(row, r);
+    }
+
+    /** 只有当前受邀的部门负责人能提交本部门快照。 */
+    @PostMapping("/meetings/{id}/weekly-report/departments/{department}/submit")
+    public Map<String, Object> submitWeekly(@PathVariable UUID id, @PathVariable UUID department, HttpServletRequest r) {
+        weeklyReports.submit(actor(r), id, department, ApiController.requestId(r));
+        return saved(id, r);
+    }
+
+    /** 同一部门负责人可在会前重开填写，保留之前的快照。 */
+    @PostMapping("/meetings/{id}/weekly-report/departments/{department}/reopen")
+    public Map<String, Object> reopenWeekly(@PathVariable UUID id, @PathVariable UUID department, HttpServletRequest r) {
+        weeklyReports.reopen(actor(r), id, department, ApiController.requestId(r));
+        return saved(id, r);
+    }
+
+    /** 历史版本按会议与部门鉴权，返回提交时的行及其作者。 */
+    @GetMapping("/meetings/{id}/weekly-report/departments/{department}/versions/{version}")
+    public Map<String, Object> weeklyVersion(@PathVariable UUID id, @PathVariable UUID department,
+            @PathVariable int version, HttpServletRequest r) {
+        return ok(weeklyReports.version(actor(r), id, department, version), r);
+    }
+
+    /** 只有发起人可预览本期已提交部门、缺报和待提取版本。 */
+    @GetMapping("/meetings/{id}/weekly-report/extract")
+    public Map<String, Object> previewWeekly(@PathVariable UUID id, HttpServletRequest r) {
+        return ok(weeklyReports.preview(actor(r), id), r);
+    }
+
+    /** 发起人凭有效预览提取，会前变更了版本则要求重新预览。 */
+    @PostMapping("/meetings/{id}/weekly-report/extract")
+    public Map<String, Object> extractWeekly(@PathVariable UUID id, @RequestBody Map<String, Object> body, HttpServletRequest r) {
+        Inputs.only(body, "token");
+        int extracted = weeklyReports.extract(actor(r), id, ApiController.requestId(r), Inputs.text(body, "token", 64));
+        return ok(Sql.map("extracted", extracted), r);
+    }
+
+    /** 草稿和历史图片继承周会表的部门阅览范围。 */
+    @GetMapping("/meetings/{id}/weekly-report/rows/{row}/images/{key}")
+    public ResponseEntity<byte[]> weeklyImage(@PathVariable UUID id, @PathVariable UUID row, @PathVariable UUID key,
+            HttpServletRequest r) {
+        var result = weeklyReports.image(actor(r), id, row, key);
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(result.mediaType()))
                 .cacheControl(CacheControl.noStore()).header("X-Content-Type-Options", "nosniff").body(result.bytes());
     }
