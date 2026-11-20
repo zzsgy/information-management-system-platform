@@ -135,6 +135,16 @@ public class MeetingController {
         return ok(weeklyReports.view(actor(r), id), r);
     }
 
+    /** 生成受当前共享权限限制的会议汇总，协调事宜在第一个工作表。 */
+    @GetMapping("/meetings/{id}/weekly-report/summary.xlsx")
+    public ResponseEntity<byte[]> weeklySummary(@PathVariable UUID id, HttpServletRequest r) {
+        byte[] workbook = weeklyReports.summaryWorkbook(actor(r), id);
+        return ResponseEntity.ok().contentType(MediaType.parseMediaType(ImportWorkbook.MEDIA))
+                .header("Content-Disposition", ContentDisposition.attachment()
+                        .filename("周会汇总.xlsx", java.nio.charset.StandardCharsets.UTF_8).build().toString())
+                .cacheControl(CacheControl.noStore()).body(workbook);
+    }
+
     /** 带版本保存本部门一行；同一行已更新时返回 409。 */
     @PutMapping("/meetings/{id}/weekly-report/rows/{row}")
     public Map<String, Object> weeklyRow(@PathVariable UUID id, @PathVariable UUID row,

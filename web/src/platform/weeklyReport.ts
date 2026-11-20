@@ -1,33 +1,4 @@
-/** 在线周会的工作表、行草稿和提交快照。 */
-export type WeeklyKind = "REPORT" | "WEEKLY_PLAN" | "COORDINATION";
-
-export interface WeeklyRow {
-  id: string;
-  departmentId: string;
-  kind: WeeklyKind;
-  authorName: string;
-  employeeNo: string;
-  updatedBy: string;
-  updatedAt: string;
-  version: number;
-  partner?: string | null;
-  assigneeName?: string | null;
-  assigneeNo?: string | null;
-  data: {
-    markdown?: string | null;
-    note?: string | null;
-    imageKeys?: string[];
-    subject?: string | null;
-    support?: string | null;
-    expected?: string | null;
-    category?: "COMPANY" | "DEPARTMENT";
-    departmentId?: string | null;
-    personId?: string | null;
-    department?: string | null;
-    assigneeName?: string | null;
-  };
-}
-
+/** 会议详情显示部门工作簿状态，内容由原生编辑器读取。 */
 export interface WeeklyDepartment {
   departmentId: string;
   name: string;
@@ -50,7 +21,6 @@ export interface WeeklyVersion {
 
 export interface WeeklySheet {
   departments: WeeklyDepartment[];
-  rows: WeeklyRow[];
   versions: WeeklyVersion[];
   ownDepartmentId: string | null;
   canExtract: boolean;
@@ -63,9 +33,3 @@ export interface WeeklyPreview {
   errors: string[];
   token: string;
 }
-
-export const weeklyLabels: Record<WeeklyKind, string> = {
-  REPORT: "上周总结",
-  WEEKLY_PLAN: "本周计划",
-  COORDINATION: "协调事宜",
-};

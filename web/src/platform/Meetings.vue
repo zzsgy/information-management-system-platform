@@ -867,7 +867,6 @@ function replyLabel(reply?: string) {
             v-if="detail.onlineWeeklyReport && options"
             id="meeting-weekly-report"
             :meeting-id="detail.id"
-            :departments="options.departments"
             :open="detail.state === 'SCHEDULED'"
             @extracted="reloadDetail"
           />

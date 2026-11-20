@@ -302,6 +302,10 @@ public class MeetingBookings {
         identity.lockActor(actor);
         var row = owned(actor, id);
         requireNotStarted(row);
+        if (Boolean.TRUE.equals(row.get("online_weekly_report")) && db.count("""
+                SELECT count(*) FROM portal.meeting_weekly_excel_session
+                WHERE meeting_id=? AND state='EDITING' AND expires_at>CURRENT_TIMESTAMP
+                """, id) > 0) throw ApiFault.conflict("仍有在线 Excel 正在编辑或保存，请等编辑者关闭页面并确认保存后开始会议");
         Instant actualStart = now();
         Instant starts = time(row, "starts_at");
         Instant ends = time(row, "ends_at");

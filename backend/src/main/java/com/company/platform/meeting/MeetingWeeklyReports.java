@@ -1,6 +1,7 @@
 package com.company.platform.meeting;
 
 import com.company.platform.*;
+import com.company.platform.intake.MeetingWeeklyWorkbook;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Isolation;
 import org.springframework.transaction.annotation.Transactional;
@@ -26,13 +27,13 @@ public class MeetingWeeklyReports {
     }
 
     /** 同一份草稿中仅本部门受邀员工可写，会议共享只增加其它部门的读取权限。 */
-    private record Access(Map<String, Object> meeting, Map<String, Object> attendee, boolean organizer, boolean readAll) {
+    record Access(Map<String, Object> meeting, Map<String, Object> attendee, boolean organizer, boolean readAll) {
         UUID department() { return attendee == null ? null : (UUID) attendee.get("weekly_department_id"); }
         boolean open() { return meeting.get("actual_started_at") == null && meeting.get("cancelled_at") == null; }
     }
 
     /** 核对会议或受邀关系，在写操作中先锁预约，与发起、改期、开始会议使用同一状态。 */
-    private Access access(Actor actor, UUID meeting, boolean write) {
+    Access access(Actor actor, UUID meeting, boolean write) {
         if (write) identity.lockActor(actor);
         var booking = db.required("SELECT * FROM portal.meeting_booking WHERE id=? AND online_weekly_report"
                 + (write ? " FOR NO KEY UPDATE" : ""), meeting);
@@ -71,13 +72,13 @@ public class MeetingWeeklyReports {
     }
 
     /** 部门负责人决定是否提交或重开，录入权由同部门的有效受邀身份决定。 */
-    private boolean canEdit(Access access, UUID department) {
+    boolean canEdit(Access access, UUID department) {
         return access.open() && department.equals(access.department())
                 && department.equals(access.attendee().get("department_id"));
     }
 
     /** 未开启会议共享时隐藏其他部门表，包括版本和截图。 */
-    private void requireRead(Access access, UUID department) {
+    void requireRead(Access access, UUID department) {
         if (!access.readAll() && !department.equals(access.department())) throw ApiFault.hidden();
     }
 
@@ -192,6 +193,8 @@ public class MeetingWeeklyReports {
                 SELECT submitted_version FROM portal.meeting_weekly_department WHERE meeting_id=? AND department_id=?
                 """, meeting, department);
         if (sheet.get("submitted_version") != null) throw ApiFault.conflict("部门周报已提交，请由负责人重新开放");
+        if (db.count("SELECT count(*) FROM portal.meeting_weekly_excel WHERE meeting_id=? AND department_id=?", meeting, department) != 0)
+            throw ApiFault.conflict("该部门已使用在线 Excel，请在工作簿中修改");
     }
 
     /** 草稿允许先填写部分字段，责任人和配合范围在部门提交时按会议规则验证。 */
@@ -238,6 +241,21 @@ public class MeetingWeeklyReports {
         Access access = access(actor, meeting, true);
         var sheet = requireHead(actor, access, meeting, department);
         if (sheet.get("submitted_version") != null) return;
+        if (db.count("""
+                SELECT count(*) FROM portal.meeting_weekly_excel_session
+                WHERE meeting_id=? AND department_id=? AND state='EDITING' AND expires_at>CURRENT_TIMESTAMP
+                """, meeting, department) > 0)
+            throw ApiFault.conflict("请等本部门所有人关闭 Excel 编辑页，并确认最终保存后再提交");
+        var lastEdit = db.one("""
+                SELECT state FROM portal.meeting_weekly_excel_session
+                WHERE meeting_id=? AND department_id=? AND submission_version IS NULL AND state<>'READING'
+                ORDER BY expires_at DESC,id DESC LIMIT 1
+                """, meeting, department);
+        if (lastEdit != null && !"CLOSED".equals(lastEdit.get("state")))
+            throw ApiFault.conflict("上次 Excel 保存尚未成功，请在编辑页核对后再提交");
+        var workbook = db.one("SELECT workbook FROM portal.meeting_weekly_excel WHERE meeting_id=? AND department_id=?", meeting, department);
+        byte[] bytes = workbook == null ? null : (byte[]) workbook.get("workbook");
+        if (bytes != null) loadExcelDraft(meeting, department, (String) sheet.get("name"), bytes);
         var rows = db.rows("""
                 SELECT r.*,r.data::text AS data_json,a.removed_at FROM portal.meeting_weekly_row r
                 JOIN portal.meeting_attendee a ON a.id=r.author_id
@@ -274,12 +292,189 @@ public class MeetingWeeklyReports {
                 WHERE meeting_id=? AND department_id=?
                 """, meeting, department);
         db.update("""
-                INSERT INTO portal.meeting_weekly_submission(meeting_id,department_id,version,submitted_by,rows)
-                VALUES (?,?,?,?,?::jsonb)
-                """, meeting, department, version, access.attendee().get("name"), Crypto.json(snapshot));
+                INSERT INTO portal.meeting_weekly_submission(meeting_id,department_id,version,submitted_by,rows,workbook)
+                VALUES (?,?,?,?,?::jsonb,?)
+                """, meeting, department, version, access.attendee().get("name"), Crypto.json(snapshot), bytes);
         db.update("UPDATE portal.meeting_weekly_department SET submitted_version=? WHERE meeting_id=? AND department_id=?",
                 version, meeting, department);
         bookings.event(actor, request, meeting, "MEETING_WEEKLY_REPORT_SUBMIT");
+    }
+
+    /** 迁移旧填报时保持原填报人、备注和截图，首次进入即可继续原数据。 */
+    byte[] initialWorkbook(UUID meeting, UUID department, String name) {
+        var drafts = db.rows("""
+                SELECT r.*,r.data::text AS data_json,d.name AS partner,u.name AS assignee_name,u.employee_no AS assignee_no
+                FROM portal.meeting_weekly_row r
+                LEFT JOIN iam.department d ON d.id::text=r.data->>'departmentId'
+                LEFT JOIN iam.user_account u ON u.id::text=r.data->>'personId'
+                WHERE r.meeting_id=? AND r.department_id=? AND NOT deleted ORDER BY r.created_at,r.id
+                """, meeting, department);
+        return writeWorkbook(drafts, name);
+    }
+
+    /** V81 已提交的版本也能在原生编辑器中只读打开。 */
+    byte[] historicalWorkbook(UUID meeting, UUID department, int version) {
+        var snapshot = db.required("""
+                SELECT w.name,s.workbook FROM portal.meeting_weekly_submission s
+                JOIN portal.meeting_weekly_department w USING(meeting_id,department_id)
+                WHERE s.meeting_id=? AND s.department_id=? AND s.version=?
+                """, meeting, department, version);
+        if (snapshot.get("workbook") instanceof byte[] workbook) return workbook;
+        var drafts = db.rows("""
+                SELECT (r->>'id')::uuid AS id,r->>'kind' AS kind,r->>'authorName' AS author_name,r->>'employeeNo' AS employee_no,
+                    (r->'data')::text AS data_json,r->'data'->>'department' AS partner,
+                    r->'data'->>'assigneeName' AS assignee_name,u.employee_no AS assignee_no
+                FROM portal.meeting_weekly_submission s CROSS JOIN LATERAL jsonb_array_elements(s.rows) WITH ORDINALITY AS row(r,n)
+                LEFT JOIN iam.user_account u ON u.id::text=r->'data'->>'assigneeId'
+                WHERE s.meeting_id=? AND s.department_id=? AND s.version=? ORDER BY n
+                """, meeting, department, version);
+        return writeWorkbook(drafts, (String) snapshot.get("name"));
+    }
+
+    /** 汇总工作簿以协调事宜为首页，其余页按已提交且有权查看的部门列出。 */
+    @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
+    public byte[] summaryWorkbook(Actor actor, UUID meeting) {
+        Access access = access(actor, meeting, false);
+        var coordination = new ArrayList<MeetingWeeklyWorkbook.Line>();
+        var workbook = new ArrayList<MeetingWeeklyWorkbook.Sheet>();
+        workbook.add(new MeetingWeeklyWorkbook.Sheet("协调事宜", MeetingWeeklyWorkbook.COORDINATION, coordination));
+        var names = new TreeSet<String>(String.CASE_INSENSITIVE_ORDER);
+        names.add("协调事宜");
+        for (var unit : sheets(meeting)) {
+            UUID department = (UUID) unit.get("department_id");
+            if ((!access.readAll() && !department.equals(access.department())) || !(unit.get("submitted_version") instanceof Number version))
+                continue;
+            var parts = MeetingWeeklyWorkbook.read(historicalWorkbook(meeting, department, version.intValue()));
+            for (var row : parts.getFirst().lines()) {
+                var cells = new ArrayList<>(row.cells());
+                if (cells.get(4).isEmpty()) cells.set(4, (String) unit.get("name"));
+                cells.set(0, String.valueOf(coordination.size() + 1));
+                coordination.add(new MeetingWeeklyWorkbook.Line(coordination.size() + 2, cells, row.images()));
+            }
+            var rows = new ArrayList<MeetingWeeklyWorkbook.Line>();
+            for (var part : parts.subList(1, parts.size())) {
+                int number = 0;
+                for (var row : part.lines()) {
+                    var cells = new ArrayList<>(row.cells());
+                    cells.set(0, String.valueOf(++number));
+                    cells.addFirst(part.name());
+                    rows.add(new MeetingWeeklyWorkbook.Line(rows.size() + 2, cells, row.images()));
+                }
+            }
+            String name = ((String) unit.get("name")).replaceAll("[\\\\/?*:\\[\\]]", "_").replaceAll("^'+|'+$", "");
+            if (name.isBlank()) name = "部门";
+            String base = name.substring(0, Math.min(name.length(), 28));
+            name = base;
+            for (int i = 2; !names.add(name); i++) name = base + "_" + i;
+            workbook.add(new MeetingWeeklyWorkbook.Sheet(name, List.of("名称", "序号", "事项说明", "备注", "填报人+工号"), rows));
+        }
+        return MeetingWeeklyWorkbook.write(workbook);
+    }
+
+    private byte[] writeWorkbook(List<Map<String, Object>> drafts, String name) {
+        var result = new ArrayList<MeetingWeeklyWorkbook.Sheet>();
+        var kinds = List.of("COORDINATION", "REPORT", "WEEKLY_PLAN");
+        for (int i = 0; i < kinds.size(); i++) {
+            String kind = kinds.get(i);
+            var lines = new ArrayList<MeetingWeeklyWorkbook.Line>();
+            for (var draft : drafts) {
+                if (!kind.equals(draft.get("kind"))) continue;
+                var data = Crypto.JSON.readTree((String) draft.get("data_json"));
+                int number = lines.size() + 2;
+                String author = draft.get("author_name") + "+" + draft.get("employee_no");
+                var cells = List.of(Integer.toString(number - 1), data.path("markdown").asText(""), data.path("note").asText(""), author);
+                var images = new ArrayList<InlineImages.Image>();
+                if (i == 0) {
+                    cells = List.of(Integer.toString(number - 1), data.path("subject").asText(""), data.path("support").asText(""),
+                            data.path("expected").asText(""), name, author, Objects.toString(draft.get("partner"), ""),
+                            draft.get("assignee_name") == null ? "" : draft.get("assignee_name") + "+" + draft.get("assignee_no"),
+                            "COMPANY".equals(data.path("category").asText()) ? "需公司协调" : "需其他部门配合");
+                } else {
+                    cells = List.of(cells.get(0), IMAGE.matcher(cells.get(1)).replaceAll("").strip(), cells.get(2), author);
+                    for (var key : data.path("imageKeys")) {
+                        var image = db.required("SELECT media_type,image_bytes FROM portal.meeting_weekly_image WHERE row_id=? AND image_key=?",
+                                draft.get("id"), Inputs.uuid(key.asText()));
+                        images.add(new InlineImages.Image((String) image.get("media_type"), (byte[]) image.get("image_bytes")));
+                    }
+                }
+                lines.add(new MeetingWeeklyWorkbook.Line(number, cells, images));
+            }
+            result.add(new MeetingWeeklyWorkbook.Sheet(MeetingWeeklyWorkbook.NAMES.get(i),
+                    i == 0 ? MeetingWeeklyWorkbook.COORDINATION : MeetingWeeklyWorkbook.NARRATIVE, lines));
+        }
+        return MeetingWeeklyWorkbook.write(result);
+    }
+
+    /** 将已保存的原生工作簿作为完整替换，校验失败时整个部门保持上一版。 */
+    private void loadExcelDraft(UUID meeting, UUID department, String name, byte[] bytes) {
+        var sheets = MeetingWeeklyWorkbook.read(bytes);
+        var authors = new HashMap<String, Map<String, Object>>();
+        for (var a : db.rows("""
+                SELECT a.id,u.name,u.employee_no FROM portal.meeting_attendee a JOIN iam.user_account u ON u.id=a.user_id
+                WHERE a.meeting_id=? AND a.weekly_department_id=? AND a.removed_at IS NULL
+                """, meeting, department))
+            authors.put(a.get("name") + "+" + a.get("employee_no"), a);
+        db.update("""
+                UPDATE portal.meeting_weekly_row SET deleted=true WHERE meeting_id=? AND department_id=? AND NOT deleted
+                """, meeting, department);
+        var kinds = List.of("COORDINATION", "REPORT", "WEEKLY_PLAN");
+        for (int i = 0; i < sheets.size(); i++) {
+            var sheet = sheets.get(i);
+            String kind = kinds.get(i);
+            for (var row : sheet.lines()) {
+                try {
+                    loadExcelRow(meeting, department, name, authors, kind, row);
+                } catch (ApiFault invalid) {
+                    throw ApiFault.invalid("「" + sheet.name() + "」第 " + row.number() + " 行：" + invalid.getMessage());
+                }
+            }
+        }
+    }
+
+    /** Excel 每一行按填报人栏定位受邀员工，责任人仍复用原会前协调规则。 */
+    private void loadExcelRow(UUID meeting, UUID department, String name, Map<String, Map<String, Object>> authors,
+            String kind, MeetingWeeklyWorkbook.Line row) {
+        boolean coordination = kind.equals("COORDINATION");
+        var cells = row.cells();
+        String label = cells.get(coordination ? 5 : 3).replace('＋', '+').replaceAll("\\s*\\+\\s*", "+");
+        var author = authors.get(label);
+        if (author == null) throw ApiFault.invalid("填报人须为本部门受邀员工，格式为姓名+工号");
+        UUID id = UUID.randomUUID();
+        var images = new LinkedHashMap<UUID, InlineImages.Image>();
+        Map<String, Object> data;
+        if (coordination) {
+            if (!row.images().isEmpty()) throw ApiFault.invalid("协调事宜请填写文本，截图可放在周报内容中");
+            if (!cells.get(4).isEmpty() && !name.equals(cells.get(4))) throw ApiFault.invalid("填报部门须为本部门");
+            var partner = db.one("SELECT id FROM iam.department WHERE name=? AND status='ACTIVE'", cells.get(6));
+            int separator = cells.get(7).lastIndexOf('+');
+            if (separator < 1) throw ApiFault.invalid("责任人须填写姓名+工号");
+            var person = bookings.workbookEmployee(cells.get(7).substring(separator + 1).strip());
+            if (person == null || !person.get("name").equals(cells.get(7).substring(0, separator).strip()))
+                throw ApiFault.invalid("责任人的姓名或工号有误");
+            String category = switch (cells.get(8)) {
+                case "需公司协调" -> "COMPANY";
+                case "需其他部门配合" -> "DEPARTMENT";
+                default -> throw ApiFault.invalid("请选择事项类别");
+            };
+            data = Sql.map("subject", cells.get(1), "support", cells.get(2), "expected", cells.get(3), "category", category,
+                    "departmentId", partner == null ? null : partner.get("id"), "personId", person.get("user_id"));
+        } else {
+            var markdown = new StringBuilder(cells.get(1));
+            for (var image : row.images()) {
+                UUID key = UUID.randomUUID();
+                images.put(key, image);
+                markdown.append("\n\n![图片](inline-image/").append(key).append(")");
+            }
+            data = Sql.map("markdown", MeetingBookings.optional(Map.of("markdown", markdown.toString()), "markdown", 8000),
+                    "note", MeetingBookings.optional(Map.of("note", cells.get(2)), "note", 2000), "imageKeys", images.keySet());
+        }
+        db.update("""
+                INSERT INTO portal.meeting_weekly_row(id,meeting_id,department_id,kind,author_id,author_name,employee_no,updated_by,data)
+                VALUES (?,?,?,?,?,?,?,?,?::jsonb)
+                """, id, meeting, department, kind, author.get("id"), author.get("name"), author.get("employee_no"), author.get("name"), Crypto.json(data));
+        images.forEach((key, image) -> db.update("""
+                INSERT INTO portal.meeting_weekly_image(row_id,image_key,media_type,image_bytes) VALUES (?,?,?,?)
+                """, id, key, image.mediaType(), image.bytes()));
     }
 
     /** 每人每类正文仍与现有周报的内容上限一致。 */
