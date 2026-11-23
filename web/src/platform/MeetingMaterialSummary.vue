@@ -31,7 +31,11 @@ const tables = computed(() => {
       .flatMap(({ data, attendeeId }, materialIndex) =>
         (data.rows ?? []).map((row, index) => {
           const key = (attendeeId ?? materialIndex) + ":" + index;
-          return { ...row, key, author: data.author, result: results.get(key) };
+          const result = results.get(key);
+          const due = result ? result.dueAt : row.dueAt;
+          const displayDeadline = result?.deadlineText
+            ?? (result?.dueAt ? dateTime(result.dueAt) : row.deadlineText ?? (due ? dateTime(due) : ""));
+          return { ...row, key, author: data.author, result, displayDeadline };
         }),
       );
   return [
@@ -77,7 +81,7 @@ const tables = computed(() => {
             <th scope="col">填报人</th>
             <th scope="col">配合部门</th>
             <th scope="col">责任人（唯一）</th>
-            <template v-if="editing || results?.length || rows.some((row) => row.dueAt)">
+            <template v-if="editing || results?.length || rows.some((row) => row.displayDeadline)">
               <th v-if="editing || results?.length" scope="col">会议结论</th>
               <th scope="col">截止时间</th>
               <th v-if="editing" scope="col">操作</th>
@@ -94,9 +98,9 @@ const tables = computed(() => {
             <td>{{ row.author.name }}</td>
             <td>{{ row.result?.department ?? row.department }}</td>
             <td>{{ row.result?.assigneeName ?? row.assigneeName }}</td>
-            <template v-if="editing || results?.length || rows.some((item) => item.dueAt)">
+            <template v-if="editing || results?.length || rows.some((item) => item.displayDeadline)">
               <td v-if="editing || results?.length">{{ row.result?.conclusion }}</td>
-              <td>{{ row.result ? (row.result.dueAt ? dateTime(row.result.dueAt) : "") : (row.dueAt ? dateTime(row.dueAt) : "") }}</td>
+              <td>{{ row.displayDeadline }}</td>
               <td v-if="editing">
                 <MeetingCoordinationResult
                   :row-key="row.key"
@@ -106,6 +110,7 @@ const tables = computed(() => {
                   :department-name="row.department"
                   :assignee-id="row.assigneeId"
                   :assignee-name="row.assigneeName"
+                  :deadline-text="row.displayDeadline"
                   :source-due-at="row.dueAt"
                   :meeting-id="editing.meetingId"
                   :departments="editing.departments"

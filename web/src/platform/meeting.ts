@@ -178,6 +178,8 @@ export interface MaterialRow {
   assigneeName?: string | null;
   /** 周会汇总中原有的截止时间。 */
   dueAt?: string;
+  /** 协调事宜的截止时间原文。 */
+  deadlineText?: string;
 }
 /** 调用本场事项结论接口和展示纪要所需的字段。 */
 export interface CoordinationResult {
@@ -189,6 +191,8 @@ export interface CoordinationResult {
   department?: string | null;
   assigneeId: string | null;
   assigneeName: string | null;
+  /** 协调文本与逾期计算所用的待办时间分别保存。 */
+  deadlineText?: string | null;
   dueAt: string | null;
   followUp: boolean;
 }

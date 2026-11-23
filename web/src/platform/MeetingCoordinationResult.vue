@@ -19,6 +19,7 @@ const props = defineProps<{
   departmentName?: string | null;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  deadlineText?: string;
   sourceDueAt?: string;
   trackFollowUp: boolean;
   departments: MeetingOption[];
@@ -30,12 +31,13 @@ const open = ref(false);
 const dialog = ref<HTMLDialogElement>();
 const busy = ref(false);
 const error = ref("");
-/** 编辑中的截止时间使用上海时间，提交时转回 ISO 时间戳。 */
+/** 协调截止时间保留文本，待办时间使用北京时间。 */
 const draft = reactive({
   conclusion: "",
   departmentId: "",
   assigneeId: "",
   assigneeName: "",
+  deadlineText: "",
   dueAt: "",
   followUp: false,
 });
@@ -57,6 +59,7 @@ function edit() {
   draft.departmentId = savedDepartment.value;
   draft.assigneeId = current?.assigneeId ?? props.assigneeId ?? "";
   draft.assigneeName = current?.assigneeName ?? props.assigneeName ?? "";
+  draft.deadlineText = props.deadlineText ?? "";
   const due = current ? current.dueAt : props.sourceDueAt;
   draft.dueAt = due ? meetingDateInput(due) : "";
   draft.followUp = current?.followUp ?? false;
@@ -78,7 +81,8 @@ async function save() {
           ? { departmentId: draft.departmentId }
           : {}),
         assigneeId: draft.assigneeId || null,
-        dueAt: draft.dueAt ? meetingInstant(draft.dueAt) : null,
+        deadlineText: draft.deadlineText,
+        dueAt: draft.followUp && draft.dueAt ? meetingInstant(draft.dueAt) : null,
         ...(props.published ? {} : { followUp: draft.followUp }),
       }),
     });
@@ -179,20 +183,19 @@ async function save() {
             </button>
           </div>
         </div>
-        <label
-          >截止时间（北京时间）
-          <input
-            v-model="draft.dueAt"
-            type="datetime-local"
-            step="1"
-            :required="draft.followUp"
-          />
+        <label>
+          截止时间
+          <input v-model="draft.deadlineText" type="text" maxlength="3000" placeholder="例如 两周或 12 月底" />
         </label>
         <label v-if="trackFollowUp && !published">
           <input
             v-model="draft.followUp"
             type="checkbox"
           />发布纪要时生成会后待办
+        </label>
+        <label v-if="draft.followUp">
+          待办截止时间（北京时间）
+          <input v-model="draft.dueAt" type="datetime-local" step="1" required />
         </label>
         <p v-if="error" role="alert" class="form-error">{{ error }}</p>
       </div>

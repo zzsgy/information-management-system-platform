@@ -368,7 +368,7 @@ public class MeetingBookings {
 
     /** 在发起人的保存事务中更新协调结果，发布后仍使用原材料行和原跟踪设置。 */
     CoordinationUpdate saveCoordination(Map<String, Object> meeting, UUID id, Map<String, Object> body) {
-        Inputs.only(body, "key", "conclusion", "departmentId", "assigneeId", "dueAt", "followUp");
+        Inputs.only(body, "key", "conclusion", "departmentId", "assigneeId", "deadlineText", "dueAt", "followUp");
         String key = Inputs.text(body, "key", 48);
         String conclusion = optional(body, "conclusion", 3000);
         UUID assignee = Inputs.nullableUuid(body.get("assigneeId"));
@@ -391,7 +391,10 @@ public class MeetingBookings {
         boolean followUp = flag(body, "followUp", published && wasTracked);
         if (published && followUp != wasTracked) throw ApiFault.invalid("纪要发布后不支持变更该事项的反馈跟踪设置");
         if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null || conclusion == null))
-            throw ApiFault.invalid("跟踪事项须填写结论、责任人和截止时间");
+            throw ApiFault.invalid("跟踪事项须填写结论、责任人和待办截止时间");
+        // 空字符串表示发起人主动清空文字，旧客户端未传字段时沿用此前记录。
+        Object deadlineText = body.containsKey("deadlineText")
+                ? Objects.toString(optional(body, "deadlineText", 3000), "") : previous.get("deadlineText");
         // 兼容未传部门的客户端。已经改派的部门优先于会前材料中的原部门。
         var departmentId = previous.getOrDefault("departmentId", source.path("departmentId").asText(null));
         UUID department = Inputs.nullableUuid(departmentId);
@@ -407,7 +410,8 @@ public class MeetingBookings {
         String subject = source.path("subject").asText();
         results.add(Sql.map("key", key, "subject", subject, "conclusion", conclusion,
                 "departmentId", department, "department", departmentName, "assigneeId", assignee,
-                "assigneeName", assigneeName, "dueAt", due == null ? null : due.toString(), "followUp", followUp));
+                "assigneeName", assigneeName, "deadlineText", deadlineText,
+                "dueAt", due == null ? null : due.toString(), "followUp", followUp));
         db.update("UPDATE portal.meeting_booking SET coordination_results=?::jsonb WHERE id=?", Crypto.json(results), id);
         return new CoordinationUpdate(key, subject, conclusion, assignee, due, followUp);
     }

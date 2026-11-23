@@ -1012,13 +1012,37 @@ class MeetingIntegrationTest {
         assertEquals("AWAITING_MINUTES", details.get("state"));
         var materials = values(author, "materials");
         var coordination = materials.stream().filter(m -> "COORDINATION".equals(m.get("kind"))).findFirst().orElseThrow();
-        assertTrue(coordination.get("data").toString().contains("2026-11-25T09:30:00Z"));
         assertTrue(coordination.get("data").toString().contains("DEPARTMENT"));
-        assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("COMPANY"));
+        var rows = Crypto.JSON.valueToTree(coordination.get("data")).path("rows");
+        assertEquals("11.24", rows.get(0).path("deadlineText").asText());
+        assertEquals("2026-11-24 17:00", rows.get(1).path("deadlineText").asText());
+        assertEquals("12.18", rows.get(2).path("deadlineText").asText());
+        assertEquals("两周", rows.get(3).path("deadlineText").asText());
+        assertEquals("12月之前", rows.get(4).path("deadlineText").asText());
+        assertEquals("2026/11/25 17:30", rows.get(5).path("deadlineText").asText());
+        assertFalse(rows.get(3).has("dueAt"));
+        var employeeMaterials = values(attendee(organizer, id, employee), "materials");
+        var companyRow = Crypto.JSON.valueToTree(employeeMaterials.getFirst().get("data")).path("rows").get(0);
+        assertEquals("COMPANY", companyRow.path("category").asText());
+        assertEquals("/", companyRow.path("deadlineText").asText());
         var repeated = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
         assertTrue(values(repeated, "materials").stream().allMatch(row -> Boolean.TRUE.equals(row.get("conflict"))));
         assertEquals(0, weeklyImports.importSummary(organizer, id, request(), date, (String) repeated.get("preview"),
                 new ByteArrayInputStream(bytes)).get("imported"));
+
+        var update = Sql.map("key", author.get("id") + ":3", "conclusion", "确定计划",
+                "assigneeId", employee.userId().toString(), "deadlineText", "下次周会前", "followUp", false);
+        followUp.saveCoordination(organizer, id, request(), update);
+        var result = values(bookings.detail(organizer, id), "coordinationResults").getFirst();
+        assertEquals("下次周会前", result.get("deadlineText"));
+        assertNull(result.get("dueAt"));
+        update.put("followUp", true);
+        assertThrows(ApiFault.class, () -> followUp.saveCoordination(organizer, id, request(), update));
+        update.put("dueAt", "2026-12-07T09:00:00Z");
+        followUp.saveCoordination(organizer, id, request(), update);
+        result = values(bookings.detail(organizer, id), "coordinationResults").getFirst();
+        assertEquals("下次周会前", result.get("deadlineText"));
+        assertEquals("2026-12-07T09:00:00Z", result.get("dueAt"));
     }
 
     /** 按截图列顺序构造两页可复现的源 XLSX，日期和名称与合并区域一致。 */
@@ -1031,11 +1055,24 @@ class MeetingIntegrationTest {
                 + "<Relationship Id=\"rId2\" Type=\"" + bindings + "/worksheet\" Target=\"/xl/worksheets/sheet2.xml\"/></Relationships>";
         var headers = List.of("序号", "事项类别", "具体事宜", "需协调 / 配合什么", "期望结果 /验收标准", "填报部门", "填报人+工号",
                 "配合部门", "责任人（唯一，姓名+工号）", "截止时间");
+        var first = weeklyRow(2, List.of("1", "需其他部门配合", "协调设备", "提供帮助", "核对完成", child,
+                author, partner, assignee, "11.24"));
+        // Excel 可能把直接输入的 11.24 保存成数值而不是字符串。
         var coordination = "<worksheet><sheetData>" + weeklyRow(1, headers)
-                + weeklyRow(2, List.of("1", "需其他部门配合", "协调设备", "提供帮助", "核对完成", child,
-                author, partner, assignee, "2026/11/25 17:30"))
+                + first.replace(cell("J2", "11.24"), "<c r=\"J2\"><v>11.24</v></c>")
                 + weeklyRow(3, List.of("2", "需公司协调", "同步公司资源", "", "确认资源安排", partner,
-                assignee, "公司", author, "")) + "</sheetData></worksheet>";
+                assignee, "公司", author, "/"))
+                + weeklyRow(4, List.of("3", "需其他部门配合", "确认维修完成", "", "验收完成", child,
+                author, partner, assignee, "46350.7083333333"))
+                .replace(cell("J4", "46350.7083333333"), "<c r=\"J4\" s=\"1\"><v>46350.7083333333</v></c>")
+                + weeklyRow(5, List.of("4", "需其他部门配合", "确认调试完成", "", "运行正常", child,
+                author, partner, assignee, "12.18"))
+                + weeklyRow(6, List.of("5", "需其他部门配合", "协调维修窗口", "", "确定窗口", child,
+                author, partner, assignee, "两周"))
+                + weeklyRow(7, List.of("6", "需其他部门配合", "准备年底台账", "", "确认完成", child,
+                author, partner, assignee, "12月之前"))
+                + weeklyRow(8, List.of("7", "需其他部门配合", "确认维修工单", "", "办结工单", child,
+                author, partner, assignee, "2026/11/25 17:30")) + "</sheetData></worksheet>";
         var report = "<worksheet><sheetData>" + weeklyRow(1, List.of("日期", "名称", "序号", "事项说明", "备注"))
                 + weeklyRow(2, List.of("2026.11.16", "上周总结", "1", "上一周旧数据"))
                 + weeklyRow(3, List.of("2026.11.23", "上周总结", "1", "上周事项", "保留备注"))
@@ -1044,7 +1081,8 @@ class MeetingIntegrationTest {
                 + weeklyRow(6, List.of("", "需解决问题", "1", "忽略问题")) + "</sheetData>"
                 + "<mergeCells><mergeCell ref=\"A3:A6\"/><mergeCell ref=\"B3:B4\"/></mergeCells></worksheet>";
         try (var zip = new ZipOutputStream(file)) {
-            for (var entry : Map.of("xl/workbook.xml", workbook, "xl/_rels/workbook.xml.rels", relationships,
+            String styles = "<styleSheet><cellXfs><xf numFmtId=\"0\"/><xf numFmtId=\"22\"/></cellXfs></styleSheet>";
+            for (var entry : Map.of("xl/workbook.xml", workbook, "xl/_rels/workbook.xml.rels", relationships, "xl/styles.xml", styles,
                     "xl/worksheets/sheet1.xml", coordination, "xl/worksheets/sheet2.xml", report).entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
                 zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));

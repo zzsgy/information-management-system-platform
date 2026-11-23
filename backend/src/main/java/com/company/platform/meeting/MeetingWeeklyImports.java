@@ -123,7 +123,7 @@ public class MeetingWeeklyImports {
                     throw ApiFault.invalid("填报部门与员工档案不一致");
                 values.put("department", department(Inputs.text(values, "department", 128)).get("code"));
                 var entry = workbooks.coordination(values);
-                if (values.containsKey("dueAt")) entry.put("dueAt", values.get("dueAt"));
+                if (values.containsKey("deadlineText")) entry.put("deadlineText", values.get("deadlineText"));
                 var key = new Key((UUID) author.get("user_id"), "COORDINATION");
                 var material = materials.computeIfAbsent(key, ignored -> new Material(key, "协调事宜",
                         departmentPath(unit), (String) author.get("name"), new ArrayList<Map<String, Object>>()));

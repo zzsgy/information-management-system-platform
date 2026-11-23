@@ -21,7 +21,7 @@ public final class WeeklySummaryWorkbook {
     private static final String REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private static final List<String> REPORT_HEADERS = List.of("日期", "名称", "序号", "事项说明", "备注");
     private static final List<String> COORD_KEYS = List.of("sequence", "category", "subject", "support", "expected",
-            "authorDepartment", "author", "department", "assignee", "dueAt");
+            "authorDepartment", "author", "department", "assignee", "deadlineText");
     private static final List<String> COORD_HEADERS = List.of("序号", "事项类别", "具体事宜", "需协调/配合什么",
             "期望结果/验收标准", "填报部门", "填报人+工号", "配合部门", "责任人(唯一,姓名+工号)", "截止时间");
     private static final List<String> OLD_COORD_HEADERS = List.of("序号", "具体事宜", "需协调/配合什么",
@@ -30,6 +30,8 @@ public final class WeeklySummaryWorkbook {
             "authorDepartment", "author", "department", "assignee", "category");
     private static final DateTimeFormatter DATE = DateTimeFormatter.ofPattern("uuuu-M-d")
             .withResolverStyle(java.time.format.ResolverStyle.STRICT);
+    private static final DateTimeFormatter EXCEL_DEADLINE_TEXT = DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm");
+    private static final DateTimeFormatter EXCEL_DEADLINE_SECONDS = DateTimeFormatter.ofPattern("uuuu-MM-dd HH:mm:ss");
 
     private WeeklySummaryWorkbook() {}
 
@@ -55,6 +57,7 @@ public final class WeeklySummaryWorkbook {
             boolean from1904 = elements(book, "workbookPr").stream()
                     .anyMatch(p -> Set.of("1", "true").contains(p.getAttribute("date1904")));
             LocalDate epoch = from1904 ? LocalDate.of(1904, 1, 1) : LocalDate.of(1899, 12, 30);
+            var dateStyles = dateStyles(zip);
             var reports = new ArrayList<Department>();
             var emptyDepartments = new ArrayList<String>();
             List<Row> coordination = null;
@@ -65,10 +68,10 @@ public final class WeeklySummaryWorkbook {
                 String path = target.startsWith("/") ? target.substring(1) : "xl/" + target;
                 if (!path.matches("xl/worksheets/[A-Za-z0-9_-]+\\.xml"))
                     throw ApiFault.invalid("「" + name + "」工作表结构无法识别");
-                var rows = readRows(zip, path, shared);
+                var rows = readRows(zip, path, shared, dateStyles, epoch);
                 if ("协调事宜".equals(name) || matchesHeader(rows, OLD_COORD_HEADERS)) {
                     if (coordination != null) throw ApiFault.invalid("周会汇总存在多页协调事宜");
-                    coordination = coordination(rows, epoch);
+                    coordination = coordination(rows);
                 }
                 else if (matchesHeader(rows, REPORT_HEADERS)) {
                     var report = report(name, rows, meetingDate, epoch);
@@ -98,8 +101,29 @@ public final class WeeklySummaryWorkbook {
         }
     }
 
+    /** 只转换 Excel 明确标记为日期的数值。普通数值例如 11.25 继续按原文读取。 */
+    private static Set<String> dateStyles(ZipFile zip) throws Exception {
+        var dates = new HashSet<String>();
+        if (zip.getEntry("xl/styles.xml") == null) return dates;
+        var document = xml(entry(zip, "xl/styles.xml", XML_LIMIT));
+        var formats = new HashSet<>(Set.of("14", "15", "16", "17", "22", "27", "28", "29", "30", "31",
+                "34", "35", "36", "50", "51", "52", "53", "54", "55", "56", "57", "58"));
+        for (var format : elements(document, "numFmt")) {
+            String pattern = format.getAttribute("formatCode").replaceAll("\"[^\"]*\"|\\[[^\\]]*\\]|\\\\.", "");
+            if (pattern.matches("(?is).*[yd].*")) formats.add(format.getAttribute("numFmtId"));
+        }
+        for (var cellStyles : elements(document, "cellXfs")) {
+            var entries = elements(cellStyles, "xf");
+            for (int i = 0; i < entries.size(); i++) {
+                if (formats.contains(entries.get(i).getAttribute("numFmtId"))) dates.add(Integer.toString(i));
+            }
+        }
+        return dates;
+    }
+
     /** 仅提取 A:J 的显示值，公式只读取文件已经保存的计算结果。 */
-    private static SortedMap<Integer, String[]> readRows(ZipFile zip, String path, List<String> shared) throws Exception {
+    private static SortedMap<Integer, String[]> readRows(ZipFile zip, String path, List<String> shared,
+                                                        Set<String> dateStyles, LocalDate epoch) throws Exception {
         var rows = new TreeMap<Integer, String[]>();
         var factory = XMLInputFactory.newFactory();
         factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
@@ -108,6 +132,7 @@ public final class WeeklySummaryWorkbook {
         try {
             String ref = null;
             String type = null;
+            String style = null;
             StringBuilder value = new StringBuilder();
             while (reader.hasNext()) {
                 int event = reader.next();
@@ -116,6 +141,7 @@ public final class WeeklySummaryWorkbook {
                         case "c" -> {
                             ref = reader.getAttributeValue(null, "r");
                             type = reader.getAttributeValue(null, "t");
+                            style = reader.getAttributeValue(null, "s");
                             value.setLength(0);
                         }
                         case "v", "t" -> {
@@ -126,6 +152,8 @@ public final class WeeklySummaryWorkbook {
                 } else if (event == XMLStreamConstants.END_ELEMENT && "c".equals(reader.getLocalName())) {
                     if (!value.isEmpty() && ref != null && ref.matches("[A-J][1-9][0-9]{0,6}")) {
                         String stored = "s".equals(type) ? shared.get(Integer.parseInt(value.toString())) : value.toString();
+                        if (ref.charAt(0) == 'J' && dateStyles.contains(style) && (type == null || "n".equals(type)))
+                            stored = formatExcelDeadline(stored, epoch);
                         if (!stored.isBlank()) rows.computeIfAbsent(Integer.parseInt(ref.substring(1)), ignored -> new String[10])
                                 [ref.charAt(0) - 'A'] = stored.strip();
                     }
@@ -152,7 +180,7 @@ public final class WeeklySummaryWorkbook {
         return true;
     }
 
-    private static List<Row> coordination(SortedMap<Integer, String[]> rows, LocalDate epoch) {
+    private static List<Row> coordination(SortedMap<Integer, String[]> rows) {
         var keys = COORD_KEYS;
         if (matchesHeader(rows, OLD_COORD_HEADERS)) keys = OLD_COORD_KEYS;
         else if (!matchesHeader(rows, COORD_HEADERS)) throw ApiFault.invalid("「协调事宜」第 1 行表头与周会汇总格式不符");
@@ -162,15 +190,17 @@ public final class WeeklySummaryWorkbook {
             var values = new LinkedHashMap<String, Object>();
             for (int i = 1; i < keys.size(); i++)
                 if (cells[i] != null) values.put(keys.get(i), cells[i]);
-            if (values.isEmpty()) continue;
-            if (values.containsKey("dueAt")) {
-                var date = dateTime(cells[9], epoch);
-                if (date == null) throw ApiFault.invalid("「协调事宜」J" + entry.getKey() + " 的截止时间无法识别");
-                values.put("dueAt", date.atZone(ZoneId.of("Asia/Shanghai")).toInstant().toString());
-            }
-            output.add(new Row(entry.getKey(), values));
+            if (!values.isEmpty()) output.add(new Row(entry.getKey(), values));
         }
         return output;
+    }
+
+    /** 原生日期单元格转为可读文本，其他值直接保留。 */
+    private static String formatExcelDeadline(String raw, LocalDate epoch) {
+        var date = dateTime(raw, epoch);
+        if (date == null) return raw;
+        if (LocalTime.MIDNIGHT.equals(date.toLocalTime())) return date.toLocalDate().toString();
+        return date.format(date.getSecond() == 0 ? EXCEL_DEADLINE_TEXT : EXCEL_DEADLINE_SECONDS);
     }
 
     /** 日期和名称取合并单元格的起始值，切换日期时不延续上一个栏目。 */

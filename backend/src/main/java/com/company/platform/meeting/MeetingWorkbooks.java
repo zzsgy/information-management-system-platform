@@ -171,6 +171,7 @@ public class MeetingWorkbooks {
         String department = Inputs.text(values, "department", 128);
         var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", department, department);
         if (matches.size() != 1) throw ApiFault.invalid("请填写有效且唯一的配合部门名称或编码");
+        if (!values.containsKey("assignee")) throw ApiFault.invalid("请填写责任人的姓名和工号");
         var assignee = resolveEmployee(Inputs.text(values, "assignee", 128), "责任人");
         return bookings.structuredRow("COORDINATION", Sql.map("category", category, "subject", values.get("subject"),
                 "support", values.get("support"), "expected", values.get("expected"),
@@ -209,7 +210,10 @@ public class MeetingWorkbooks {
                             line.put("conclusion", result.get("conclusion"));
                         }
                         String dueAt = result == null ? row.path("dueAt").asText(null) : (String) result.get("dueAt");
-                        if (dueAt != null) line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
+                        if (result != null && result.get("deadlineText") instanceof String deadline) line.put("dueAt", deadline);
+                        else if (result != null && dueAt != null) line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
+                        else if (row.hasNonNull("deadlineText")) line.put("dueAt", value(row, "deadlineText"));
+                        else if (dueAt != null) line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
                         output.add(line);
                         index++;
                     }
