@@ -174,8 +174,10 @@ export interface MaterialRow {
   support?: string;
   departmentId?: string | null;
   department?: string;
+  departments?: MeetingOption[];
   assigneeId?: string | null;
   assigneeName?: string | null;
+  assignees?: MeetingOption[];
   /** 周会汇总中原有的截止时间。 */
   dueAt?: string;
   /** 协调事宜的截止时间原文。 */
@@ -189,8 +191,10 @@ export interface CoordinationResult {
   /** 改派后的配合部门，旧协调结果可能没有这两个字段。 */
   departmentId?: string | null;
   department?: string | null;
+  departments?: MeetingOption[];
   assigneeId: string | null;
   assigneeName: string | null;
+  assignees?: MeetingOption[];
   /** 协调文本与逾期计算所用的待办时间分别保存。 */
   deadlineText?: string | null;
   dueAt: string | null;

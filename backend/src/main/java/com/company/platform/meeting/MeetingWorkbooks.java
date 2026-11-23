@@ -44,7 +44,7 @@ public class MeetingWorkbooks {
         }
         columns.addAll(1, List.of("name|填报人", "departmentName|填报部门"));
         if (types(meeting).contains("COORDINATION")) {
-            columns.addAll(List.of("conclusion|会议结论", "assignee|唯一责任人", "dueAt|截止时间"));
+            columns.addAll(List.of("conclusion|会议结论", "assignee|责任人", "dueAt|截止时间"));
         }
         columns.add("meetingDecision|会议决议");
         return ImportWorkbook.meetingWorkbook("会议汇总", Objects.toString(meeting.get("subject")), columns,
@@ -92,7 +92,7 @@ public class MeetingWorkbooks {
                     throw ApiFault.invalid("填报部门与员工档案不一致");
                 if (values.keySet().stream().allMatch(Set.of("author", "authorDepartment")::contains)) continue;
                 if (!types(meeting).contains("COORDINATION")) throw ApiFault.invalid("本场会议未征集协调事宜");
-                entries.add(coordination(values, true));
+                entries.add(coordination(values));
                 lines.add(row.number());
             } catch (ApiFault fault) {
                 errors.add("「协调事宜」第 " + row.number() + " 行：" + fault.getMessage());
@@ -140,7 +140,7 @@ public class MeetingWorkbooks {
 
     /** 精确匹配工号，姓名复核避免材料归错员工。 */
     Map<String, Object> resolveEmployee(String value, String field) {
-        var match = java.util.regex.Pattern.compile("^(.+?)[\\s+＋（(]+([A-Za-z0-9-]{1,64})[）)]?$").matcher(value.strip());
+        var match = EMPLOYEE_LABEL.matcher(value.strip());
         if (!match.matches()) throw ApiFault.invalid(field + "请填写姓名和工号，例如 张三 BLK27001");
         var employee = bookings.workbookEmployee(match.group(2));
         if (employee == null || !match.group(1).strip().equals(employee.get("name")))
@@ -161,22 +161,43 @@ public class MeetingWorkbooks {
         }
     }
 
-    /** 将 Excel 部门与已填责任人转换为会议材料使用的标识。 */
-    Map<String, Object> coordination(Map<String, Object> values, boolean requireAssignee) {
+    private static final java.util.regex.Pattern EMPLOYEE_LABEL = java.util.regex.Pattern.compile("^(.+?)[\\s+＋（(]+([A-Za-z0-9-]{1,64})[）)]?$");
+
+    /** 周会汇总接受多个在职责任人，姓名仅在匹配唯一时可直接使用。 */
+    Map<String, Object> weeklyCoordination(Map<String, Object> values, Set<UUID> departments) {
+        var assignees = new LinkedHashSet<UUID>();
+        String names = MeetingBookings.optional(values, "assignee", 3000);
+        if (names != null) {
+            for (var raw : names.split("[、,，;；\\r\\n]+")) {
+                String name = raw.strip();
+                if (name.isEmpty()) continue;
+                UUID id = EMPLOYEE_LABEL.matcher(name).matches()
+                        ? (UUID) resolveEmployee(name, "责任人").get("user_id")
+                        : bookings.namedCoordinationAssignee(name, departments);
+                assignees.add(id);
+            }
+        }
+        return coordination(values, departments, assignees);
+    }
+
+    /** 个人填报模板逐人提交，仍要求一位已填写姓名和工号的责任人。 */
+    private Map<String, Object> coordination(Map<String, Object> values) {
+        String department = Inputs.text(values, "department", 128);
+        var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", department, department);
+        if (matches.size() != 1) throw ApiFault.invalid("请填写有效且唯一的配合部门名称或编码");
+        if (!values.containsKey("assignee")) throw ApiFault.invalid("请填写责任人的姓名和工号");
+        UUID assignee = (UUID) resolveEmployee(Inputs.text(values, "assignee", 128), "责任人").get("user_id");
+        return coordination(values, Set.of((UUID) matches.getFirst().get("id")), Set.of(assignee));
+    }
+
+    private Map<String, Object> coordination(Map<String, Object> values, Set<UUID> departments, Set<UUID> assignees) {
         String category = switch (Objects.toString(values.get("category"), "")) {
             case "需公司协调" -> "COMPANY";
             case "需其他部门配合" -> "DEPARTMENT";
             default -> throw ApiFault.invalid("请选择事项类别「需公司协调」或「需其他部门配合」");
         };
-        String department = Inputs.text(values, "department", 128);
-        var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", department, department);
-        if (matches.size() != 1) throw ApiFault.invalid("请填写有效且唯一的配合部门名称或编码");
-        if (requireAssignee && !values.containsKey("assignee")) throw ApiFault.invalid("请填写责任人的姓名和工号");
-        String assignee = values.containsKey("assignee")
-                ? resolveEmployee(Inputs.text(values, "assignee", 128), "责任人").get("user_id").toString() : null;
-        return bookings.structuredRow("COORDINATION", Sql.map("category", category, "subject", values.get("subject"),
-                "support", values.get("support"), "expected", values.get("expected"),
-                "departmentId", matches.getFirst().get("id").toString(), "personId", assignee), requireAssignee);
+        return bookings.coordinationRow(Sql.map("category", category, "subject", values.get("subject"),
+                "support", values.get("support"), "expected", values.get("expected")), departments, assignees);
     }
 
 

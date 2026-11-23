@@ -8,20 +8,24 @@ import type { MeetingPerson } from "./meeting";
 
 const props = defineProps<{
   departmentId?: string | null;
+  departmentIds?: string[];
+  excluded?: string[];
   selectedName?: string | null;
   /** 发起人在原生对话框内编辑时，下拉面板也需要挂在该对话框内。 */
   appendTo?: HTMLElement;
   label: string;
 }>();
+const emit = defineEmits<{ select: [person: MeetingPerson] }>();
 const assignee = defineModel<string>({ required: true });
 const candidates = ref<MeetingPerson[]>([]);
 const loading = ref(false);
 const error = ref("");
 const keyword = ref("");
+const departments = computed(() => props.departmentIds ?? (props.departmentId ? [props.departmentId] : []));
 
 /** 一次生成姓名拼音和首字母，输入时在完整名单内筛选。 */
 const options = computed(() =>
-  candidates.value.map((person) => {
+  candidates.value.filter((person) => !props.excluded?.includes(person.id)).map((person) => {
     const syllables = pinyin(person.name, {
       type: "array",
       toneType: "none",
@@ -64,32 +68,29 @@ const missingSelection = computed(
 
 /** 按配合范围读取完整候选名单，切换部门后忽略上一请求的结果。 */
 watch(
-  () => props.departmentId,
-  async (department, _, onCleanup) => {
+  departments,
+  async (scope, _, onCleanup) => {
     candidates.value = [];
     keyword.value = "";
     error.value = "";
-    loading.value = !!department;
-    if (!department) return;
+    loading.value = scope.length > 0;
+    if (!scope.length) return;
     const request = new AbortController();
     onCleanup(() => request.abort());
     try {
-      const people: MeetingPerson[] = [];
-      let hasNext = true;
-      for (let page = 1; hasNext; page++) {
-        const params = new URLSearchParams({
-          departmentId: department,
-          scope: "COORDINATION",
-          page: String(page),
-        });
-        const result = await api<{ items: MeetingPerson[]; hasNext: boolean }>(
-          "/meetings/people?" + params,
-          { signal: request.signal },
-        );
-        people.push(...result.items);
-        hasNext = result.hasNext;
+      const people = new Map<string, MeetingPerson>();
+      for (const department of scope) {
+        let hasNext = true;
+        for (let page = 1; hasNext; page++) {
+          const params = new URLSearchParams({ departmentId: department, scope: "COORDINATION", page: String(page) });
+          const result = await api<{ items: MeetingPerson[]; hasNext: boolean }>(
+            "/meetings/people?" + params, { signal: request.signal },
+          );
+          for (const person of result.items) people.set(person.id, person);
+          hasNext = result.hasNext;
+        }
       }
-      if (!request.signal.aborted) candidates.value = people;
+      if (!request.signal.aborted) candidates.value = [...people.values()];
     } catch (e) {
       if (!request.signal.aborted) error.value = (e as Error).message;
     } finally {
@@ -98,6 +99,11 @@ watch(
   },
   { immediate: true },
 );
+
+function select(id: string) {
+  const person = candidates.value.find((candidate) => candidate.id === id);
+  if (person) emit("select", person);
+}
 </script>
 
 <template>
@@ -106,15 +112,16 @@ watch(
     class="meeting-assignee"
     :aria-label="label"
     :append-to="appendTo"
-    :disabled="!departmentId || !!error"
+    :disabled="!departments.length || !!error"
     :loading="loading"
-    :placeholder="departmentId ? '姓名、拼音或工号' : '请先选配合部门'"
+    :placeholder="departments.length ? '姓名、拼音或工号' : '请先选配合部门'"
     filterable
     default-first-option
     loading-text="正在加载员工…"
     :no-data-text="keyword.trim() ? '未找到匹配员工' : '暂无可选员工'"
     :filter-method="(value: string) => (keyword = value)"
     @visible-change="keyword = ''"
+    @change="select"
   >
     <template #label="{ label: selectedLabel }">
       <span :title="selectedLabel">{{ selectedLabel }}</span>

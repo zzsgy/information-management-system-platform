@@ -139,13 +139,17 @@ public class MeetingWeeklyImports {
         }
         for (var row : summary.coordination()) {
             try {
-                var values = new LinkedHashMap<>(row.values());
+                var values = row.values();
                 var author = workbooks.resolveEmployee(Inputs.text(values, "author", 128), "填报人");
                 var unit = department(Inputs.text(values, "authorDepartment", 128));
                 if (!unit.get("id").equals(author.get("department_id")))
                     throw ApiFault.invalid("填报部门与员工档案不一致");
-                values.put("department", department(Inputs.text(values, "department", 128)).get("code"));
-                var entry = workbooks.coordination(values, false);
+                var departments = new LinkedHashSet<UUID>();
+                String partner = Inputs.text(values, "department", 3000);
+                for (String name : partner.split("[+＋、,，;；\\r\\n]+"))
+                    if (!name.isBlank()) departments.add((UUID) department(name.strip()).get("id"));
+                if (departments.isEmpty()) throw ApiFault.invalid("请填写配合部门");
+                var entry = workbooks.weeklyCoordination(values, departments);
                 if (values.containsKey("deadlineText")) entry.put("deadlineText", values.get("deadlineText"));
                 var key = new Key((UUID) author.get("user_id"), "COORDINATION");
                 var material = materials.computeIfAbsent(key, ignored -> new Material(key, "协调事宜",
@@ -197,6 +201,14 @@ public class MeetingWeeklyImports {
                     ((upper(d.code)=upper(?) OR d.name=?) AND ?<>'' AND (upper(p.code)=upper(?) OR p.name=?)))
                 """, exact, exact, name, name, parent, parent, parent);
         if (units.isEmpty() && researchSection) return department(RESEARCH_DEPARTMENT_CODE);
+        if (units.isEmpty()) {
+            String code = switch (label) {
+                case "生产部" -> "SC";
+                case "安全部" -> "DHS/MEP";
+                default -> null;
+            };
+            if (code != null) return department(code);
+        }
         if (units.size() != 1) throw ApiFault.invalid("未能唯一匹配部门「" + label + "」");
         return units.getFirst();
     }

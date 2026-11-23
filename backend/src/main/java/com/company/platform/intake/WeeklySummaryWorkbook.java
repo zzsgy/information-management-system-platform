@@ -23,7 +23,7 @@ public final class WeeklySummaryWorkbook {
     private static final List<String> COORD_KEYS = List.of("sequence", "category", "subject", "support", "expected",
             "authorDepartment", "author", "department", "assignee", "deadlineText");
     private static final List<String> COORD_HEADERS = List.of("序号", "事项类别", "具体事宜", "需协调/配合什么",
-            "期望结果/验收标准", "填报部门", "填报人+工号", "配合部门", "责任人(唯一,姓名+工号)", "截止时间");
+            "期望结果/验收标准", "填报部门", "填报人+工号", "配合部门", "责任人(姓名+工号)", "截止时间");
     private static final List<String> OLD_COORD_HEADERS = List.of("序号", "具体事宜", "需协调/配合什么",
             "期望结果/验收标准", "填报部门", "填报人+工号", "配合部门", "责任人(唯一,姓名+工号)", "事项类别");
     private static final List<String> OLD_COORD_KEYS = List.of("sequence", "subject", "support", "expected",
@@ -69,7 +69,7 @@ public final class WeeklySummaryWorkbook {
                 if (!path.matches("xl/worksheets/[A-Za-z0-9_-]+\\.xml"))
                     throw ApiFault.invalid("「" + name + "」工作表结构无法识别");
                 var rows = readRows(zip, path, shared, dateStyles, epoch);
-                if ("协调事宜".equals(name) || matchesHeader(rows, OLD_COORD_HEADERS)) {
+                if ("协调事宜".equals(name) || matchesHeader(rows, OLD_COORD_HEADERS) || matchesHeader(rows, COORD_HEADERS)) {
                     if (coordination != null) throw ApiFault.invalid("周会汇总存在多页协调事宜");
                     coordination = coordination(rows);
                 }
@@ -175,6 +175,9 @@ public final class WeeklySummaryWorkbook {
         for (int i = 0; i < expected.size(); i++) {
             String actual = java.text.Normalizer.normalize(Objects.toString(header[i], ""), java.text.Normalizer.Form.NFKC)
                     .replaceAll("\\s+", "");
+            if (expected.get(i).startsWith("责任人(")) {
+                if (Set.of("责任人(唯一,姓名+工号)", "责任人(姓名+工号)", "责任人(多人,姓名+工号)").contains(actual)) continue;
+            }
             if (!expected.get(i).equals(actual)) return false;
         }
         return true;

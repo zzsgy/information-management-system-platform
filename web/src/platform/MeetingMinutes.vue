@@ -55,8 +55,9 @@ const coordinationTasks = computed(() =>
     const author = props.meeting.attendees.find((person) => person.id === result.key.split(":")[0]);
     const defaults: MeetingOption[] = [];
     if (author) defaults.push({ id: author.userId, name: author.name });
-    if (result.assigneeId && result.assigneeId !== author?.userId)
-      defaults.push({ id: result.assigneeId, name: result.assigneeName ?? "配合部门责任人" });
+    const assignees = result.assignees ?? (result.assigneeId
+      ? [{ id: result.assigneeId, name: result.assigneeName ?? "配合部门责任人" }] : []);
+    defaults.push(...assignees.filter((person) => person.id !== author?.userId));
     return { ...result, defaults };
   }),
 );

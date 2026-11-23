@@ -91,7 +91,8 @@ async function submit(confirm: boolean) {
         </button>
       </div>
       <small>按所选日期读取部门页，协调事宜读取同名工作表中的事项。</small>
-      <small>协调事宜的责任人可留空，填写时请提供姓名和工号。截止时间按文本导入，可填写「两周」「12月之前」或具体日期。</small>
+      <small>多个配合部门用「+」或「、」分隔。责任人可留空，多人用「、」分隔，重名时请填写姓名和工号。</small>
+      <small>截止时间按文本导入，可填写「两周」「12月之前」或具体日期。</small>
       <p v-if="error" class="form-error" role="alert">{{ error }}</p>
       <p v-if="message" role="status">{{ message }}</p>
       <div v-if="preview" class="weekly-preview">

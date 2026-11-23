@@ -973,6 +973,8 @@ class MeetingIntegrationTest {
         db.update("INSERT INTO iam.department(id,code,name,parent_id) VALUES (?,?,?,?)",
                 child, childCode, "隔离验收子部门", department);
         db.update("UPDATE iam.user_account SET department_id=? WHERE id=?", child, outsider.userId());
+        Actor secondAssignee = person();
+        db.update("UPDATE iam.user_account SET department_id=?,name=? WHERE id=?", child, "周会第二责任人", secondAssignee.userId());
         db.update("""
                 INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by)
                 VALUES (?,?,?,'DEPARTMENT_MANAGER',CURRENT_TIMESTAMP,'周会补录验收',?)
@@ -983,12 +985,19 @@ class MeetingIntegrationTest {
         bookings.start(organizer, id, request());
         bookings.end(organizer, id, request());
 
-        var bytes = weeklySummary(childCode, parentCode, employeeLabel(outsider), employeeLabel(employee));
+        String employeeWithNumber = employeeLabel(employee).replace(" MEETING-", "+MEETING-");
+        var bytes = weeklySummary(childCode, parentCode, employeeLabel(outsider), employeeLabel(employee),
+                new CoordinationParties(parentCode + "＋" + childCode, employeeWithNumber + "、周会第二责任人"));
         LocalDate date = LocalDate.parse("2026-11-23");
         assertEquals(404, assertThrows(ApiFault.class, () -> weeklyImports.importSummary(employee, id, request(), date,
                 null, new ByteArrayInputStream(bytes))).status);
         assertThrows(ApiFault.class, () -> weeklyImports.importSummary(organizer, id, request(), date.plusDays(1),
                 null, new ByteArrayInputStream(bytes)));
+        Actor sameName = person();
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?", "周会第二责任人", sameName.userId());
+        var ambiguous = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
+        assertEquals(List.of("「协调事宜」第 2 行：未能唯一匹配责任人「周会第二责任人」，请填写姓名和工号"), ambiguous.get("errors"));
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?", "同名验收员工 " + sameName.userId(), sameName.userId());
         var preview = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
         assertEquals(List.of(), preview.get("errors"));
         assertEquals(4, values(preview, "materials").size());
@@ -1024,6 +1033,10 @@ class MeetingIntegrationTest {
         assertFalse(rows.get(3).has("dueAt"));
         assertFalse(rows.get(5).has("assigneeId"));
         assertTrue(rows.get(0).hasNonNull("assigneeId"));
+        assertEquals(List.of(department.toString(), child.toString()), rows.get(0).path("departments").valueStream()
+                .map(unit -> unit.path("id").asText()).toList());
+        assertEquals(List.of(employee.userId().toString(), secondAssignee.userId().toString()), rows.get(0).path("assignees").valueStream()
+                .map(person -> person.path("id").asText()).toList());
         var employeeMaterials = values(attendee(organizer, id, employee), "materials");
         var companyRow = Crypto.JSON.valueToTree(employeeMaterials.getFirst().get("data")).path("rows").get(0);
         assertEquals("COMPANY", companyRow.path("category").asText());
@@ -1046,6 +1059,17 @@ class MeetingIntegrationTest {
         result = values(bookings.detail(organizer, id), "coordinationResults").getFirst();
         assertEquals("下次周会前", result.get("deadlineText"));
         assertEquals("2026-12-07T09:00:00Z", result.get("dueAt"));
+
+        String multiKey = author.get("id") + ":0";
+        var multiResult = Sql.map("key", multiKey, "conclusion", "共同处理", "followUp", true,
+                "dueAt", "2026-12-07T09:00:00Z");
+        followUp.saveCoordination(organizer, id, request(), multiResult);
+        int version = ((Number) bookings.detail(organizer, id).get("rowVersion")).intValue();
+        followUp.saveMinutes(organizer, id, request(), version, Map.of("publish", true));
+        var linked = values(bookings.detail(organizer, id), "items").stream()
+                .filter(item -> multiKey.equals(item.get("coordinationKey"))).findFirst().orElseThrow();
+        assertEquals(Set.of(outsider.userId(), employee.userId(), secondAssignee.userId()),
+                new HashSet<>(values(linked, "trackers").stream().map(person -> person.get("assigneeId")).toList()));
     }
 
     /** 研发分部未单独登记时，研发部负责人名下仍能查到各页的工作内容。 */
@@ -1090,6 +1114,13 @@ class MeetingIntegrationTest {
 
     /** 按模板列顺序构造测试 XLSX，日期和名称与合并区域一致。 */
     private static byte[] weeklySummary(String child, String partner, String author, String assignee, String... extraSheets) throws IOException {
+        return weeklySummary(child, partner, author, assignee, new CoordinationParties(partner, assignee), extraSheets);
+    }
+
+    private record CoordinationParties(String partners, String assignees) {}
+
+    private static byte[] weeklySummary(String child, String partner, String author, String assignee,
+                                        CoordinationParties firstParties, String... extraSheets) throws IOException {
         var file = new ByteArrayOutputStream();
         var bindings = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
         var sheets = new ArrayList<>(List.of("协调事宜", child));
@@ -1097,9 +1128,9 @@ class MeetingIntegrationTest {
         var workbook = new StringBuilder("<workbook xmlns:r=\"" + bindings + "\"><sheets>");
         var relationships = new StringBuilder("<Relationships>");
         var headers = List.of("序号", "事项类别", "具体事宜", "需协调 / 配合什么", "期望结果 /验收标准", "填报部门", "填报人+工号",
-                "配合部门", "责任人（唯一，姓名+工号）", "截止时间");
+                "配合部门", "责任人（姓名+工号）", "截止时间");
         var first = weeklyRow(2, List.of("1", "需其他部门配合", "协调设备", "提供帮助", "核对完成", child,
-                author, partner, assignee, "11.24"));
+                author, firstParties.partners(), firstParties.assignees(), "11.24"));
         // Excel 可能把直接输入的 11.24 保存成数值而不是字符串。
         var coordination = "<worksheet><sheetData>" + weeklyRow(1, headers)
                 + first.replace(cell("J2", "11.24"), "<c r=\"J2\"><v>11.24</v></c>")

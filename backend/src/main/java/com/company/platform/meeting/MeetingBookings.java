@@ -364,14 +364,13 @@ public class MeetingBookings {
     }
 
     /** 保存后提供已校验的字段，供已发布纪要同步关联待办。 */
-    record CoordinationUpdate(String key, String subject, String conclusion, UUID assignee, Instant due, boolean followUp) {}
+    record CoordinationUpdate(String key, String subject, String conclusion, Set<UUID> assignees, Instant due, boolean followUp) {}
 
     /** 在发起人的保存事务中更新协调结果，发布后仍使用原材料行和原跟踪设置。 */
     CoordinationUpdate saveCoordination(Map<String, Object> meeting, UUID id, Map<String, Object> body) {
-        Inputs.only(body, "key", "conclusion", "departmentId", "assigneeId", "deadlineText", "dueAt", "followUp");
+        Inputs.only(body, "key", "conclusion", "departmentId", "departmentIds", "assigneeId", "assigneeIds", "deadlineText", "dueAt", "followUp");
         String key = Inputs.text(body, "key", 48);
         String conclusion = optional(body, "conclusion", 3000);
-        UUID assignee = Inputs.nullableUuid(body.get("assigneeId"));
         Instant due = body.get("dueAt") == null ? null : inputTime(body.get("dueAt"));
         if (meeting.get("actual_started_at") == null) throw ApiFault.conflict("会议开始后才可修改协调事宜");
         boolean published = meeting.get("minutes_published_at") != null;
@@ -387,33 +386,52 @@ public class MeetingBookings {
         if (source == null) throw ApiFault.invalid("未找到本次会议的协调事项");
         var results = new ArrayList<>(coordinationResults(meeting));
         var previous = results.stream().filter(result -> key.equals(result.get("key"))).findFirst().orElse(Map.of());
+        Map<?, ?> original = Crypto.JSON.convertValue(source, Map.class);
+        Set<UUID> assignees = body.containsKey("assigneeIds") || body.containsKey("assigneeId")
+                ? selectedCoordinationIds(body, "assigneeIds", "assigneeId")
+                : savedCoordinationIds(previous.isEmpty() ? original : previous, "assignees", "assigneeId");
         boolean wasTracked = Boolean.TRUE.equals(previous.get("followUp"));
         boolean followUp = flag(body, "followUp", published && wasTracked);
         if (published && followUp != wasTracked) throw ApiFault.invalid("纪要发布后不支持变更该事项的反馈跟踪设置");
-        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignee == null || due == null || conclusion == null))
+        if (followUp && (!Boolean.TRUE.equals(meeting.get("track_follow_up")) || assignees.isEmpty() || due == null || conclusion == null))
             throw ApiFault.invalid("跟踪事项须填写结论、责任人和待办截止时间");
         // 空字符串表示发起人主动清空文字，旧客户端未传字段时沿用此前记录。
         Object deadlineText = body.containsKey("deadlineText")
                 ? Objects.toString(optional(body, "deadlineText", 3000), "") : previous.get("deadlineText");
         // 兼容未传部门的客户端。已经改派的部门优先于会前材料中的原部门。
-        var departmentId = previous.getOrDefault("departmentId", source.path("departmentId").asText(null));
-        UUID department = Inputs.nullableUuid(departmentId);
-        var departmentName = previous.getOrDefault("department", source.path("department").asText(null));
-        if (body.containsKey("departmentId")) {
-            department = Inputs.uuid(body.get("departmentId"));
-            departmentName = coordinationDepartmentName(department);
-        }
-        if (assignee == null && (source.hasNonNull("assigneeId") || body.containsKey("departmentId")))
+        boolean changedDepartment = body.containsKey("departmentId") || body.containsKey("departmentIds");
+        var savedDepartment = previous.containsKey("departmentId") ? previous : original;
+        Set<UUID> departments = changedDepartment ? selectedCoordinationIds(body, "departmentIds", "departmentId")
+                : savedCoordinationIds(savedDepartment, "departments", "departmentId");
+        if (changedDepartment && departments.isEmpty()) throw ApiFault.invalid("请选择配合部门");
+        if (assignees.isEmpty() && (source.hasNonNull("assigneeId") || changedDepartment))
             throw ApiFault.invalid("请选择一名责任人");
-        Object assigneeName = assignee == null ? null : coordinationAssignee(assignee, department).get("name");
         results.removeIf(result -> key.equals(result.get("key")));
         String subject = source.path("subject").asText();
-        results.add(Sql.map("key", key, "subject", subject, "conclusion", conclusion,
-                "departmentId", department, "department", departmentName, "assigneeId", assignee,
-                "assigneeName", assigneeName, "deadlineText", deadlineText,
-                "dueAt", due == null ? null : due.toString(), "followUp", followUp));
+        var result = Sql.map("key", key, "subject", subject, "conclusion", conclusion, "deadlineText", deadlineText,
+                "departmentId", null, "department", null, "assigneeId", null, "assigneeName", null,
+                "dueAt", due == null ? null : due.toString(), "followUp", followUp);
+        setCoordinationParties(result, departments, assignees, changedDepartment);
+        results.add(result);
         db.update("UPDATE portal.meeting_booking SET coordination_results=?::jsonb WHERE id=?", Crypto.json(results), id);
-        return new CoordinationUpdate(key, subject, conclusion, assignee, due, followUp);
+        return new CoordinationUpdate(key, subject, conclusion, assignees, due, followUp);
+    }
+
+    private static Set<UUID> selectedCoordinationIds(Map<String, Object> body, String plural, String singular) {
+        if (body.containsKey(plural)) return users(body.get(plural));
+        UUID id = Inputs.nullableUuid(body.get(singular));
+        return id == null ? Set.of() : Set.of(id);
+    }
+
+    /** 旧协调材料和结论只有单人、单部门字段。 */
+    static Set<UUID> savedCoordinationIds(Map<?, ?> saved, String plural, String singular) {
+        if (saved.get(plural) instanceof List<?> options) {
+            var ids = new LinkedHashSet<UUID>();
+            for (var option : options) ids.add(Inputs.uuid(((Map<?, ?>) option).get("id")));
+            return ids;
+        }
+        UUID id = Inputs.nullableUuid(saved.get(singular));
+        return id == null ? Set.of() : Set.of(id);
     }
 
     /** 数据库映射保留结论快照，供详情、导出和发布纪要共同使用。 */
@@ -601,53 +619,79 @@ public class MeetingBookings {
         } else {
             var rows = Inputs.objects(body.get("rows"),30);
             if (rows.isEmpty()) throw ApiFault.invalid("请至少填写一条");
-            payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row, true)).toList());
+            payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row)).toList());
         }
         return addMaterialAuthor(payload, attendee);
     }
 
-    /** 校验一行议题或协调事项，周会汇总允许保留未指定责任人的事项。 */
-    Map<String, Object> structuredRow(String kind, Map<String, Object> row, boolean requireAssignee) {
+    /** 会前个人填报继续使用单部门和单人选择。 */
+    private Map<String, Object> structuredRow(String kind, Map<String, Object> row) {
         Inputs.only(row, "subject", "expected", "departmentId", "personId", "category", "support");
+        if (!kind.equals("COORDINATION")) return materialRow(row);
+        UUID department = Inputs.nullableUuid(row.get("departmentId"));
+        if (department == null) throw ApiFault.invalid("请选择配合部门");
+        UUID assignee = Inputs.nullableUuid(row.get("personId"));
+        if (assignee == null) throw ApiFault.invalid("请选择配合部门的一名责任人");
+        return coordinationRow(row, Set.of(department), Set.of(assignee));
+    }
+
+    private Map<String, Object> materialRow(Map<String, Object> row) {
         String subject = optional(row, "subject", 500);
         String expected = optional(row, "expected", 1000);
         if (subject == null || expected == null) throw ApiFault.invalid("请填写事项和期望结果");
-        var entry = Sql.map("subject", subject, "expected", expected);
-        if (kind.equals("COORDINATION")) {
-            UUID department = Inputs.nullableUuid(row.get("departmentId"));
-            // 旧版表单没有事项分类，原有协调事项按部门配合归类。
-            String category = Inputs.choice(row.getOrDefault("category", "DEPARTMENT"), "COMPANY", "DEPARTMENT");
-            entry.put("category", category);
-            String support = optional(row, "support", 1000);
-            if (support != null) entry.put("support", support);
-            if (department == null) throw ApiFault.invalid("请选择配合部门");
-            String partner = coordinationDepartmentName(department);
-            UUID assignee = Inputs.nullableUuid(row.get("personId"));
-            if (assignee == null && requireAssignee) throw ApiFault.invalid("请选择配合部门的一名责任人");
-            entry.put("department", partner);
-            entry.put("departmentId", department);
-            if (assignee != null) {
-                entry.put("assigneeId", assignee);
-                entry.put("assigneeName", coordinationAssignee(assignee, department).get("name"));
-            }
-        }
+        return Sql.map("subject", subject, "expected", expected);
+    }
+
+    /** 同一条协调事项可关联多个部门及责任人，周会汇总允许责任人留空。 */
+    Map<String, Object> coordinationRow(Map<String, Object> row, Set<UUID> departments, Set<UUID> assignees) {
+        var entry = materialRow(row);
+        entry.put("category", Inputs.choice(row.getOrDefault("category", "DEPARTMENT"), "COMPANY", "DEPARTMENT"));
+        String support = optional(row, "support", 1000);
+        if (support != null) entry.put("support", support);
+        setCoordinationParties(entry, departments, assignees, true);
         return entry;
     }
 
-    /** 会前填报与会中改派都要求新选部门处于启用状态。 */
-    private String coordinationDepartmentName(UUID department) {
-        var partner = db.one("SELECT name FROM iam.department WHERE id=? AND status='ACTIVE'", department);
-        if (partner == null) throw ApiFault.invalid("请选择有效的配合部门");
-        return (String) partner.get("name");
+    /** 名称和选择顺序随事项保存，兼容既有单选字段及文本汇总。 */
+    private void setCoordinationParties(Map<String, Object> entry, Set<UUID> departments, Set<UUID> assignees,
+                                        boolean requireActiveDepartments) {
+        String ids = uuidArray(departments);
+        var partners = db.rows("""
+                SELECT id,name,code FROM iam.department WHERE (?=false OR status='ACTIVE') AND id=ANY(?::uuid[])
+                ORDER BY array_position(?::uuid[], id)
+                """, requireActiveDepartments, ids, ids);
+        if (partners.size() != departments.size()) throw ApiFault.invalid("请选择有效的配合部门");
+        putCoordinationOptions(entry, partners, "departments", "departmentId", "department");
+        if (assignees.isEmpty()) return;
+        boolean company = partners.isEmpty() || partners.stream().anyMatch(unit -> "ROOT".equals(unit.get("code")));
+        String employees = uuidArray(assignees);
+        var people = db.rows("""
+                SELECT id,name FROM iam.user_account WHERE id=ANY(?::uuid[]) AND %s
+                  AND (? OR department_id=ANY(?::uuid[])) ORDER BY array_position(?::uuid[], id)
+                """.formatted(ACTIVE_EMPLOYEE), employees, company, ids, employees);
+        if (people.size() != assignees.size())
+            throw ApiFault.invalid(company ? "责任人须为公司的有效员工" : "责任人须为所选配合部门的有效员工");
+        putCoordinationOptions(entry, people, "assignees", "assigneeId", "assigneeName");
     }
 
-    /** 线上填报、Excel 导入与发起人修改共用配合部门的在职员工范围。 */
-    private Map<String, Object> coordinationAssignee(UUID assignee, UUID department) {
-        UUID scope = coordinationDepartmentScope(department);
-        var person = db.one("SELECT name FROM iam.user_account WHERE id=? AND " + ACTIVE_EMPLOYEE
-                + " AND (?::uuid IS NULL OR department_id=?)", assignee, scope, scope);
-        if (person == null) throw ApiFault.invalid(scope == null ? "责任人须为公司的有效员工" : "责任人须为配合部门的有效员工");
-        return person;
+    private static void putCoordinationOptions(Map<String, Object> entry, List<Map<String, Object>> options,
+                                               String plural, String id, String name) {
+        if (options.isEmpty()) return;
+        if (options.size() > 1) entry.put(plural, options.stream().map(option -> Sql.view(option, "id,name")).toList());
+        entry.put(id, options.getFirst().get("id"));
+        entry.put(name, options.stream().map(option -> (String) option.get("name")).collect(java.util.stream.Collectors.joining("、")));
+    }
+
+    /** 周会汇总仅在所选配合部门内能唯一匹配时接受姓名。 */
+    UUID namedCoordinationAssignee(String name, Set<UUID> departments) {
+        String ids = uuidArray(departments);
+        var people = db.rows("""
+                SELECT id FROM iam.user_account WHERE name=? AND %s
+                  AND (department_id=ANY(?::uuid[]) OR EXISTS(SELECT 1 FROM iam.department WHERE id=ANY(?::uuid[]) AND code='ROOT'))
+                LIMIT 2
+                """.formatted(ACTIVE_EMPLOYEE), name, ids, ids);
+        if (people.size() != 1) throw ApiFault.invalid("未能唯一匹配责任人「" + name + "」，请填写姓名和工号");
+        return (UUID) people.getFirst().get("id");
     }
 
     /** 公司根节点代表全公司，普通部门只包含本部门。空值兼容旧协调事项。 */

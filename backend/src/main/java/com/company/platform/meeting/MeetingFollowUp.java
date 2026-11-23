@@ -58,7 +58,7 @@ public class MeetingFollowUp {
             if (decisions == null && coordination.isEmpty()) throw ApiFault.invalid("请填写会议决议");
             for (var result : tracked) {
                 String key = (String) result.get("key");
-                var assignees = coordinationAssignees(id, key, Inputs.uuid(result.get("assigneeId")));
+                var assignees = coordinationAssignees(id, key, MeetingBookings.savedCoordinationIds(result, "assignees", "assigneeId"));
                 assignees.addAll(extra.getOrDefault(key, Set.of()));
                 items.add(new DraftItem(result.get("subject") + "\n" + result.get("conclusion"),
                         assignees, MeetingBookings.inputTime(result.get("dueAt")), key));
@@ -122,13 +122,13 @@ public class MeetingFollowUp {
                     ORDER BY id FOR NO KEY UPDATE
                     """, id, result.key());
             if (!assignments.isEmpty()) {
-                var assignees = coordinationAssignees(id, result.key(), result.assignee());
-                UUID previous = bookings.coordinationResults(meeting).stream()
+                var assignees = coordinationAssignees(id, result.key(), result.assignees());
+                var previous = bookings.coordinationResults(meeting).stream()
                         .filter(saved -> result.key().equals(saved.get("key")))
-                        .map(saved -> Inputs.uuid(saved.get("assigneeId"))).findFirst().orElseThrow();
+                        .map(saved -> MeetingBookings.savedCoordinationIds(saved, "assignees", "assigneeId")).findFirst().orElseThrow();
                 for (var assignment : assignments) {
                     UUID employee = (UUID) assignment.get("assignee_id");
-                    if (!employee.equals(previous)) assignees.add(employee);
+                    if (!previous.contains(employee)) assignees.add(employee);
                 }
                 reviseGroup(actor, id, assignments, new DraftItem(result.subject() + "\n" + result.conclusion(),
                         assignees, result.due(), result.key()));
@@ -322,12 +322,11 @@ public class MeetingFollowUp {
     }
 
     /** 由协调事宜的原材料记录定位发起人，责任人使用最新协调结果。 */
-    private Set<UUID> coordinationAssignees(UUID meeting, String key, UUID assignee) {
+    private Set<UUID> coordinationAssignees(UUID meeting, String key, Set<UUID> responsibility) {
         UUID attendee = Inputs.uuid(key.split(":", 2)[0]);
         UUID author = (UUID) db.required("SELECT user_id FROM portal.meeting_attendee WHERE id=? AND meeting_id=?",
                 attendee, meeting).get("user_id");
-        var assignees = new LinkedHashSet<UUID>();
-        assignees.add(assignee);
+        var assignees = new LinkedHashSet<>(responsibility);
         assignees.add(author);
         return assignees;
     }

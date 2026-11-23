@@ -80,7 +80,7 @@ const tables = computed(() => {
             <th scope="col">填报部门</th>
             <th scope="col">填报人</th>
             <th scope="col">配合部门</th>
-            <th scope="col">责任人（唯一）</th>
+            <th scope="col">责任人</th>
             <template v-if="editing || results?.length || rows.some((row) => row.displayDeadline)">
               <th v-if="editing || results?.length" scope="col">会议结论</th>
               <th scope="col">截止时间</th>
@@ -108,8 +108,10 @@ const tables = computed(() => {
                   :initial="row.result"
                   :department-id="row.departmentId"
                   :department-name="row.department"
+                  :source-departments="row.departments"
                   :assignee-id="row.assigneeId"
                   :assignee-name="row.assigneeName"
+                  :source-assignees="row.assignees"
                   :deadline-text="row.displayDeadline"
                   :source-due-at="row.dueAt"
                   :meeting-id="editing.meetingId"
