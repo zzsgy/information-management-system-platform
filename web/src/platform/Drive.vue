@@ -76,6 +76,12 @@ const defaultSpace = profile.value?.user.departmentId
     ? "OWN_INTERNAL"
     : "COMPANY_SHARED",
   space = ref(keyword.value ? "ALL" : defaultSpace);
+/** 卡片仅映射现有空间筛选值；展示顺序与名称不改变服务端权限及默认空间。 */
+const spaceGroups = [
+  { value: "COMPANY_SHARED", label: "企业共享", icon: "grid", description: "查看企业范围内的共享资料" },
+  { value: "OTHER_DEPARTMENT_SHARED", label: "部门共享", icon: "people", description: "查看其他部门共享的资料" },
+  { value: "OWN_INTERNAL", label: "部门内部", icon: "lock", description: "查看本部门的内部资料" },
+] as const;
 /** 共享部门使用新增员工同源的组织目录，文件和目录仍按公盘权限筛选。 */
 const sharedDepartment = ref(""),
   sharedDepartments = ref<Pick<Department, "id" | "name">[]>([]);
@@ -458,49 +464,10 @@ onUnmounted(() => {
     <section class="panel drive-files">
       <DriveRecycle v-if="recycle" @changed="load" />
       <template v-else>
-        <div class="drive-toolbar">
-          <button v-if="canManage" class="secondary" @click="management = true">
-            管理配置
-          </button>
-          <div class="drive-crumb">
-            <button @click="back(-1)">公盘</button
-            ><template v-for="(folder, index) in trail" :key="folder.id"
-              ><span>/</span
-              ><button @click="back(index)">{{ folder.name }}</button></template
-            >
-            <select
-              v-if="folders.length"
-              aria-label="浏览目录"
-              value=""
-              @change="chooseFolder"
-            >
-              <option value="">浏览目录</option>
-              <option v-for="folder in folders" :key="folder.id" :value="folder.id">
-                {{ folder.name }}
-              </option>
-            </select>
-            <button v-if="moreFolders" type="button" @click="nextFolders">
-              加载更多目录
-            </button>
-          </div>
-          <button
-            v-if="selected?.canUpload"
-            class="primary"
-            :disabled="busy"
-            @click="picker?.click()"
-          >
-            {{ busy ? uploadLabel : "上传文件" }}
-          </button>
-          <span v-else-if="selected && !error" class="muted">当前账号没有此目录的上传权限</span>
-          <input
-            ref="picker"
-            type="file"
-            :accept="driveAccept"
-            hidden
-            @change="upload"
-          />
-        </div>
         <div class="drive-search">
+          <div class="drive-filter-heading">
+            <h3><Icon name="search" :size="17" />筛选文件</h3>
+          </div>
           <form
             id="drive-file-filters"
             @submit.prevent="search()"
@@ -561,29 +528,118 @@ onUnmounted(() => {
                 type="date"
                 :min="uploadedFrom || undefined"
             /></label>
-            <label class="list-filter-field">
-              资料空间<select v-model="space" @change="changeSpace">
-                <option value="OWN_INTERNAL">本部门内部</option>
-                <option value="COMPANY_SHARED">企业共享</option>
-                <option value="OTHER_DEPARTMENT_SHARED">其他部门共享</option>
-                <option value="ALL">全部可见</option>
-              </select>
-            </label>
-            <label v-if="space === 'OTHER_DEPARTMENT_SHARED'" class="list-filter-field">
-              共享部门<select v-model="sharedDepartment" @change="search(true)">
-                <option value="">全部其他部门</option>
-                <option v-for="item in sharedDepartments" :key="item.id" :value="item.id">
-                  {{ item.name }}
-                </option>
-              </select>
-            </label>
             <div class="drive-filter-actions">
-              <button class="primary">搜索</button
-              ><button class="secondary" type="button" @click="resetSearch">
-                重置
+              <button class="secondary" type="button" @click="resetSearch">重置</button>
+              <button class="primary" type="submit">
+                <Icon name="search" :size="15" />搜索
               </button>
             </div>
           </form>
+        </div>
+        <section class="drive-spaces" aria-labelledby="drive-spaces-title">
+          <div class="drive-spaces-heading">
+            <div>
+              <h2 id="drive-spaces-title">资料空间</h2>
+            </div>
+            <button
+              type="button"
+              class="drive-all-spaces"
+              :class="{ active: space === 'ALL' }"
+              :aria-pressed="space === 'ALL'"
+              @click="space = 'ALL'; changeSpace();"
+            >
+              <Icon name="eye" :size="16" />全部可见
+            </button>
+          </div>
+          <div class="drive-space-grid" role="group" aria-label="资料空间分组">
+            <button
+              v-for="group in spaceGroups"
+              :key="group.value"
+              type="button"
+              class="drive-space-card"
+              :class="{ selected: space === group.value }"
+              :aria-label="group.label"
+              :aria-describedby="`drive-space-${group.value}`"
+              :aria-pressed="space === group.value"
+              @click="space = group.value; changeSpace();"
+            >
+              <span class="drive-space-icon"><Icon :name="group.icon" :size="20" /></span>
+              <span class="drive-space-copy">
+                <strong>{{ group.label }}</strong>
+                <span class="drive-space-description" :id="`drive-space-${group.value}`">{{ group.description }}</span>
+              </span>
+              <span class="drive-space-indicator">
+                <Icon v-if="space === group.value" name="check" :size="16" />
+              </span>
+            </button>
+          </div>
+          <!-- 沿用原部门目录和查询值，仅将下拉选项平铺为单行按钮。 -->
+          <div v-if="space === 'OTHER_DEPARTMENT_SHARED'" class="drive-departments">
+            <span class="drive-departments-label">共享部门</span>
+            <div class="drive-department-options" role="group" aria-label="共享部门">
+              <button
+                type="button"
+                class="drive-department-option"
+                :class="{ selected: sharedDepartment === '' }"
+                :aria-pressed="sharedDepartment === ''"
+                @click="sharedDepartment = ''; search(true);"
+              >全部部门</button>
+              <button
+                v-for="item in sharedDepartments"
+                :key="item.id"
+                type="button"
+                class="drive-department-option"
+                :class="{ selected: sharedDepartment === item.id }"
+                :aria-pressed="sharedDepartment === item.id"
+                @click="sharedDepartment = item.id; search(true);"
+              >{{ item.name }}</button>
+            </div>
+          </div>
+        </section>
+        <div class="drive-toolbar">
+          <div class="drive-crumb">
+            <Icon name="folder" :size="18" />
+            <button @click="back(-1)">公盘</button
+            ><template v-for="(folder, index) in trail" :key="folder.id"
+              ><span>/</span
+              ><button @click="back(index)">{{ folder.name }}</button></template
+            >
+            <select
+              v-if="folders.length"
+              aria-label="浏览目录"
+              value=""
+              @change="chooseFolder"
+            >
+              <option value="">浏览目录</option>
+              <option v-for="folder in folders" :key="folder.id" :value="folder.id">
+                {{ folder.name }}
+              </option>
+            </select>
+            <button v-if="moreFolders" type="button" @click="nextFolders">
+              加载更多目录
+            </button>
+          </div>
+          <div class="drive-toolbar-actions">
+            <span v-if="selected && !selected.canUpload && !error" class="muted">当前账号没有此目录的上传权限</span>
+            <button v-if="canManage" class="secondary" @click="management = true">
+              管理配置
+            </button>
+            <button
+              v-if="selected?.canUpload"
+              class="primary"
+              :disabled="busy"
+              @click="picker?.click()"
+            >
+              {{ busy ? uploadLabel : "上传文件" }}
+            </button>
+          </div>
+          <input
+            ref="picker"
+            type="file"
+            :accept="driveAccept"
+            hidden
+            @change="upload"
+          />
         </div>
         <div v-if="busy" class="drive-progress" role="status">
           <span
@@ -764,22 +820,190 @@ onUnmounted(() => {
   font-size: 13px;
 }
 .drive-files {
+  /* 分组强调色跟随外观；暖纸主题沿用金色，不影响全局主要按钮。 */
+  --drive-accent: var(--paper-gold, var(--brand));
+  --drive-accent-text: var(--paper-gold-text, var(--brand));
   padding: 20px 24px;
   overflow: hidden;
 }
+.drive-spaces {
+  margin-bottom: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--line);
+}
+.drive-spaces-heading,
+.drive-filter-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.drive-spaces-heading {
+  margin-bottom: 12px;
+}
+.drive-spaces-heading h2 {
+  margin: 0;
+  color: var(--ink);
+  font-size: 15px;
+  font-weight: 600;
+}
+.drive-all-spaces {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  gap: 6px;
+  min-height: 34px;
+  padding: 6px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.drive-all-spaces:hover,
+.drive-all-spaces.active {
+  color: var(--drive-accent-text);
+  background: var(--brand-soft);
+}
+.drive-all-spaces.active {
+  border-color: color-mix(in srgb, var(--drive-accent) 35%, var(--line));
+}
+.drive-space-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.drive-space-card {
+  display: flex;
+  align-items: center;
+  flex: 0 1 260px;
+  gap: 12px;
+  min-width: 0;
+  min-height: 78px;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--ink);
+  text-align: left;
+  transition: border-color 0.16s, background 0.16s;
+}
+.drive-space-card:hover {
+  border-color: color-mix(in srgb, var(--drive-accent) 55%, var(--line));
+  background: var(--surface-muted);
+}
+.drive-space-card.selected {
+  border-color: var(--drive-accent);
+  background: var(--brand-soft);
+  color: var(--drive-accent-text);
+}
+.drive-space-icon {
+  display: grid;
+  place-items: center;
+  flex: 0 0 24px;
+  height: 24px;
+  color: var(--text-secondary);
+}
+.selected .drive-space-icon {
+  color: var(--drive-accent-text);
+}
+.drive-space-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+.drive-space-copy strong {
+  font-size: 14px;
+  font-weight: 600;
+}
+.drive-space-description {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+}
+.drive-space-indicator {
+  display: grid;
+  place-items: center;
+  flex: 0 0 16px;
+  height: 16px;
+  margin-left: auto;
+  color: var(--drive-accent-text);
+}
+/* 部门始终单行平铺，空间不足时仅在部门行内滚动，不撑宽页面。 */
+.drive-departments {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.drive-departments-label {
+  flex-shrink: 0;
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+.drive-department-options {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 1px 5px;
+  margin-bottom: -5px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+}
+.drive-department-option {
+  flex-shrink: 0;
+  min-height: 34px;
+  padding: 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-muted);
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.drive-department-option:hover {
+  color: var(--drive-accent-text);
+  border-color: color-mix(in srgb, var(--drive-accent) 55%, var(--line));
+  background: var(--brand-soft);
+}
+.drive-department-option.selected {
+  color: var(--drive-accent-text);
+  border-color: var(--drive-accent);
+  background: var(--brand-soft);
+  font-weight: 600;
+}
 .drive-toolbar,
-.drive-crumb {
+.drive-crumb,
+.drive-toolbar-actions {
   display: flex;
   align-items: center;
   gap: 12px;
 }
 .drive-toolbar {
   justify-content: space-between;
+  flex-wrap: wrap;
   min-height: 44px;
-  margin-bottom: 18px;
+  margin-bottom: 16px;
+}
+.drive-toolbar-actions {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  margin-left: auto;
+}
+.drive-toolbar-actions > .muted {
+  font-size: 12px;
 }
 .drive-crumb {
   flex-wrap: wrap;
+  min-width: 0;
+  color: var(--text-secondary);
 }
 .drive-crumb button {
   border: 0;
@@ -797,47 +1021,102 @@ onUnmounted(() => {
   max-width: 100%;
 }
 .drive-search {
-  margin-bottom: 18px;
-  padding: 16px 18px;
+  margin-bottom: 20px;
+  padding: 14px 18px 16px;
   border: 1px solid var(--line);
   border-radius: 10px;
-  background: #f8fafc;
+  background: var(--surface-muted);
+}
+.drive-filter-heading {
+  margin-bottom: 12px;
+}
+.drive-filter-heading h3 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+  font-weight: 600;
+}
+.drive-filter-heading h3 .p-icon {
+  color: var(--text-secondary);
 }
 .drive-search form {
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px 24px;
+  /* 按用途约束字段宽度，不随宽屏拉长；常规桌面分成两行。 */
+  grid-template-columns: minmax(180px, 240px) minmax(130px, 170px) minmax(140px, 180px) minmax(160px, 200px);
+  gap: 14px 16px;
+  align-items: end;
 }
-#drive-file-filters label {
+/* 覆盖共享字段的并排布局，快捷日期组件同样使用标签上置的统一栅格。 */
+#drive-file-filters :deep(.list-filter-field) {
   margin: 0;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: center;
-  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  min-width: 0;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 500;
+  white-space: normal;
 }
-.drive-search input,
-.drive-search select {
+#drive-file-filters :deep(input),
+#drive-file-filters :deep(select) {
+  flex: none;
   min-width: 0;
   width: 100%;
   box-sizing: border-box;
-  height: 40px;
+  height: 36px;
+  min-height: 36px;
   font: inherit;
   font-size: 13px;
 }
 .drive-filter-actions {
-  grid-column: 1 / -1;
   display: flex;
-  gap: 10px;
+  gap: 8px;
   align-items: center;
+  min-height: 36px;
 }
-@media (max-width: 1200px) {
+.drive-filter-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 36px;
+  padding: 6px 12px;
+  font-size: 12px;
+}
+@media (min-width: 1600px) {
   .drive-search form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    /* 宽屏七个短字段与操作同排，避免原来的大面积空白和超长输入框。 */
+    grid-template-columns: minmax(180px, 240px) 140px 150px 170px 130px 150px 150px 132px;
   }
 }
-@media (max-width: 860px) {
+@media (max-width: 960px) {
+  .drive-search form {
+    grid-template-columns: repeat(2, minmax(150px, 240px));
+  }
+}
+@media (max-width: 600px) {
+  .drive-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+  }
+  .drive-files {
+    padding: 16px;
+  }
+  .drive-spaces-heading {
+    align-items: flex-start;
+  }
   .drive-search form {
     grid-template-columns: minmax(0, 1fr);
+  }
+  .drive-space-card {
+    flex: 1 1 140px;
+  }
+  .drive-search {
+    padding: 16px;
   }
 }
 .drive-table {
