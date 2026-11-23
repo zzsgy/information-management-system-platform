@@ -643,14 +643,27 @@ class MeetingIntegrationTest {
         conclusion.put("assigneeId", outsider.userId().toString());
         followUp.saveCoordination(organizer, id, request(), conclusion);
         int version = ((Number) bookings.detail(organizer, id).get("rowVersion")).intValue();
-        followUp.saveMinutes(organizer, id, request(), version, Map.of("publish", true));
+        Actor additional = person();
+        var tracking = List.of(Map.of("key", key, "assigneeIds", List.of(additional.userId().toString())));
+        followUp.saveMinutes(organizer, id, request(), version, Map.of("publish", true, "coordinationTrackers", tracking));
         var assigned = values(bookings.detail(outsider, id), "items").getFirst();
         assertEquals("协调合同\n签订补充协议", assigned.get("content"));
         assertEquals(outsider.userId(), assigned.get("assigneeId"));
         assertEquals(key, assigned.get("coordinationKey"));
+        assertEquals(1, values(bookings.detail(organizer, id), "items").size());
+        assertEquals(Set.of(employee.userId(), outsider.userId(), additional.userId()),
+                new HashSet<>(values(assigned, "trackers").stream().map(row -> row.get("assigneeId")).toList()));
         UUID item = (UUID) assigned.get("id");
+        UUID originatorItem = (UUID) values(bookings.detail(employee, id), "items").getFirst().get("id");
+        UUID additionalItem = (UUID) db.required("SELECT id FROM portal.meeting_item WHERE meeting_id=? AND assignee_id=?",
+                id, additional.userId()).get("id");
         followUp.feedback(outsider, item, request(), Map.of("feedback", "原责任人已核对"));
         followUp.review(organizer, item, request(), Map.of("decision", "CONFIRMED"));
+        assertEquals(409, assertThrows(ApiFault.class, () -> followUp.close(organizer, id, request())).status);
+        followUp.feedback(employee, originatorItem, request(), Map.of("feedback", "发起人已核对"));
+        followUp.review(organizer, originatorItem, request(), Map.of("decision", "CONFIRMED"));
+        followUp.feedback(additional, additionalItem, request(), Map.of("feedback", "补充跟踪人员已核对"));
+        followUp.review(organizer, additionalItem, request(), Map.of("decision", "CONFIRMED"));
         followUp.close(organizer, id, request());
 
         conclusion.put("departmentId", department.toString());
@@ -659,15 +672,17 @@ class MeetingIntegrationTest {
         Instant revisedDue = Instant.now().plusSeconds(10800).truncatedTo(java.time.temporal.ChronoUnit.SECONDS);
         conclusion.put("dueAt", revisedDue.toString());
         followUp.saveCoordination(organizer, id, request(), conclusion);
-        Map<String, Object> corrected = followUp.item(employee, item);
+        Map<String, Object> corrected = followUp.item(employee, originatorItem);
         assertEquals("协调合同\n复核补充协议", corrected.get("content"));
         assertEquals("PENDING", corrected.get("state"));
         assertEquals(revisedDue.toString(), corrected.get("dueAt"));
-        assertTrue(values(corrected, "history").stream().anyMatch(entry -> "原责任人已核对".equals(entry.get("text"))));
+        assertTrue(values(corrected, "history").stream().anyMatch(entry -> "发起人已核对".equals(entry.get("text"))));
         assertEquals("CORRECTED", values(corrected, "history").getLast().get("state"));
-        assertFalse((Boolean) followUp.item(outsider, item).get("canSubmit"));
+        assertEquals(404, assertThrows(ApiFault.class, () -> followUp.item(outsider, item)).status);
+        assertTrue(values(followUp.item(organizer, item), "history").stream().anyMatch(entry -> "原责任人已核对".equals(entry.get("text"))));
+        assertEquals("PENDING", followUp.item(additional, additionalItem).get("state"));
         assertEquals("FOLLOW_UP", bookings.detail(organizer, id).get("state"));
-        assertEquals(1, db.count("SELECT count(*) FROM portal.meeting_item WHERE meeting_id=?", id));
+        assertEquals(2, db.count("SELECT count(*) FROM portal.meeting_item WHERE meeting_id=? AND removed_at IS NULL", id));
         assertTrue(workbooks.download(organizer, id, false).length > 0);
     }
 
@@ -746,6 +761,53 @@ class MeetingIntegrationTest {
         assertEquals(task.get("dueAt"), adjusted.get("dueAt"));
         assertEquals("CLOSED", bookings.detail(organizer, id).get("state"));
         assertEquals("附件已更新", values(adjusted, "history").getFirst().get("text"));
+    }
+
+    /** 手工事项在草稿中保留多人选择，发布后共同展示、独立反馈和审核。 */
+    @Test
+    void multipleTrackersShareOneManualItemWithIndependentFeedback() {
+        var body = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        body.putAll(Map.of("trackFollowUp", true, "shareAll", false));
+        UUID id = bookings.create(organizer, request(), body);
+        bookings.start(organizer, id, request());
+        bookings.end(organizer, id, request());
+        String due = Instant.now().plusSeconds(7200).toString();
+        var task = Sql.map("content", "共同复核设备", "dueAt", due,
+                "assigneeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
+        var minutes = Sql.map("decisions", "共同复核", "items", List.of(task), "publish", false);
+        int version = ((Number) bookings.detail(organizer, id).get("rowVersion")).intValue();
+        followUp.saveMinutes(organizer, id, request(), version, minutes);
+        var saved = ((Map<?, ?>) bookings.detail(organizer, id).get("minutes")).get("items").toString();
+        assertTrue(saved.contains(employee.userId().toString()));
+        assertTrue(saved.contains(outsider.userId().toString()));
+        minutes.put("publish", true);
+        followUp.saveMinutes(organizer, id, request(), version + 1, minutes);
+
+        var group = values(bookings.detail(employee, id), "items").getFirst();
+        assertEquals(1, values(bookings.detail(organizer, id), "items").size());
+        UUID personal = (UUID) group.get("id");
+        var other = values(group, "trackers").stream().filter(row -> outsider.userId().equals(row.get("assigneeId")))
+                .findFirst().orElseThrow();
+        UUID restricted = (UUID) other.get("id");
+        assertNull(other.get("state"));
+        assertEquals(false, other.get("canOpen"));
+        assertEquals(404, assertThrows(ApiFault.class, () -> followUp.item(employee, restricted)).status);
+        assertEquals("PENDING", attendeeTask(outsider, "#/meetings?item=" + restricted).get("state"));
+        followUp.feedback(employee, personal, request(), Map.of("feedback", "已检查接线"));
+        followUp.review(organizer, personal, request(), Map.of("decision", "CONFIRMED"));
+        assertEquals("PENDING", followUp.item(outsider, restricted).get("state"));
+
+        Actor replacement = person();
+        task.put("assigneeIds", List.of(employee.userId().toString(), replacement.userId().toString()));
+        followUp.reviseItem(organizer, personal, request(), task);
+        assertEquals("CONFIRMED", followUp.item(employee, personal).get("state"));
+        assertEquals(404, assertThrows(ApiFault.class, () -> followUp.item(outsider, restricted)).status);
+        UUID replacementItem = (UUID) db.required("SELECT id FROM portal.meeting_item WHERE meeting_id=? AND assignee_id=?",
+                id, replacement.userId()).get("id");
+        followUp.feedback(replacement, replacementItem, request(), Map.of("feedback", "已检查外观"));
+        followUp.review(organizer, replacementItem, request(), Map.of("decision", "CONFIRMED"));
+        followUp.close(organizer, id, request());
+        assertEquals("CLOSED", bookings.detail(organizer, id).get("state"));
     }
 
     /** 线上员工和 Excel 代填员工同时汇总，未回复邀请不应造成线上材料漏导。 */

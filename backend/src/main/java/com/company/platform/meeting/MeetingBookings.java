@@ -165,15 +165,32 @@ public class MeetingBookings {
             if (row.get("live_notes") != null) result.put("liveNotes", row.get("live_notes"));
         }
         result.put("minutes", minutes);
-        result.put("items", published ? db.rows("""
-                SELECT i.id,i.content,i.assignee_id,u.name AS assignee_name,i.due_at,i.coordination_key,
+        result.put("items", published ? followUpItems(id, actor.userId(), full, legacy) : List.of());
+        return result;
+    }
+
+    /** 同一事项只展示一次；未共享会议只展示本人的事项、反馈状态和办理链接。 */
+    private List<Map<String, Object>> followUpItems(UUID meeting, UUID viewer, boolean full, boolean legacy) {
+        var rows = db.rows("""
+                SELECT i.id,i.group_id,i.content,i.assignee_id,u.name AS assignee_name,i.due_at,i.coordination_key,
                     CASE WHEN ? OR i.assignee_id=? THEN i.state END AS state,
                     (? OR i.assignee_id=?) AS can_open
                 FROM portal.meeting_item i JOIN iam.user_account u ON u.id=i.assignee_id
-                WHERE i.meeting_id=? AND (? OR i.assignee_id=?) ORDER BY i.created_at,i.id
-                """, full, actor.userId(), full, actor.userId(), id, full || legacy, actor.userId()).stream()
-                .map(item -> Sql.view(item, "id,content,assignee_id,assignee_name,due_at,coordination_key,state,can_open")).toList() : List.of());
-        return result;
+                WHERE i.meeting_id=? AND i.removed_at IS NULL AND (? OR EXISTS (
+                    SELECT 1 FROM portal.meeting_item owned WHERE owned.group_id=i.group_id
+                      AND owned.assignee_id=? AND owned.removed_at IS NULL))
+                ORDER BY i.created_at,i.id
+                """, full, viewer, full, viewer, meeting, full || legacy, viewer);
+        var groups = new LinkedHashMap<UUID, List<Map<String, Object>>>();
+        for (var row : rows)
+            groups.computeIfAbsent((UUID) row.get("group_id"), ignored -> new ArrayList<>()).add(row);
+        return groups.values().stream().map(group -> {
+            // 保留原 API 的单条待办字段，受邀人点开时仍优先得到自己的个人链接。
+            var own = group.stream().filter(item -> viewer.equals(item.get("assignee_id"))).findFirst().orElse(group.getFirst());
+            var result = Sql.view(own, "id,group_id,content,assignee_id,assignee_name,due_at,coordination_key,state,can_open");
+            result.put("trackers", group.stream().map(item -> Sql.view(item, "id,assignee_id,assignee_name,state,can_open")).toList());
+            return result;
+        }).toList();
     }
 
     /** 初次发布同时确认占用、写入会前责任与站内通知。 */
@@ -793,12 +810,8 @@ public class MeetingBookings {
                 result.put("sharedSummaries", saved.get("sharedSummaries"));
             }
             if (full && row.get("minutes_published_at") == null) {
-                result.put("items", db.rows("""
-                        SELECT x.content,x."assigneeId" AS assignee_id,x."dueAt" AS due_at,u.name AS assignee_name
-                        FROM jsonb_to_recordset(?::jsonb->'items') AS x(content text,"assigneeId" uuid,"dueAt" text)
-                        JOIN iam.user_account u ON u.id=x."assigneeId"
-                        """, row.get("minutes_json")).stream()
-                        .map(item -> Sql.view(item, "content,assignee_id,due_at,assignee_name")).toList());
+                result.put("items", minutesDraftItems(saved));
+                result.put("coordinationTrackers", saved.getOrDefault("coordinationTrackers", List.of()));
             }
             return result;
         }
@@ -821,13 +834,34 @@ public class MeetingBookings {
                 "publishedAt", null, "items", List.of(), "summaryTypes", summaryTypes(row), "materialTables", minuteTables(meeting));
     }
 
+    /** 原有单人草稿读成统一的跟踪人员列表，并兼容原草稿响应字段。 */
+    private List<Map<String, Object>> minutesDraftItems(Map<String, Object> saved) {
+        var items = new ArrayList<Map<String, Object>>();
+        if (!(saved.get("items") instanceof List<?> drafts)) return items;
+        for (var draft : drafts) {
+            var item = (Map<?, ?>) draft;
+            List<?> trackers;
+            if (item.get("trackers") instanceof List<?> people) {
+                trackers = people;
+            } else {
+                var person = db.one("SELECT id,name FROM iam.user_account WHERE id=?", Inputs.uuid(item.get("assigneeId")));
+                if (person == null) continue;
+                trackers = List.of(person);
+            }
+            var first = (Map<?, ?>) trackers.getFirst();
+            items.add(Sql.map("content", item.get("content"), "dueAt", item.get("dueAt"), "trackers", trackers,
+                    "assigneeId", Inputs.uuid(first.get("id").toString()), "assigneeName", first.get("name")));
+        }
+        return items;
+    }
+
     private static List<String> summaryTypes(Map<String, Object> row) {
         return row.get("material_types") instanceof List<?> types
                 ? types.stream().map(Object::toString).filter(kind -> Set.of("TOPICS","COORDINATION").contains(kind)).toList() : List.of();
     }
 
     boolean allItemsConfirmed(UUID meeting) {
-        return db.count("SELECT count(*) FROM portal.meeting_item WHERE meeting_id=? AND state<>'CONFIRMED'", meeting) == 0;
+        return db.count("SELECT count(*) FROM portal.meeting_item WHERE meeting_id=? AND removed_at IS NULL AND state<>'CONFIRMED'", meeting) == 0;
     }
 
     boolean generalManager(UUID user) {
@@ -840,6 +874,16 @@ public class MeetingBookings {
 
     void employee(UUID user) {
         if (!isEmployee(user)) throw ApiFault.denied();
+    }
+
+    /** 草稿保存前按在职员工校验跟踪权限，并记录界面所需的人员名称。 */
+    List<Map<String, Object>> trackerOptions(Set<UUID> people) {
+        if (people.isEmpty()) return List.of();
+        var rows = db.rows("""
+                SELECT id,name FROM iam.user_account WHERE id=ANY(?::uuid[]) AND %s ORDER BY name,id
+                """.formatted(ACTIVE_EMPLOYEE), uuidArray(people));
+        if (rows.size() != people.size()) throw ApiFault.denied();
+        return rows;
     }
 
     void event(Actor actor, UUID request, UUID id, String action) {

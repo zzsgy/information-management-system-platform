@@ -26,17 +26,18 @@ public class MeetingFollowUp {
     @Transactional(readOnly = true, isolation = Isolation.REPEATABLE_READ)
     public Map<String, Object> item(Actor actor, UUID id) {
         var row = accessibleItem(actor, id, false);
+        boolean active = row.get("removed_at") == null;
         return Sql.map("id", id, "content", row.get("content"), "assigneeId", row.get("assignee_id"),
                 "assigneeName", row.get("assignee_name"), "dueAt", row.get("due_at"), "state", row.get("state"),
                 "overdue", row.get("overdue"), "history", Crypto.JSON.readValue((String) row.get("history_json"), List.class),
-                "canSubmit", actor.userId().equals(row.get("assignee_id")) && waiting(row),
-                "canReview", actor.userId().equals(row.get("organizer_id")) && "SUBMITTED".equals(row.get("state")));
+                "canSubmit", active && actor.userId().equals(row.get("assignee_id")) && waiting(row),
+                "canReview", active && actor.userId().equals(row.get("organizer_id")) && "SUBMITTED".equals(row.get("state")));
     }
 
     /** 发起人结束会议后编辑底稿；发布须填写决议，未开启跟踪时随发布办结。 */
     @Transactional
     public void saveMinutes(Actor actor, UUID id, UUID request, int version, Map<String, Object> body) {
-        Inputs.only(body, "materialsText", "decisions", "notes", "noteReaderIds", "shareReports", "shareTopics", "shareCoordination", "items", "publish");
+        Inputs.only(body, "materialsText", "decisions", "notes", "noteReaderIds", "shareReports", "shareTopics", "shareCoordination", "items", "coordinationTrackers", "publish");
         String materials = MeetingBookings.optional(body, "materialsText", 4_100_000);
         boolean publish = MeetingBookings.flag(body, "publish", false);
         String decisions = MeetingBookings.optional(body, "decisions", 12000);
@@ -50,21 +51,25 @@ public class MeetingFollowUp {
             throw ApiFault.conflict("当前会议不能编辑纪要");
         }
         boolean trackFollowUp = Boolean.TRUE.equals(meeting.get("track_follow_up"));
+        var coordination = bookings.coordinationResults(meeting);
+        var tracked = coordination.stream().filter(result -> Boolean.TRUE.equals(result.get("followUp"))).toList();
+        var extra = coordinationTrackers(body, tracked);
         if (publish) {
-            var coordination = bookings.coordinationResults(meeting);
             if (decisions == null && coordination.isEmpty()) throw ApiFault.invalid("请填写会议决议");
-            for (var result : coordination) {
-                if (!Boolean.TRUE.equals(result.get("followUp"))) continue;
+            for (var result : tracked) {
+                String key = (String) result.get("key");
+                var assignees = coordinationAssignees(id, key, Inputs.uuid(result.get("assigneeId")));
+                assignees.addAll(extra.getOrDefault(key, Set.of()));
                 items.add(new DraftItem(result.get("subject") + "\n" + result.get("conclusion"),
-                        Inputs.uuid(result.get("assigneeId")), MeetingBookings.inputTime(result.get("dueAt")),
-                        (String) result.get("key")));
+                        assignees, MeetingBookings.inputTime(result.get("dueAt")), key));
             }
         }
         if (!trackFollowUp && !items.isEmpty()) throw ApiFault.invalid("未开启会后反馈跟踪，不能分派会后待办");
-        for (var item : items) bookings.employee(item.assignee());
         var draft = Sql.map("materialsText", materials, "decisions", decisions, "notes", notes,
                 "items", publish ? List.of() : items.stream().map(item -> Sql.map("content", item.content(),
-                        "assigneeId", item.assignee(), "dueAt", item.due().toString())).toList());
+                        "trackers", bookings.trackerOptions(item.assignees()), "dueAt", item.due().toString())).toList());
+        if (!publish) draft.put("coordinationTrackers", extra.entrySet().stream()
+                .map(entry -> Sql.map("key", entry.getKey(), "trackers", bookings.trackerOptions(entry.getValue()))).toList());
         if (meeting.get("share_all") == null) addLegacySharing(id, body, draft);
         // 会前填写已经截止，随纪要保存汇总快照，供发布后按纪要权限查看。
         draft.put("materialTables", bookings.minuteTables(id));
@@ -75,11 +80,11 @@ public class MeetingFollowUp {
                 """, Crypto.json(draft), publish, publish && !trackFollowUp, id);
         if (publish) {
             for (var item : items) {
-                UUID itemId = UUID.randomUUID();
-                db.update("""
-                        INSERT INTO portal.meeting_item(id,meeting_id,assignee_id,content,due_at,coordination_key) VALUES (?,?,?,?,?,?)
-                        """, itemId, id, item.assignee(), item.content(), Timestamp.from(item.due()), item.coordinationKey());
-                bookings.notify(id, itemId, item.assignee(), "MEETING_ITEM_ASSIGNED", "你有一项会后待办");
+                UUID group = UUID.randomUUID();
+                for (UUID employee : item.assignees()) {
+                    bookings.employee(employee);
+                    assign(id, group, employee, item);
+                }
             }
             bookings.notifyAttendees(id, "MEETING_MINUTES_PUBLISHED", "会议纪要已发布 " + meeting.get("subject"));
         }
@@ -112,12 +117,21 @@ public class MeetingFollowUp {
         var meeting = bookings.owned(actor, id);
         var result = bookings.saveCoordination(meeting, id, body);
         if (meeting.get("minutes_published_at") != null && result.followUp()) {
-            var item = db.one("""
-                    SELECT * FROM portal.meeting_item WHERE meeting_id=? AND coordination_key=? FOR NO KEY UPDATE
+            var assignments = db.rows("""
+                    SELECT * FROM portal.meeting_item WHERE meeting_id=? AND coordination_key=? AND removed_at IS NULL
+                    ORDER BY id FOR NO KEY UPDATE
                     """, id, result.key());
-            if (item != null) {
-                reviseItem(actor, id, item, new DraftItem(result.subject() + "\n" + result.conclusion(),
-                        result.assignee(), result.due(), result.key()));
+            if (!assignments.isEmpty()) {
+                var assignees = coordinationAssignees(id, result.key(), result.assignee());
+                UUID previous = bookings.coordinationResults(meeting).stream()
+                        .filter(saved -> result.key().equals(saved.get("key")))
+                        .map(saved -> Inputs.uuid(saved.get("assigneeId"))).findFirst().orElseThrow();
+                for (var assignment : assignments) {
+                    UUID employee = (UUID) assignment.get("assignee_id");
+                    if (!employee.equals(previous)) assignees.add(employee);
+                }
+                reviseGroup(actor, id, assignments, new DraftItem(result.subject() + "\n" + result.conclusion(),
+                        assignees, result.due(), result.key()));
             }
         }
         bookings.event(actor, request, id, "MEETING_COORDINATION_SAVE");
@@ -131,16 +145,50 @@ public class MeetingFollowUp {
         UUID meetingId = (UUID) db.required("SELECT meeting_id FROM portal.meeting_item WHERE id=?", id).get("meeting_id");
         var meeting = bookings.owned(actor, meetingId);
         if (meeting.get("minutes_published_at") == null) throw ApiFault.conflict("请先发布会议纪要");
-        var item = db.required("SELECT * FROM portal.meeting_item WHERE id=? FOR NO KEY UPDATE", id);
+        var item = db.required("SELECT group_id,coordination_key FROM portal.meeting_item WHERE id=?", id);
         if (item.get("coordination_key") != null) throw ApiFault.invalid("请在关联协调事项中更正此待办");
-        bookings.employee(draft.assignee());
-        reviseItem(actor, meetingId, item, draft);
+        var assignments = db.rows("""
+                SELECT * FROM portal.meeting_item WHERE group_id=? AND removed_at IS NULL ORDER BY id FOR NO KEY UPDATE
+                """, item.get("group_id"));
+        if (assignments.isEmpty()) throw ApiFault.hidden();
+        reviseGroup(actor, meetingId, assignments, draft);
         bookings.event(actor, request, meetingId, "MEETING_ITEM_REVISE");
     }
 
+    /** 共用内容和期限，保留退出人员的反馈历史；原先的单人改派继续使用原链接。 */
+    private void reviseGroup(Actor actor, UUID meeting, List<Map<String, Object>> assignments, DraftItem draft) {
+        for (UUID employee : draft.assignees()) bookings.employee(employee);
+        UUID group = (UUID) assignments.getFirst().get("group_id");
+        if (assignments.size() == 1 && draft.assignees().size() == 1) {
+            reviseAssignment(actor, meeting, assignments.getFirst(), draft.assignees().iterator().next(), draft);
+            return;
+        }
+        var additions = new LinkedHashSet<>(draft.assignees());
+        for (var row : assignments) {
+            UUID employee = (UUID) row.get("assignee_id");
+            if (additions.remove(employee)) {
+                reviseAssignment(actor, meeting, row, employee, draft);
+            } else {
+                db.update("UPDATE portal.meeting_item SET removed_at=CURRENT_TIMESTAMP WHERE id=?", row.get("id"));
+            }
+        }
+        for (UUID employee : additions) assign(meeting, group, employee, draft);
+        if (!additions.isEmpty()) reopen(meeting);
+    }
+
+    /** 每名员工使用独立的通知、待办直达链接及反馈记录。 */
+    private void assign(UUID meeting, UUID group, UUID employee, DraftItem draft) {
+        UUID id = UUID.randomUUID();
+        db.update("""
+                INSERT INTO portal.meeting_item(id,meeting_id,group_id,assignee_id,content,due_at,coordination_key)
+                VALUES (?,?,?,?,?,?,?)
+                """, id, meeting, group, employee, draft.content(), Timestamp.from(draft.due()), draft.coordinationKey());
+        bookings.notify(meeting, id, employee, "MEETING_ITEM_ASSIGNED", "你有一项会后待办");
+    }
+
     /** 变更责任人或任务内容需按新要求重新反馈，单独调整截止时间保留已有办理状态。 */
-    private void reviseItem(Actor actor, UUID meeting, Map<String, Object> item, DraftItem draft) {
-        boolean newFeedback = !draft.assignee().equals(item.get("assignee_id")) || !draft.content().equals(item.get("content"));
+    private void reviseAssignment(Actor actor, UUID meeting, Map<String, Object> item, UUID employee, DraftItem draft) {
+        boolean newFeedback = !employee.equals(item.get("assignee_id")) || !draft.content().equals(item.get("content"));
         if (!newFeedback && draft.due().equals(MeetingBookings.time(item, "due_at"))) return;
         UUID id = (UUID) item.get("id");
         var entry = Sql.map("state", "CORRECTED", "actorName", actor.user().get("name"), "at", bookings.now().toString(),
@@ -152,14 +200,16 @@ public class MeetingFollowUp {
                     state=CASE WHEN ? THEN 'PENDING' ELSE state END,
                     confirmed_at=CASE WHEN ? THEN NULL ELSE confirmed_at END,
                     history=history||jsonb_build_array(?::jsonb) WHERE id=?
-                """, draft.content(), draft.assignee(), Timestamp.from(draft.due()), newFeedback, newFeedback, Crypto.json(entry), id);
-        if (newFeedback) {
-            db.update("""
-                    UPDATE portal.meeting_booking SET closed_at=NULL,row_version=row_version+1 WHERE id=? AND closed_at IS NOT NULL
-                    """, meeting);
-        }
-        bookings.notify(meeting, id, draft.assignee(), "MEETING_ITEM_ASSIGNED",
+                """, draft.content(), employee, Timestamp.from(draft.due()), newFeedback, newFeedback, Crypto.json(entry), id);
+        if (newFeedback) reopen(meeting);
+        bookings.notify(meeting, id, employee, "MEETING_ITEM_ASSIGNED",
                 newFeedback ? "会后待办已更正，请按最新要求反馈" : "会后待办的截止时间已调整");
+    }
+
+    private void reopen(UUID meeting) {
+        db.update("""
+                UPDATE portal.meeting_booking SET closed_at=NULL,row_version=row_version+1 WHERE id=? AND closed_at IS NOT NULL
+                """, meeting);
     }
 
     /** 旧预约沿用原有逐项共享设置。 */
@@ -224,13 +274,13 @@ public class MeetingFollowUp {
                 FROM portal.meeting_item i
                 JOIN iam.user_account u ON u.id=i.assignee_id
                 JOIN portal.meeting_booking m ON m.id=i.meeting_id
-                WHERE i.id=? AND m.minutes_published_at IS NOT NULL
+                WHERE i.id=? AND (i.removed_at IS NULL OR (m.organizer_id=? AND NOT ?)) AND m.minutes_published_at IS NOT NULL
                     AND (i.assignee_id=? OR m.organizer_id=? OR (m.kind='WEEKLY' AND ?)
                         OR (m.share_all AND EXISTS (
                             SELECT 1 FROM portal.meeting_attendee a
                             WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL)))
                 """ + (lock ? " FOR NO KEY UPDATE OF i" : ""),
-                id, actor.userId(), actor.userId(), bookings.generalManager(actor.userId()), actor.userId());
+                id, actor.userId(), lock, actor.userId(), actor.userId(), bookings.generalManager(actor.userId()), actor.userId());
     }
 
     private static boolean waiting(Map<String, Object> row) {
@@ -246,12 +296,40 @@ public class MeetingFollowUp {
                 """, state, Crypto.json(entry), state, id);
     }
 
-    private record DraftItem(String content, UUID assignee, Instant due, String coordinationKey) {}
+    /** 同一事项对应一组员工，每名员工之后独立反馈。 */
+    private record DraftItem(String content, Set<UUID> assignees, Instant due, String coordinationKey) {}
 
     private DraftItem draftItem(Map<String, Object> body) {
-        Inputs.only(body, "content", "assigneeId", "dueAt");
-        return new DraftItem(Inputs.text(body, "content", 4000), Inputs.uuid(body.get("assigneeId")),
+        Inputs.only(body, "content", "assigneeId", "assigneeIds", "dueAt");
+        var assignees = body.containsKey("assigneeIds") ? MeetingBookings.users(body.get("assigneeIds"))
+                : Set.of(Inputs.uuid(body.get("assigneeId")));
+        if (assignees.isEmpty()) throw ApiFault.invalid("每项会后待办至少选择一位跟踪人员");
+        return new DraftItem(Inputs.text(body, "content", 4000), assignees,
                 MeetingBookings.inputTime(body.get("dueAt")), null);
+    }
+
+    /** 仅允许为本场勾选了会后跟踪的协调事项增加人员。 */
+    private Map<String, Set<UUID>> coordinationTrackers(Map<String, Object> body, List<Map<String, Object>> tracked) {
+        var keys = tracked.stream().map(row -> row.get("key")).collect(java.util.stream.Collectors.toSet());
+        var extra = new LinkedHashMap<String, Set<UUID>>();
+        for (var selection : Inputs.objects(body.getOrDefault("coordinationTrackers", List.of()), keys.size())) {
+            Inputs.only(selection, "key", "assigneeIds");
+            String key = Inputs.text(selection, "key", 48);
+            if (!keys.contains(key) || extra.putIfAbsent(key, MeetingBookings.users(selection.get("assigneeIds"))) != null)
+                throw ApiFault.invalid("协调跟踪事项已变更，请刷新后重试");
+        }
+        return extra;
+    }
+
+    /** 由协调事宜的原材料记录定位发起人，责任人使用最新协调结果。 */
+    private Set<UUID> coordinationAssignees(UUID meeting, String key, UUID assignee) {
+        UUID attendee = Inputs.uuid(key.split(":", 2)[0]);
+        UUID author = (UUID) db.required("SELECT user_id FROM portal.meeting_attendee WHERE id=? AND meeting_id=?",
+                attendee, meeting).get("user_id");
+        var assignees = new LinkedHashSet<UUID>();
+        assignees.add(assignee);
+        assignees.add(author);
+        return assignees;
     }
 }
 

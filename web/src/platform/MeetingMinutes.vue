@@ -2,7 +2,7 @@
 import { computed, reactive, ref } from "vue";
 import { api } from "./api";
 import RichTextEditor from "./RichTextEditor.vue";
-import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
+import MeetingTrackersPicker from "./MeetingTrackersPicker.vue";
 import {
   meetingDateInput,
   meetingInstant,
@@ -37,21 +37,30 @@ const items = ref(
     ...item,
     dueAt: meetingDateInput(item.dueAt),
     key: sequence++,
-    assigneeName: item.assigneeName ?? "",
   })),
+);
+const extraTrackers = ref<Record<string, MeetingOption[]>>(
+  Object.fromEntries((draft?.coordinationTrackers ?? []).map(({ key, trackers }) => [key, trackers])),
 );
 const busy = ref(false),
   error = ref("");
 const publish = ref(false);
-/** 现场勾选的协调结论在纪要发布时生成待办。 */
+/** 待发布的协调事项自动带入原填报人和配合部门责任人。 */
 const coordinationTasks = computed(() =>
-  props.meeting.coordinationResults?.filter((result) => result.followUp).length ?? 0);
+  (props.meeting.coordinationResults ?? []).filter((result) => result.followUp).map((result) => {
+    const author = props.meeting.attendees.find((person) => person.id === result.key.split(":")[0]);
+    const defaults: MeetingOption[] = [];
+    if (author) defaults.push({ id: author.userId, name: author.name });
+    if (result.assigneeId && result.assigneeId !== author?.userId)
+      defaults.push({ id: result.assigneeId, name: result.assigneeName ?? "配合部门责任人" });
+    return { ...result, defaults };
+  }),
+);
 
 function addItem() {
   items.value.push({
     content: "",
-    assigneeId: "",
-    assigneeName: "",
+    trackers: [],
     dueAt: "",
     key: sequence++,
   });
@@ -71,9 +80,15 @@ async function save(submit: boolean) {
         publish: submit,
         items: items.value.map((item) => ({
           content: item.content,
-          assigneeId: item.assigneeId,
+          assigneeIds: item.trackers.map((person) => person.id),
           dueAt: meetingInstant(item.dueAt),
         })),
+        coordinationTrackers: coordinationTasks.value
+          .filter((task) => extraTrackers.value[task.key]?.length)
+          .map((task) => ({
+            key: task.key,
+            assigneeIds: extraTrackers.value[task.key].map((person) => person.id),
+          })),
       }),
     });
     emit("saved", submit);
@@ -143,9 +158,18 @@ async function save(submit: boolean) {
           添加事项
         </button>
       </div>
-      <p v-if="coordinationTasks">已有 {{ coordinationTasks }} 条事项结论将在发布时生成会后待办。</p>
-      <p v-else-if="!items.length">
-        点击「添加事项」填写内容、责任人和期限。纪要发布后，责任人将收到反馈待办。
+      <fieldset v-for="task in coordinationTasks" :key="task.key" class="meeting-fieldset">
+        <legend>协调事宜 · {{ task.subject }}</legend>
+        <p v-if="task.conclusion">{{ task.conclusion }}</p>
+        <MeetingTrackersPicker
+          :model-value="extraTrackers[task.key] ?? []"
+          :defaults="task.defaults"
+          :departments="departments"
+          @update:model-value="(people) => (extraTrackers[task.key] = people)"
+        />
+      </fieldset>
+      <p v-if="!coordinationTasks.length && !items.length">
+        点击「添加事项」填写内容、跟踪人员和期限。纪要发布后，每人都会收到反馈待办。
       </p>
       <fieldset
         v-for="(item, index) in items"
@@ -155,27 +179,7 @@ async function save(submit: boolean) {
         <legend>事项 {{ index + 1 }}</legend>
         <RichTextEditor v-model="item.content" label="事项内容" :limit="4000" :rows="2" required />
         <div class="meeting-form-row">
-          <div>
-            <p>
-              责任人
-              {{
-                item.assigneeName ||
-                meeting.attendees.find((a) => a.userId === item.assigneeId)
-                  ?.name ||
-                (item.assigneeId ? "已选定" : "未选择")
-              }}
-            </p>
-            <MeetingPeoplePicker
-              :departments="departments"
-              label="选择责任人"
-              @select="
-                (person) => {
-                  item.assigneeId = person.id;
-                  item.assigneeName = person.name;
-                }
-              "
-            />
-          </div>
+          <MeetingTrackersPicker v-model="item.trackers" :departments="departments" />
           <label
             >完成期限（北京时间）<input
               v-model="item.dueAt"
@@ -211,10 +215,10 @@ async function save(submit: boolean) {
       <template v-else>
         <span>{{
           meeting.trackFollowUp
-            ? items.length + coordinationTasks
+            ? items.length + coordinationTasks.length
               ? "本次将分派 " +
-                (items.length + coordinationTasks) +
-                " 项会后待办，发布后纪要和待办将锁定。"
+                (items.length + coordinationTasks.length) +
+                " 项会后待办。跟踪人员将分别收到反馈待办。"
               : "本次未添加会后待办，发布后不会向成员发送反馈待办。"
             : "发布纪要后会议自动办结。"
         }}</span>

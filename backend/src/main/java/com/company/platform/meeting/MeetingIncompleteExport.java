@@ -69,7 +69,7 @@ public class MeetingIncompleteExport {
                     SELECT i.*,u.name,u.employee_no,d.name AS department_name
                     FROM portal.meeting_item i JOIN iam.user_account u ON u.id=i.assignee_id
                     JOIN iam.department d ON d.id=u.department_id
-                    WHERE i.meeting_id=? AND i.state<>'CONFIRMED' ORDER BY i.due_at,i.id
+                    WHERE i.meeting_id=? AND i.removed_at IS NULL AND i.state<>'CONFIRMED' ORDER BY i.due_at,i.id
                     """,id)){
                 boolean review="SUBMITTED".equals(item.get("state"));
                 String state=review?"待发起人确认":"RETURNED".equals(item.get("state"))?"退回待补充":"未提交反馈";

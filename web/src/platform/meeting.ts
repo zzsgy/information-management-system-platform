@@ -29,6 +29,8 @@ export interface MeetingSummary {
   state: string;
 }
 export interface MeetingAttendee {
+  /** 受邀记录 ID，用于定位协调事项的发起人。 */
+  id?: string;
   userId: string;
   name: string;
   employeeNo: string;
@@ -45,9 +47,25 @@ export interface MeetingAttendee {
 }
 export interface MeetingItemDraft {
   content: string;
-  assigneeId: string;
-  assigneeName?: string;
+  trackers: MeetingOption[];
   dueAt: string;
+}
+/** 同一待办的个人反馈入口及可见状态。 */
+export interface MeetingTracker {
+  id: string;
+  assigneeId: string;
+  assigneeName: string;
+  state: string | null;
+  canOpen: boolean;
+}
+export interface MeetingItemGroup {
+  id: string;
+  groupId: string;
+  content: string;
+  dueAt: string;
+  trackers: MeetingTracker[];
+  /** 由协调结论生成的待办通过原协调结果更正。 */
+  coordinationKey?: string | null;
 }
 export interface MeetingItem {
   id: string;
@@ -104,13 +122,10 @@ export interface MeetingDetail extends MeetingSummary {
     decisions: string | null;
     publishedAt: string | null;
     items?: MeetingItemDraft[];
+    /** 发布前额外加入的协调事项跟踪人员。 */
+    coordinationTrackers?: { key: string; trackers: MeetingOption[] }[];
   } | null;
-  items: (Omit<MeetingItem, "state"> & {
-    canOpen: boolean;
-    state: string | null;
-    /** 由协调结论分派的待办指向该行的更正入口。 */
-    coordinationKey?: string | null;
-  })[];
+  items: MeetingItemGroup[];
 }
 
 export const meetingStates: Record<string, string> = {
@@ -163,6 +178,7 @@ export interface MaterialRow {
 /** 调用本场事项结论接口和展示纪要所需的字段。 */
 export interface CoordinationResult {
   key: string;
+  subject: string;
   conclusion: string | null;
   /** 改派后的配合部门，旧协调结果可能没有这两个字段。 */
   departmentId?: string | null;

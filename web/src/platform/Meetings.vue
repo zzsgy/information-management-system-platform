@@ -130,12 +130,14 @@ const submissions = computed(
 
 /** 本人事项优先；退回补充的事项仍需填写，未获授权读取的状态单独列出。 */
 const followUpOwners = computed(() => {
-  const tasks = detail.value?.items ?? [];
+  const tasks = (detail.value?.items ?? []).map((task) => {
+    const own = task.trackers.find((tracker) => tracker.assigneeId === profile.value?.user.id);
+    const next = task.trackers.find((tracker) => needsFeedback(tracker.state)) ?? task.trackers[0];
+    return { ...task, mine: !!own, state: (own ?? next)?.state ?? null };
+  });
   return [true, false]
     .map((mine) => {
-      const assigned = tasks.filter(
-        (task) => (task.assigneeId === profile.value?.user.id) === mine,
-      );
+      const assigned = tasks.filter((task) => task.mine === mine);
       return {
         mine,
         groups: [
@@ -518,7 +520,7 @@ function replyLabel(reply?: string) {
         <h2><Icon name="task" :size="20" /> 会后待办</h2>
         <RichTextView class="meeting-text" :value="item.content" />
         <p>
-          责任人 {{ item.assigneeName }} · 截止 {{ portalTime(item.dueAt) }} ·
+          跟踪人 {{ item.assigneeName }} · 截止 {{ portalTime(item.dueAt) }} ·
           {{ item.overdue ? "逾期" : meetingStates[item.state] }}
         </p>
         <ul v-if="item.history.length" class="meeting-history">
@@ -1108,7 +1110,7 @@ function replyLabel(reply?: string) {
                 <li v-for="(task, index) in detail.minutes.items" :key="index">
                   <RichTextView class="meeting-text" :value="task.content" />
                   <small
-                    >{{ task.assigneeName }} · 截止
+                    >{{ task.trackers.map((person) => person.name).join('、') }} · 截止
                     {{ portalTime(task.dueAt) }}</small
                   >
                 </li>
@@ -1127,25 +1129,23 @@ function replyLabel(reply?: string) {
                 <section v-for="group in owner.groups" :key="group.label" class="meeting-follow-up-group">
                   <h5>{{ group.label }}</h5>
                   <ul class="meeting-history meeting-follow-up-list">
-                    <li v-for="task in group.tasks" :key="task.id" :class="{ 'own-follow-up': owner.mine }">
+                    <li v-for="task in group.tasks" :key="task.groupId" :class="{ 'own-follow-up': owner.mine }">
                       <div class="meeting-follow-up-copy">
-                        <a v-if="task.canOpen" :href="'#/meetings?item=' + task.id">{{ plainPreview(task.content) }}</a>
+                        <a v-if="task.trackers.some((tracker) => tracker.canOpen)" :href="'#/meetings?item=' + task.id">{{ plainPreview(task.content) }}</a>
                         <RichTextView v-else class="meeting-text" :value="task.content" />
-                        <small>
-                          {{ task.assigneeName }}<template v-if="task.state"> · {{ meetingStates[task.state] }}</template>
-                          · 截止 {{ portalTime(task.dueAt) }}
-                        </small>
+                        <small>截止 {{ portalTime(task.dueAt) }}</small>
+                        <div v-for="tracker in task.trackers" :key="tracker.id" class="meeting-tracker-line">
+                          <small>{{ tracker.assigneeName }}<template v-if="tracker.state"> · {{ meetingStates[tracker.state] }}</template></small>
+                          <a v-if="tracker.canOpen" :href="'#/meetings?item=' + tracker.id">
+                            {{ tracker.assigneeId === profile?.user.id && needsFeedback(tracker.state) ? '填写反馈' : '查看待办' }}
+                          </a>
+                        </div>
                       </div>
-                      <div v-if="task.canOpen || (organizer && options)" class="meeting-follow-up-actions">
-                        <template v-if="organizer && options">
-                          <button v-if="task.coordinationKey" type="button" class="secondary"
-                            @click="openLinkedCoordination(task.coordinationKey)">编辑关联协调结果</button>
-                          <MeetingPublishedItemEditor v-else :item="task" :departments="options.departments"
-                            @saved="reloadDetail" />
-                        </template>
-                        <a v-if="task.canOpen" class="secondary meeting-follow-up-action" :href="'#/meetings?item=' + task.id">
-                          {{ owner.mine && needsFeedback(task.state) ? '填写反馈' : '查看待办' }}
-                        </a>
+                      <div v-if="organizer && options" class="meeting-follow-up-actions">
+                        <button v-if="task.coordinationKey" type="button" class="secondary"
+                          @click="openLinkedCoordination(task.coordinationKey)">编辑关联协调结果</button>
+                        <MeetingPublishedItemEditor v-else :item="task" :departments="options.departments"
+                          @saved="reloadDetail" />
                       </div>
                     </li>
                   </ul>
@@ -1725,6 +1725,7 @@ function replyLabel(reply?: string) {
   min-width: 0;
   overflow-wrap: anywhere;
 }
+.meeting-tracker-line,
 .meeting-follow-up-actions {
   display: flex;
   flex-wrap: wrap;
@@ -1747,14 +1748,5 @@ function replyLabel(reply?: string) {
 }
 .meeting-decline-form > button {
   justify-self: center;
-}
-.meeting-follow-up-action {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  flex-shrink: 0;
-  min-height: 40px;
-  padding: 8px 16px;
-  white-space: nowrap;
 }
 </style>

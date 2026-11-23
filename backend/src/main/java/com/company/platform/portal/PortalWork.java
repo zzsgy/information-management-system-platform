@@ -284,7 +284,7 @@ public class PortalWork {
                                FILTER (WHERE i.state IN ('PENDING','RETURNED')))[1] AS pending_item,
                            max(i.due_at) AS last_due,
                            max(COALESCE((i.history->-1->>'at')::timestamptz,i.created_at)) AS activity_at
-                    FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.assignee_id=a.user_id
+                    FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.assignee_id=a.user_id AND i.removed_at IS NULL
                 ) f
                 WHERE a.user_id=? AND a.removed_at IS NULL
                 UNION ALL
@@ -294,7 +294,7 @@ public class PortalWork {
                     i.due_at,'#/meetings?item='||i.id,'MEETING',
                     CASE WHEN i.state IN ('PENDING','RETURNED') AND i.due_at<CURRENT_TIMESTAMP THEN 'OVERDUE' ELSE i.state END,
                     i.created_at,CASE WHEN i.state IN ('SUBMITTED','CONFIRMED') THEN (i.history->-1->>'at')::timestamptz END
-                FROM portal.meeting_item i WHERE i.assignee_id=?
+                FROM portal.meeting_item i WHERE i.assignee_id=? AND i.removed_at IS NULL
                     AND NOT EXISTS (SELECT 1 FROM portal.meeting_attendee a
                         WHERE a.meeting_id=i.meeting_id AND a.user_id=i.assignee_id AND a.removed_at IS NULL)
                 UNION ALL
@@ -302,7 +302,7 @@ public class PortalWork {
                     THEN split_part(i.content,chr(10),2) ELSE i.content END,120),'APPROVAL',
                     NULL::timestamptz,'#/meetings?item='||i.id,'MEETING',i.state,(i.history->-1->>'at')::timestamptz,NULL
                 FROM portal.meeting_item i JOIN portal.meeting_booking m ON m.id=i.meeting_id
-                WHERE m.organizer_id=? AND i.state='SUBMITTED'
+                WHERE m.organizer_id=? AND i.removed_at IS NULL AND i.state='SUBMITTED'
                 UNION ALL
                 SELECT md5('meeting-organizer:'||m.id)::uuid,CASE WHEN m.minutes_published_at IS NULL THEN '发布会议纪要 · ' ELSE '确认会议办结 · ' END||m.subject,
                     'HANDLING',NULL::timestamptz,'#/meetings?id='||m.id||CASE
@@ -311,7 +311,7 @@ public class PortalWork {
                 FROM portal.meeting_booking m
                 WHERE m.organizer_id=? AND m.cancelled_at IS NULL AND m.closed_at IS NULL
                     AND m.actual_ended_at IS NOT NULL AND (m.minutes_published_at IS NULL OR NOT EXISTS(
-                        SELECT 1 FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.state<>'CONFIRMED'))
+                        SELECT 1 FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.removed_at IS NULL AND i.state<>'CONFIRMED'))
                 """;
     }
     /** 反馈答复不依赖档案入口；档案来源在权限撤销后从联合收件箱实时消失。 */

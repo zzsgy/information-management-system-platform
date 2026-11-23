@@ -153,14 +153,14 @@ function confirm() {
           : 'meeting-person-panel'
       "
       :aria-labelledby="multiple ? titleId : undefined"
-      @cancel.prevent="open = false"
+      @cancel.stop.prevent="open = false"
     >
       <div :class="{ 'flow-dialog-shell': multiple }">
         <header v-if="multiple" class="flow-dialog-header">
           <span class="flow-dialog-icon" aria-hidden="true"
             ><Icon name="people" :size="22"
           /></span>
-          <h2 :id="titleId">选择受邀员工</h2>
+          <h2 :id="titleId">{{ label }}</h2>
           <button
             type="button"
             class="icon-button"

@@ -1,17 +1,17 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from "vue";
 import { api } from "./api";
-import MeetingPeoplePicker from "./MeetingPeoplePicker.vue";
+import MeetingTrackersPicker from "./MeetingTrackersPicker.vue";
 import RichTextEditor from "./RichTextEditor.vue";
 import {
   meetingDateInput,
   meetingInstant,
-  type MeetingItemDraft,
+  type MeetingItemGroup,
   type MeetingOption,
 } from "./meeting";
 
 const props = defineProps<{
-  item: MeetingItemDraft & { id: string };
+  item: MeetingItemGroup;
   departments: MeetingOption[];
 }>();
 const emit = defineEmits<{ saved: [] }>();
@@ -19,23 +19,17 @@ const dialog = ref<HTMLDialogElement>();
 const open = ref(false);
 const busy = ref(false);
 const error = ref("");
-const draft = reactive({
+const draft = reactive<{ content: string; trackers: MeetingOption[]; dueAt: string }>({
   content: "",
-  assigneeId: "",
-  assigneeName: "",
+  trackers: [],
   dueAt: "",
 });
-const requiresFeedback = computed(
-  () =>
-    draft.assigneeId !== props.item.assigneeId ||
-    draft.content !== props.item.content,
-);
+const requiresFeedback = computed(() => draft.content !== props.item.content);
 watch(dialog, (value) => value?.showModal(), { flush: "post" });
 
 function edit() {
   draft.content = props.item.content;
-  draft.assigneeId = props.item.assigneeId;
-  draft.assigneeName = props.item.assigneeName ?? "";
+  draft.trackers = props.item.trackers.map((person) => ({ id: person.assigneeId, name: person.assigneeName }));
   draft.dueAt = meetingDateInput(props.item.dueAt);
   error.value = "";
   open.value = true;
@@ -50,7 +44,7 @@ async function save() {
       method: "PUT",
       body: JSON.stringify({
         content: draft.content,
-        assigneeId: draft.assigneeId,
+        assigneeIds: draft.trackers.map((person) => person.id),
         dueAt: meetingInstant(draft.dueAt),
       }),
     });
@@ -85,17 +79,7 @@ async function save() {
           required
         />
         <div class="flow-dialog-section">
-          <span>责任人（唯一） {{ draft.assigneeName }}</span>
-          <MeetingPeoplePicker
-            :departments="departments"
-            label="更换责任人"
-            @select="
-              (person) => {
-                draft.assigneeId = person.id;
-                draft.assigneeName = person.name;
-              }
-            "
-          />
+          <MeetingTrackersPicker v-model="draft.trackers" :departments="departments" />
         </div>
         <label
           >截止时间（北京时间）<input
@@ -121,7 +105,7 @@ async function save() {
         <button
           type="submit"
           class="primary"
-          :disabled="busy || !draft.content.trim()"
+          :disabled="busy || !draft.content.trim() || !draft.trackers.length"
         >
           保存待办
         </button>
