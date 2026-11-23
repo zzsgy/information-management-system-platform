@@ -118,7 +118,7 @@ async function loadOrganization() {
   generalManager.value = data.generalManager[0] || null;
   if (!departmentId.value) departmentId.value = data.departments[0]?.id || "";
 }
-/** 查询有当前档案入口权限的候选；普通负责人还受本部门范围限制。 */
+/** 查询符合当前职责任职条件的候选，部门负责人限本部门。 */
 async function findCandidates() {
   try {
     candidates.value = (
@@ -369,7 +369,10 @@ onMounted(async () => {
       <div class="flow-dialog-body">
         <section class="flow-dialog-overview">
           <h3>配置说明</h3>
-          <p class="muted">
+          <p v-if="dutyType === 'DEPARTMENT_MANAGER'" class="muted">
+            已配置档案入口权限的本部门在职员工可在首次登录前任职。职责立即生效并保留任职历史。
+          </p>
+          <p v-else class="muted">
             人员需先具备有效档案入口权限，职责立即生效并保留任职历史。
           </p>
         </section>

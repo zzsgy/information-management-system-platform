@@ -13,6 +13,7 @@ import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.transaction.annotation.Transactional;
+import java.time.Instant;
 import java.util.*;
 import static org.junit.jupiter.api.Assertions.*;
 
@@ -80,6 +81,41 @@ class SystemAdministratorIntegrationTest {
         assertEquals(1,db.count("SELECT count(*) FROM iam.user_role WHERE module=? AND role_code=? AND state='ACTIVE'",module,code));
         return employee;
     }
+    /** 待首次设密的员工可先任职，审批入口和明确拒绝仍按现行规则处理。 */
+    @Test @Transactional void departmentManagerCanBeConfiguredBeforeFirstLogin() {
+        UUID department=UUID.randomUUID();
+        db.update("INSERT INTO iam.department(id,code,name) VALUES (?,?,?)",department,department.toString(),"部门负责人验收");
+        UUID pending=person(), noAccess=person(), denied=person(), outsider=person();
+        var staffRoles=List.of(Sql.map("roleId",role("ARCHIVE","STAFF")));
+        for(UUID person:List.of(pending,denied,outsider)) assign(context(person,1),person,staffRoles);
+        db.update("UPDATE iam.user_account SET department_id=?,password_setup_required=true WHERE id IN (?,?,?)",department,pending,noAccess,denied);
+        db.update("UPDATE iam.user_account SET password_setup_required=true WHERE id=?",outsider);
+        db.update("""
+            INSERT INTO iam.permission_assignment(id,user_id,permission_id,scope_type,effect,valid_from,granted_by)
+            SELECT ?,?,id,'COMPANY','DENY',CURRENT_TIMESTAMP,? FROM iam.permission WHERE code='ARCHIVE.ACCESS'
+            """,UUID.randomUUID(),denied,admin.userId());
+
+        var candidates=organizationDuties.candidates(admin,Map.of("dutyType","DEPARTMENT_MANAGER","departmentId",department.toString()));
+        var items=(List<?>)candidates.get("items");
+        assertEquals(1,items.size());
+        assertEquals(pending,((Map<?,?>)items.getFirst()).get("id"));
+
+        var duty=Sql.map("dutyType","DEPARTMENT_MANAGER","userId",pending.toString(),"validFrom",Instant.now().toString());
+        var body=Sql.map("duties",List.of(duty),"changeReason","会前配置部门负责人","approvalRef","TEST-PENDING");
+        organizationDuties.department(context("DEPARTMENT",department,"MANAGEMENT_DUTIES",1),department,body);
+        UUID assignment=(UUID)db.required("SELECT id FROM iam.department_manager WHERE department_id=? AND user_id=? AND duty_type='DEPARTMENT_MANAGER' AND valid_until IS NULL",department,pending).get("id");
+        assertEquals(0,db.count("SELECT count(*) FROM iam.session WHERE user_id=?",pending));
+        assertEquals(false,db.required("SELECT workflow.assignment_valid('DEPARTMENT',?,?) AS allowed",assignment,pending).get("allowed"));
+
+        db.update("UPDATE iam.user_account SET password_setup_required=false WHERE id=?",pending);
+        assertEquals(true,db.required("SELECT workflow.assignment_valid('DEPARTMENT',?,?) AS allowed",assignment,pending).get("allowed"));
+
+        duty.put("userId",denied.toString());
+        var rejected=context("DEPARTMENT",department,"MANAGEMENT_DUTIES",2);
+        assertEquals(400,assertThrows(ApiFault.class,()->organizationDuties.department(rejected,department,body)).status);
+        assertEquals(1,db.count("SELECT count(*) FROM iam.department_manager WHERE id=? AND valid_until IS NULL",assignment));
+    }
+
     @Test @Transactional void lastArchiveAdministratorRoleCanOnlyBeRevokedByPlatformIt() {
         Actor operator=scopedManager();
         UUID target=soleAdministrator("ARCHIVE");Actor subject=login(target.toString(),"test-password");

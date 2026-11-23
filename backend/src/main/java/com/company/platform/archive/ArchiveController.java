@@ -109,7 +109,7 @@ public class ArchiveController {
     @GetMapping(value="/archive/view-sessions/{id}/pages/{page}",produces="image/png") public ResponseEntity<byte[]> page(@PathVariable String id,@PathVariable String page,HttpServletRequest r) {return ResponseEntity.ok().contentType(MediaType.IMAGE_PNG).cacheControl(CacheControl.noStore()).header("X-Content-Type-Options","nosniff").body(reading.page(actor(r),Inputs.uuid(id),Inputs.integer(page,0,1,10000),ApiController.requestId(r)));}
     /** 组织配置查询与人员候选只给平台组织管理者，不复用公盘角色。 */
     @GetMapping("/admin/organization-duties") public Map<String,Object> organization(HttpServletRequest r) {return ok(duties.read(actor(r)),r);}
-    /** 返回具备当前档案入口权限的合法组织审批候选，最多100人。 */
+    /** 返回符合对应任职条件的组织审批候选，最多100人。 */
     @GetMapping("/admin/organization-duties/candidates") public Map<String,Object> candidates(@RequestParam Map<String,String> query,HttpServletRequest r) {return ok(duties.candidates(actor(r),query),r);}
     /** 公司总经理审批职责独立配置，不引用公盘角色作为批准来源。 */
     @PutMapping("/admin/company-duties/general-manager") public Map<String,Object> generalManager(@RequestBody Map<String,Object> body,HttpServletRequest r) {return ok(duties.generalManager(context(r),body),r);}

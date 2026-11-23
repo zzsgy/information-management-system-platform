@@ -21,13 +21,20 @@ public class OrganizationDuties {
         requireOrganizationAdministrator(actor);
         return Sql.map("departments",db.rows("SELECT id,code,name,row_version FROM iam.department WHERE status='ACTIVE' ORDER BY code LIMIT 200").stream().map(row->Sql.view(row,"id,code,name,row_version")).toList(),"duties",db.rows("SELECT d.id,d.department_id,d.user_id,d.duty_type,d.valid_from,d.valid_until,d.change_reason,d.approval_reference,u.name,u.employee_no FROM iam.department_manager d JOIN iam.user_account u ON u.id=d.user_id WHERE d.valid_until IS NULL ORDER BY d.department_id,d.duty_type").stream().map(row->Sql.view(row,"id,department_id,user_id,duty_type,valid_from,valid_until,change_reason,approval_reference,name,employee_no")).toList(),"generalManager",db.rows("SELECT d.id,d.user_id,d.valid_from,d.change_reason,d.approval_reference,u.name,u.employee_no FROM iam.company_duty d JOIN iam.user_account u ON u.id=d.user_id WHERE d.duty_code='GENERAL_MANAGER' AND d.valid_until IS NULL").stream().map(row->Sql.view(row,"id,user_id,valid_from,change_reason,approval_reference,name,employee_no")).toList());
     }
-    /** 当前合法候选仅返回工号姓名；负责人限本部门，总经理和分管领导不假定属于该部门。 */
+    /** 当前合法候选仅返回工号姓名，部门负责人按已配置的角色判断任职资格。 */
     public Map<String,Object> candidates(Actor actor,Map<String,String> query) {
         requireOrganizationAdministrator(actor);Inputs.only(query,"departmentId","dutyType","keyword");String type=Inputs.choice(query.get("dutyType"),"DEPARTMENT_MANAGER","SUPERVISING_LEADER","GENERAL_MANAGER");
         String keyword=query.getOrDefault("keyword","");if(keyword.length()>100) throw ApiFault.invalid("人员检索条件过长");
-        String where=" WHERE u.status='ACTIVE' AND iam.archive_access_enabled(u.id) AND NOT iam.it_shared_borrower(u.id) AND (u.name ILIKE ? OR u.employee_no ILIKE ?)";List<Object> args=new ArrayList<>(List.of("%"+keyword.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%","%"+keyword.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"));
+        String where=" WHERE u.status='ACTIVE' AND "+eligibleForDuty(type)+" AND (u.name ILIKE ? OR u.employee_no ILIKE ?)";List<Object> args=new ArrayList<>(List.of("%"+keyword.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%","%"+keyword.replace("\\","\\\\").replace("%","\\%").replace("_","\\_")+"%"));
         if(type.equals("DEPARTMENT_MANAGER")){where+=" AND u.department_id=?";args.add(Inputs.uuid(query.get("departmentId")));}
         return Sql.map("items",db.rows("SELECT u.id,u.name,u.employee_no FROM iam.user_account u"+where+" ORDER BY u.employee_no LIMIT 100",args.toArray()).stream().map(row->Sql.view(row,"id,name,employee_no")).toList());
+    }
+
+    /** 先登记部门负责人时允许待设密员工，其他职责沿用现有的实时入口规则。 */
+    private static String eligibleForDuty(String type) {
+        return "DEPARTMENT_MANAGER".equals(type)
+                ? "iam.role_action_configured(u.id,'ARCHIVE.ACCESS') AND NOT u.it_shared_account"
+                : "iam.archive_access_enabled(u.id) AND NOT iam.it_shared_borrower(u.id)";
     }
     /** 部门负责人和分管领导分别维护；本轮只接受立即生效，保留全部旧任职。 */
     public Map<String,Object> department(Commands.Context context,UUID department,Map<String,Object> body) {
@@ -37,10 +44,16 @@ public class OrganizationDuties {
             Set<UUID> affected=new TreeSet<>();for(var duty:duties) {affected.add(Inputs.uuid(duty.get("userId")));for(var old:db.rows("SELECT user_id FROM iam.department_manager WHERE department_id=? AND duty_type=? AND valid_until IS NULL",department,duty.get("dutyType"))) affected.add((UUID)old.get("user_id"));}
             for(UUID person:affected) db.required("SELECT id FROM iam.user_account WHERE id=? FOR UPDATE",person);
             var row=db.required("SELECT * FROM iam.department WHERE id=? AND status='ACTIVE' FOR UPDATE",department);Commands.version(context,row);
-            for(var duty:duties) {UUID user=Inputs.uuid(duty.get("userId"));var person=db.required("SELECT * FROM iam.user_account WHERE id=? AND status='ACTIVE'",user);if(duty.get("dutyType").equals("DEPARTMENT_MANAGER")&&!department.equals(person.get("department_id"))) throw ApiFault.invalid("部门负责人须属于该部门");
-                db.update("UPDATE iam.department_manager SET valid_until=CURRENT_TIMESTAMP WHERE department_id=? AND duty_type=? AND valid_until IS NULL",department,duty.get("dutyType"));
-                if(db.count("SELECT CASE WHEN iam.archive_access_enabled(id) AND NOT iam.it_shared_borrower(id) THEN 1 ELSE 0 END FROM iam.user_account WHERE id=?",user)!=1) throw ApiFault.invalid("审批人员须先取得有效档案模块入口权限");
-                db.update("INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by,approval_reference) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?)",UUID.randomUUID(),department,user,duty.get("dutyType"),body.get("changeReason"),context.actor().userId(),body.get("approvalRef"));
+            for(var duty:duties) {
+                String type=(String)duty.get("dutyType");
+                UUID user=Inputs.uuid(duty.get("userId"));
+                var person=db.required("SELECT department_id FROM iam.user_account WHERE id=? AND status='ACTIVE'",user);
+                if(type.equals("DEPARTMENT_MANAGER")&&!department.equals(person.get("department_id")))
+                    throw ApiFault.invalid("部门负责人须属于该部门");
+                if(db.count("SELECT count(*) FROM iam.user_account u WHERE u.id=? AND "+eligibleForDuty(type),user)!=1)
+                    throw ApiFault.invalid("审批人员须先配置有效档案模块入口权限");
+                db.update("UPDATE iam.department_manager SET valid_until=CURRENT_TIMESTAMP WHERE department_id=? AND duty_type=? AND valid_until IS NULL",department,type);
+                db.update("INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by,approval_reference) VALUES(?,?,?,?,CURRENT_TIMESTAMP,?,?,?)",UUID.randomUUID(),department,user,type,body.get("changeReason"),context.actor().userId(),body.get("approvalRef"));
             }
             for(UUID person:affected) identity.invalidate(person,"ORGANIZATION_DUTY_CHANGE",UUID.randomUUID());db.update("UPDATE iam.department SET row_version=row_version+1 WHERE id=?",department);return Commands.result(context,department,((Number)row.get("row_version")).intValue()+1);
         },id->Commands.result(context,id,((Number)db.required("SELECT row_version FROM iam.department WHERE id=?",id).get("row_version")).intValue()));
