@@ -278,7 +278,7 @@ public class MeetingFollowUp {
                     AND (i.assignee_id=? OR m.organizer_id=? OR (m.kind='WEEKLY' AND ?)
                         OR (m.share_all AND EXISTS (
                             SELECT 1 FROM portal.meeting_attendee a
-                            WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL)))
+                            WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL AND NOT a.material_only)))
                 """ + (lock ? " FOR NO KEY UPDATE OF i" : ""),
                 id, actor.userId(), lock, actor.userId(), actor.userId(), bookings.generalManager(actor.userId()), actor.userId());
     }

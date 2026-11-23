@@ -45,7 +45,7 @@ const data = reactive({
   shareAll: false,
 });
 const attendees = ref<MeetingPerson[]>(
-  original?.attendees.map((a) => ({
+  original?.attendees.filter((a) => !a.materialOnly).map((a) => ({
     id: a.userId,
     name: a.name,
     employeeNo: a.employeeNo,

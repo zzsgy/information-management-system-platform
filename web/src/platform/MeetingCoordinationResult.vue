@@ -19,6 +19,7 @@ const props = defineProps<{
   departmentName?: string | null;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  sourceDueAt?: string;
   trackFollowUp: boolean;
   departments: MeetingOption[];
   published?: boolean;
@@ -56,7 +57,8 @@ function edit() {
   draft.departmentId = savedDepartment.value;
   draft.assigneeId = current?.assigneeId ?? props.assigneeId ?? "";
   draft.assigneeName = current?.assigneeName ?? props.assigneeName ?? "";
-  draft.dueAt = current?.dueAt ? meetingDateInput(current.dueAt) : "";
+  const due = current ? current.dueAt : props.sourceDueAt;
+  draft.dueAt = due ? meetingDateInput(due) : "";
   draft.followUp = current?.followUp ?? false;
   error.value = "";
   open.value = true;

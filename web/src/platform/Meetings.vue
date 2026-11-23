@@ -15,6 +15,7 @@ import MeetingPublishedDecisions from "./MeetingPublishedDecisions.vue";
 import MeetingPublishedItemEditor from "./MeetingPublishedItemEditor.vue";
 import MeetingReading from "./MeetingReading.vue";
 import MeetingWorkbookPanel from "./MeetingWorkbookPanel.vue";
+import MeetingWeeklyImport from "./MeetingWeeklyImport.vue";
 import MeetingIncompleteExport from "./MeetingIncompleteExport.vue";
 import { vNumbered } from "./meetingNumbered";
 import RichTextEditor from "./RichTextEditor.vue";
@@ -111,7 +112,7 @@ const formKinds = computed(() =>
   materialOrder.filter((kind) => detail.value?.materialTypes?.includes(kind)),
 );
 const own = computed(() =>
-  detail.value?.attendees.find((a) => a.userId === profile.value?.user.id),
+  detail.value?.attendees.find((a) => !a.materialOnly && a.userId === profile.value?.user.id),
 );
 /** Excel 和逐人提交状态由发起人查看。 */
 const organizer = computed(() => detail.value?.organizerId === profile.value?.user.id);
@@ -860,13 +861,20 @@ function replyLabel(reply?: string) {
               :can-import="detail.canStart && !!formKinds.length"
               @imported="reloadDetail"
             />
+            <MeetingWeeklyImport
+              v-if="organizer && (detail.canStart || detail.canEnd || detail.canWriteMinutes)"
+              :key="'weekly-' + detail.id"
+              :meeting-id="detail.id"
+              @imported="reloadDetail"
+            />
           </section>
 
           <section class="flow-dialog-section detail-attendees" aria-labelledby="meeting-attendees-title">
             <header class="meeting-actions meeting-spread">
               <h2 id="meeting-attendees-title">
                 受邀员工
-                <span class="booking-count">{{ detail.attendees.length }} 人</span>
+                <span class="booking-count">{{ detail.attendees.filter((person) => !person.materialOnly).length }} 人</span>
+                <span v-if="detail.attendees.some((person) => person.materialOnly)" class="booking-count"> · 含补录材料</span>
               </h2>
               <div v-if="(organizer && detail.canStart) || detail.readingRevision" class="meeting-actions">
                 <button
@@ -883,7 +891,7 @@ function replyLabel(reply?: string) {
                   :key="detail.id"
                   :meeting-id="detail.id"
                   :revision="detail.readingRevision"
-                  :other-attendees="detail.attendees.filter((person) => person.userId !== own?.userId)"
+                  :other-attendees="detail.attendees.filter((person) => !person.materialOnly && person.userId !== own?.userId)"
                   @saved="reloadDetail"
                   @stale="reloadDetail"
                 />
@@ -901,6 +909,7 @@ function replyLabel(reply?: string) {
                   }}</span>
                   <strong>{{ person.name }}</strong
                   ><span class="booking-count">{{ person.employeeNo }}</span>
+                  <span v-if="person.materialOnly" class="booking-count"> · 材料补录</span>
                 </div>
                 <template v-if="person.reply">
                   <span>

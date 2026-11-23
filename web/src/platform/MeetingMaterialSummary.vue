@@ -77,8 +77,8 @@ const tables = computed(() => {
             <th scope="col">填报人</th>
             <th scope="col">配合部门</th>
             <th scope="col">责任人（唯一）</th>
-            <template v-if="editing || results?.length">
-              <th scope="col">会议结论</th>
+            <template v-if="editing || results?.length || rows.some((row) => row.dueAt)">
+              <th v-if="editing || results?.length" scope="col">会议结论</th>
               <th scope="col">截止时间</th>
               <th v-if="editing" scope="col">操作</th>
             </template>
@@ -94,9 +94,9 @@ const tables = computed(() => {
             <td>{{ row.author.name }}</td>
             <td>{{ row.result?.department ?? row.department }}</td>
             <td>{{ row.result?.assigneeName ?? row.assigneeName }}</td>
-            <template v-if="editing || results?.length">
-              <td>{{ row.result?.conclusion }}</td>
-              <td>{{ row.result?.dueAt ? dateTime(row.result.dueAt) : "" }}</td>
+            <template v-if="editing || results?.length || rows.some((item) => item.dueAt)">
+              <td v-if="editing || results?.length">{{ row.result?.conclusion }}</td>
+              <td>{{ row.result ? (row.result.dueAt ? dateTime(row.result.dueAt) : "") : (row.dueAt ? dateTime(row.dueAt) : "") }}</td>
               <td v-if="editing">
                 <MeetingCoordinationResult
                   :row-key="row.key"
@@ -106,6 +106,7 @@ const tables = computed(() => {
                   :department-name="row.department"
                   :assignee-id="row.assigneeId"
                   :assignee-name="row.assigneeName"
+                  :source-due-at="row.dueAt"
                   :meeting-id="editing.meetingId"
                   :departments="editing.departments"
                   :track-follow-up="editing.trackFollowUp"

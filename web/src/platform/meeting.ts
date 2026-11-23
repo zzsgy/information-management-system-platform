@@ -37,6 +37,8 @@ export interface MeetingAttendee {
   reply?: string;
   declineReason?: string;
   materialRequired?: boolean;
+  /** 补录材料归属人不计入受邀员工。 */
+  materialOnly?: boolean;
   report?: string | null;
   topics?: string | null;
   materialAt?: string | null;
@@ -174,6 +176,8 @@ export interface MaterialRow {
   department?: string;
   assigneeId?: string | null;
   assigneeName?: string | null;
+  /** 周会汇总中原有的截止时间。 */
+  dueAt?: string;
 }
 /** 调用本场事项结论接口和展示纪要所需的字段。 */
 export interface CoordinationResult {

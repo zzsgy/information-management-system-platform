@@ -286,7 +286,7 @@ public class PortalWork {
                            max(COALESCE((i.history->-1->>'at')::timestamptz,i.created_at)) AS activity_at
                     FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.assignee_id=a.user_id AND i.removed_at IS NULL
                 ) f
-                WHERE a.user_id=? AND a.removed_at IS NULL
+                WHERE a.user_id=? AND a.removed_at IS NULL AND NOT a.material_only
                 UNION ALL
                 SELECT i.id,'会后反馈 · '||left(CASE WHEN starts_with(i.content,'IMS-RICH-1'||chr(10))
                     THEN split_part(i.content,chr(10),2) ELSE i.content END,120),
@@ -296,7 +296,7 @@ public class PortalWork {
                     i.created_at,CASE WHEN i.state IN ('SUBMITTED','CONFIRMED') THEN (i.history->-1->>'at')::timestamptz END
                 FROM portal.meeting_item i WHERE i.assignee_id=? AND i.removed_at IS NULL
                     AND NOT EXISTS (SELECT 1 FROM portal.meeting_attendee a
-                        WHERE a.meeting_id=i.meeting_id AND a.user_id=i.assignee_id AND a.removed_at IS NULL)
+                        WHERE a.meeting_id=i.meeting_id AND a.user_id=i.assignee_id AND a.removed_at IS NULL AND NOT a.material_only)
                 UNION ALL
                 SELECT md5('meeting-review:'||i.id)::uuid,'确认会后反馈 · '||left(CASE WHEN starts_with(i.content,'IMS-RICH-1'||chr(10))
                     THEN split_part(i.content,chr(10),2) ELSE i.content END,120),'APPROVAL',

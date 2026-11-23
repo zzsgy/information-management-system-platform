@@ -36,7 +36,7 @@ public class MeetingBookings {
     private static final String VISIBLE = """
             (m.organizer_id=? OR (m.kind='WEEKLY' AND ?) OR EXISTS (
                 SELECT 1 FROM portal.meeting_attendee a
-                WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL))
+                WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL AND NOT a.material_only))
             """;
     private static final DateTimeFormatter CONFLICT_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
             .withZone(ZoneId.of("Asia/Shanghai"));
@@ -115,22 +115,25 @@ public class MeetingBookings {
         result.put("canClose", organizer && "FOLLOW_UP".equals(row.get("state")) && allItemsConfirmed(id));
         // 阅读版本和确认时间仅发给发起人及确认人本人，沿用本次详情的事务快照。
         boolean sharedReading = Boolean.TRUE.equals(row.get("share_all")) && (organizer ||
-                attendees.stream().anyMatch(person -> actor.userId().equals(person.get("user_id"))));
+                attendees.stream().anyMatch(person -> actor.userId().equals(person.get("user_id"))
+                        && !Boolean.TRUE.equals(person.get("material_only"))));
         var readingMaterials = sharedReading ? readingMaterials(id) : List.<Map<String, Object>>of();
         if (full && summaryTypes(row).contains("COORDINATION"))
             result.put("coordinationResults", coordinationResults(row));
         var minutes = published || full ? minutes(row, attendees, full, actor.userId()) : null;
         boolean reportsShared = legacy && published && Boolean.TRUE.equals(minutes.get("reportsShared"));
-        result.put("attendees", attendees.stream().map(person -> {
+        result.put("attendees", attendees.stream().filter(person -> full || !Boolean.TRUE.equals(person.get("material_only"))).map(person -> {
             boolean ownOrFull = full || actor.userId().equals(person.get("user_id"));
-            String fields = "user_id,name,employee_no";
+            boolean materialOnly = Boolean.TRUE.equals(person.get("material_only"));
+            String fields = "user_id,name,employee_no,material_only";
             if (ownOrFull) {
-                fields += ",id,reply,decline_reason,material_required,report,topics,material_at";
+                fields += ",id,material_required,report,topics,material_at";
+                if (!materialOnly) fields += ",reply,decline_reason";
             } else if (reportsShared) {
                 fields += ",report";
             }
             var visible = Sql.view(person, fields);
-            if (sharedReading && (organizer || actor.userId().equals(person.get("user_id")))
+            if (sharedReading && !materialOnly && (organizer || actor.userId().equals(person.get("user_id")))
                     && !"DECLINED".equals(person.get("reply"))) {
                 String revision = readingRevision(readingMaterials, (UUID) person.get("user_id"));
                 if (revision != null) {
@@ -265,7 +268,8 @@ public class MeetingBookings {
         boolean weekly = "WEEKLY".equals(row.get("kind"));
         if (roomChanged && schedule.room() != null) requireRoom(schedule.room());
         var current = new HashMap<UUID, Map<String, Object>>();
-        for (var person : attendees(id)) current.put((UUID) person.get("user_id"), person);
+        for (var person : attendees(id))
+            if (!Boolean.TRUE.equals(person.get("material_only"))) current.put((UUID) person.get("user_id"), person);
         Set<UUID> added = new LinkedHashSet<>(schedule.attendees());
         added.removeAll(current.keySet());
         validatePeople(actor, added);
@@ -321,7 +325,8 @@ public class MeetingBookings {
         if (actualStart.isBefore(starts)) {
             Set<UUID> occupying = new LinkedHashSet<>();
             for (var attendee : attendees(id)) {
-                if (!"DECLINED".equals(attendee.get("reply"))) occupying.add((UUID) attendee.get("user_id"));
+                if (!Boolean.TRUE.equals(attendee.get("material_only")) && !"DECLINED".equals(attendee.get("reply")))
+                    occupying.add((UUID) attendee.get("user_id"));
             }
             checkConflicts(id, actor.userId(), (UUID) row.get("room_id"), actualStart, ends, occupying,
                     Boolean.TRUE.equals(row.get("urgent")));
@@ -735,7 +740,7 @@ public class MeetingBookings {
 
     /** 只按工号匹配代填人员及责任人，姓名用于复核。 */
     Map<String, Object> workbookEmployee(String employeeNo) {
-        return db.one("SELECT u.id AS user_id,u.name,u.employee_no,d.name AS department FROM iam.user_account u"
+        return db.one("SELECT u.id AS user_id,u.name,u.employee_no,d.id AS department_id,d.name AS department FROM iam.user_account u"
                 + " JOIN iam.department d ON d.id=u.department_id AND d.status='ACTIVE'"
                 + " WHERE upper(u.employee_no)=upper(?) AND u.status='ACTIVE' AND NOT u.it_shared_account", employeeNo);
     }
@@ -749,7 +754,7 @@ public class MeetingBookings {
     /** Excel 新增受邀人员沿用会前邀请校验和通知，出席回复仍由员工办理。 */
     UUID inviteWorkbookEmployee(Actor actor, UUID id, Map<String, Object> meeting, UUID user) {
         validatePeople(actor, Set.of(user));
-        if (db.count("SELECT count(*) FROM portal.meeting_attendee WHERE meeting_id=? AND removed_at IS NULL", id) >= 500)
+        if (db.count("SELECT count(*) FROM portal.meeting_attendee WHERE meeting_id=? AND removed_at IS NULL AND NOT material_only", id) >= 500)
             throw ApiFault.invalid("本场会议的受邀员工已达 500 人");
         if (!Boolean.TRUE.equals(meeting.get("urgent")))
             checkPeople(id, Set.of(user), time(meeting, "starts_at"), time(meeting, "ends_at"));
@@ -757,6 +762,16 @@ public class MeetingBookings {
         db.update("UPDATE portal.meeting_booking SET row_version=row_version+1 WHERE id=?", id);
         notify(id, null, user, "MEETING_INVITED", "会议邀请 " + meeting.get("subject"));
         return (UUID) db.required("SELECT id FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=?", id, user).get("id");
+    }
+
+    /** 保留已有邀请，只为没有邀请的补录人员登记材料归属。 */
+    UUID registerWeeklyWorkbookAuthor(UUID meeting, UUID user, UUID existing) {
+        if (existing == null) return (UUID) db.required("""
+                INSERT INTO portal.meeting_attendee(id,meeting_id,user_id,material_required,material_only)
+                VALUES (?,?,?,false,true) RETURNING id
+                """, UUID.randomUUID(), meeting, user).get("id");
+        db.update("UPDATE portal.meeting_attendee SET removed_at=NULL,material_only=true WHERE id=? AND removed_at IS NOT NULL", existing);
+        return existing;
     }
 
     /** 纪要只共享议题与协调事项，汇报仍通过纪要正文发布。 */
@@ -819,12 +834,15 @@ public class MeetingBookings {
         var sections = new ArrayList<String>();
         for (var person : attendees) {
             var materials = db.rows("""
-                    SELECT kind,payload->>'text' AS text FROM portal.meeting_material
+                    SELECT kind,payload->>'text' AS text,payload->'author'->>'department' AS department,
+                           payload->>'weeklyWorkbook' AS weekly_workbook FROM portal.meeting_material
                     WHERE attendee_id=? AND kind IN ('REPORT','WEEKLY_PLAN') ORDER BY kind
                     """, person.get("id"));
             if (person.get("report") == null && materials.isEmpty()) continue;
             var lines = new ArrayList<String>();
-            lines.add(person.get("name") + "（" + person.get("employee_no") + "）");
+            var department = materials.stream().filter(item -> "true".equals(item.get("weekly_workbook")))
+                    .map(item -> item.get("department")).findFirst().orElse(null);
+            lines.add((department == null ? "" : department + " · ") + person.get("name") + "（" + person.get("employee_no") + "）");
             if (person.get("report") != null) lines.add("汇报 " + FormattedText.preview((String) person.get("report")));
             for (var material : materials)
                 lines.add(("REPORT".equals(material.get("kind")) ? "工作汇报 " : "本周计划 ") + material.get("text"));
@@ -901,7 +919,7 @@ public class MeetingBookings {
         db.update("""
                 INSERT INTO portal.meeting_message(id,user_id,meeting_id,kind,content)
                 SELECT gen_random_uuid(),user_id,meeting_id,?,? FROM portal.meeting_attendee
-                WHERE meeting_id=? AND removed_at IS NULL
+                WHERE meeting_id=? AND removed_at IS NULL AND NOT material_only
                 """, kind, text, meeting);
     }
 
@@ -986,7 +1004,7 @@ public class MeetingBookings {
         db.update("""
                 INSERT INTO portal.meeting_attendee(id,meeting_id,user_id,material_required) VALUES (?,?,?,?)
                 ON CONFLICT (meeting_id,user_id) DO UPDATE SET removed_at=NULL,invited_at=CURRENT_TIMESTAMP,
-                    material_required=EXCLUDED.material_required
+                    material_required=EXCLUDED.material_required,material_only=false
                 """, UUID.randomUUID(), meeting, user, materialRequired);
     }
 
@@ -1015,11 +1033,12 @@ public class MeetingBookings {
     }
 
     private Map<String, Object> activeAttendee(Actor actor, UUID id) {
-        return db.required("SELECT * FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=? AND removed_at IS NULL",
+        return db.required("SELECT * FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=? AND removed_at IS NULL AND NOT material_only",
                 id, actor.userId());
     }
 
     static boolean eligibleForMaterials(Map<String, Object> meeting, Map<String, Object> attendee) {
+        if (Boolean.TRUE.equals(attendee.get("material_only"))) return false;
         if (meeting.get("material_types") instanceof List<?> types)
             return !types.isEmpty() && !"DECLINED".equals(attendee.get("reply"));
         return Boolean.TRUE.equals(attendee.get("material_required"))
@@ -1064,7 +1083,7 @@ public class MeetingBookings {
                 FROM portal.meeting_booking m
                 JOIN iam.user_account u ON u.id=ANY(?::uuid[]) AND (u.id=m.organizer_id OR EXISTS (
                     SELECT 1 FROM portal.meeting_attendee a WHERE a.meeting_id=m.id AND a.user_id=u.id
-                        AND a.removed_at IS NULL AND a.reply<>'DECLINED'))
+                        AND a.removed_at IS NULL AND NOT a.material_only AND a.reply<>'DECLINED'))
                 WHERE m.id IS DISTINCT FROM ? AND m.cancelled_at IS NULL AND LEAST(m.starts_at,m.actual_started_at)<? AND COALESCE(m.actual_ended_at,m.ends_at)>?
                 ORDER BY u.name,u.employee_no,starts_at,ends_at
                 """, uuidArray(people), exclude, Timestamp.from(ends), Timestamp.from(starts));

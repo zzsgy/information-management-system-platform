@@ -3,6 +3,7 @@ package com.company.platform;
 import com.company.platform.meeting.MeetingBookings;
 import com.company.platform.meeting.MeetingFollowUp;
 import com.company.platform.meeting.MeetingWorkbooks;
+import com.company.platform.meeting.MeetingWeeklyImports;
 import com.company.platform.meeting.MeetingIncompleteExport;
 import com.company.platform.portal.PortalWork;
 import org.junit.jupiter.api.BeforeEach;
@@ -14,6 +15,7 @@ import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
 
 import java.time.Instant;
+import java.time.LocalDate;
 import java.util.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -42,6 +44,7 @@ class MeetingIntegrationTest {
     @Autowired MeetingBookings bookings;
     @Autowired MeetingFollowUp followUp;
     @Autowired MeetingWorkbooks workbooks;
+    @Autowired MeetingWeeklyImports weeklyImports;
     @Autowired MeetingIncompleteExport incomplete;
     @Autowired PortalWork portal;
 
@@ -958,6 +961,105 @@ class MeetingIntegrationTest {
     private String employeeLabel(Actor actor) {
         return db.required("SELECT name||' '||employee_no AS label FROM iam.user_account WHERE id=?",
                 actor.userId()).get("label").toString();
+    }
+
+    /** 已有会议补录多部门、多人材料，不将材料作者登记为受邀员工。 */
+    @Test
+    void importsWeeklySummaryIntoExistingMeetingBeforeMinutesPublication() throws IOException {
+        UUID child = request();
+        String parentCode = db.required("SELECT code FROM iam.department WHERE id=?", department).get("code").toString();
+        String childCode = "QC-" + child.toString().substring(0, 8);
+        db.update("INSERT INTO iam.department(id,code,name,parent_id) VALUES (?,?,?,?)",
+                child, childCode, "隔离验收子部门", department);
+        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?", child, outsider.userId());
+        db.update("""
+                INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by)
+                VALUES (?,?,?,'DEPARTMENT_MANAGER',CURRENT_TIMESTAMP,'周会补录验收',?)
+                """, request(), child, outsider.userId(), admin.userId());
+        var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        booking.putAll(Map.of("materialTypes", List.of(), "shareAll", true, "trackFollowUp", true));
+        UUID id = bookings.create(organizer, request(), booking);
+        bookings.start(organizer, id, request());
+        bookings.end(organizer, id, request());
+
+        var bytes = weeklySummary(childCode, parentCode, employeeLabel(outsider), employeeLabel(employee));
+        LocalDate date = LocalDate.parse("2026-11-23");
+        assertEquals(404, assertThrows(ApiFault.class, () -> weeklyImports.importSummary(employee, id, request(), date,
+                null, new ByteArrayInputStream(bytes))).status);
+        assertThrows(ApiFault.class, () -> weeklyImports.importSummary(organizer, id, request(), date.plusDays(1),
+                null, new ByteArrayInputStream(bytes)));
+        var preview = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
+        assertEquals(List.of(), preview.get("errors"));
+        assertEquals(4, values(preview, "materials").size());
+        assertEquals(1, values(bookings.detail(organizer, id), "attendees").size());
+        var imported = weeklyImports.importSummary(organizer, id, request(), date,
+                (String) preview.get("preview"), new ByteArrayInputStream(bytes));
+        assertEquals(4, imported.get("imported"));
+        var author = attendee(organizer, id, outsider);
+        assertEquals(true, author.get("materialOnly"));
+        assertNull(author.get("reply"));
+        assertEquals(404, assertThrows(ApiFault.class, () -> bookings.detail(outsider, id)).status);
+        assertFalse(hasPending(outsider, id));
+        var details = bookings.detail(organizer, id);
+        String drafted = ((Map<?, ?>) details.get("minutes")).get("materialsText").toString();
+        assertTrue(drafted.contains("会议隔离验收部门 / 隔离验收子部门"));
+        assertTrue(drafted.contains("上周事项"));
+        assertTrue(drafted.contains("同一合并名称下的第二行"));
+        assertTrue(drafted.contains("本周事项"));
+        assertTrue(drafted.contains("备注：保留备注"));
+        assertFalse(drafted.contains("上一周旧数据"));
+        assertFalse(drafted.contains("忽略问题"));
+        assertEquals("AWAITING_MINUTES", details.get("state"));
+        var materials = values(author, "materials");
+        var coordination = materials.stream().filter(m -> "COORDINATION".equals(m.get("kind"))).findFirst().orElseThrow();
+        assertTrue(coordination.get("data").toString().contains("2026-11-25T09:30:00Z"));
+        assertTrue(coordination.get("data").toString().contains("DEPARTMENT"));
+        assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("COMPANY"));
+        var repeated = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
+        assertTrue(values(repeated, "materials").stream().allMatch(row -> Boolean.TRUE.equals(row.get("conflict"))));
+        assertEquals(0, weeklyImports.importSummary(organizer, id, request(), date, (String) repeated.get("preview"),
+                new ByteArrayInputStream(bytes)).get("imported"));
+    }
+
+    /** 按截图列顺序构造两页可复现的源 XLSX，日期和名称与合并区域一致。 */
+    private static byte[] weeklySummary(String child, String partner, String author, String assignee) throws IOException {
+        var file = new ByteArrayOutputStream();
+        var bindings = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+        var workbook = "<workbook xmlns:r=\"" + bindings + "\"><sheets>"
+                + "<sheet name=\"协调事宜\" r:id=\"rId1\"/><sheet name=\"" + child + "\" r:id=\"rId2\"/></sheets></workbook>";
+        var relationships = "<Relationships><Relationship Id=\"rId1\" Type=\"" + bindings + "/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
+                + "<Relationship Id=\"rId2\" Type=\"" + bindings + "/worksheet\" Target=\"/xl/worksheets/sheet2.xml\"/></Relationships>";
+        var headers = List.of("序号", "事项类别", "具体事宜", "需协调 / 配合什么", "期望结果 /验收标准", "填报部门", "填报人+工号",
+                "配合部门", "责任人（唯一，姓名+工号）", "截止时间");
+        var coordination = "<worksheet><sheetData>" + weeklyRow(1, headers)
+                + weeklyRow(2, List.of("1", "需其他部门配合", "协调设备", "提供帮助", "核对完成", child,
+                author, partner, assignee, "2026/11/25 17:30"))
+                + weeklyRow(3, List.of("2", "需公司协调", "同步公司资源", "", "确认资源安排", partner,
+                assignee, "公司", author, "")) + "</sheetData></worksheet>";
+        var report = "<worksheet><sheetData>" + weeklyRow(1, List.of("日期", "名称", "序号", "事项说明", "备注"))
+                + weeklyRow(2, List.of("2026.11.16", "上周总结", "1", "上一周旧数据"))
+                + weeklyRow(3, List.of("2026.11.23", "上周总结", "1", "上周事项", "保留备注"))
+                + weeklyRow(4, List.of("", "", "2", "同一合并名称下的第二行"))
+                + weeklyRow(5, List.of("", "本周计划", "1", "本周事项"))
+                + weeklyRow(6, List.of("", "需解决问题", "1", "忽略问题")) + "</sheetData>"
+                + "<mergeCells><mergeCell ref=\"A3:A6\"/><mergeCell ref=\"B3:B4\"/></mergeCells></worksheet>";
+        try (var zip = new ZipOutputStream(file)) {
+            for (var entry : Map.of("xl/workbook.xml", workbook, "xl/_rels/workbook.xml.rels", relationships,
+                    "xl/worksheets/sheet1.xml", coordination, "xl/worksheets/sheet2.xml", report).entrySet()) {
+                zip.putNextEntry(new ZipEntry(entry.getKey()));
+                zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        }
+        return file.toByteArray();
+    }
+
+    private static String weeklyRow(int number, List<String> values) {
+        var row = new StringBuilder("<row r=\"" + number + "\">");
+        for (int i = 0; i < values.size(); i++) {
+            if (!values.get(i).isEmpty()) row.append(cell((char) ('A' + i) + Integer.toString(number), values.get(i)));
+        }
+        return row.append("</row>").toString();
     }
 
     /** 使用发起人下载的真实模板，只替换员工可填写的正文和协调行。 */

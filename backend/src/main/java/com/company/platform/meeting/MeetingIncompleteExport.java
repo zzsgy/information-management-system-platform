@@ -48,7 +48,7 @@ public class MeetingIncompleteExport {
                     SELECT a.*,u.name,u.employee_no,d.name AS department_name
                     FROM portal.meeting_attendee a JOIN iam.user_account u ON u.id=a.user_id
                     JOIN iam.department d ON d.id=u.department_id
-                    WHERE a.meeting_id=? AND a.removed_at IS NULL ORDER BY u.employee_no,u.id
+                    WHERE a.meeting_id=? AND a.removed_at IS NULL AND NOT a.material_only ORDER BY u.employee_no,u.id
                     """,id)){
                 UUID user=(UUID)person.get("user_id");
                 if("PENDING".equals(person.get("reply")))add(result,meeting,person,"参会回复","是否参加会议",cutoff,"未回复",false,now);

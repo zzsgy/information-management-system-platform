@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, reactive, ref } from "vue";
+import { computed, reactive, ref, watch } from "vue";
 import { api } from "./api";
 import RichTextEditor from "./RichTextEditor.vue";
 import MeetingTrackersPicker from "./MeetingTrackersPicker.vue";
@@ -24,11 +24,15 @@ const minutes = reactive({
   shareReports: draft?.sharedSummaries?.REPORT ?? false,
   shareCoordination: draft?.sharedSummaries?.COORDINATION ?? false,
 });
+/** 补录后刷新自动生成的材料内容，发起人已经编辑的正文继续保留。 */
+watch(() => props.meeting.minutes?.materialsText, (content, previous) => {
+  if (minutes.materialsText === (previous ?? "")) minutes.materialsText = content ?? "";
+});
 const readerSearch = ref("");
 const readerOptions = computed(() => {
   const query = readerSearch.value.trim().toLowerCase();
   return props.meeting.attendees.filter((person) =>
-    (person.name + " " + person.employeeNo).toLowerCase().includes(query),
+    !person.materialOnly && (person.name + " " + person.employeeNo).toLowerCase().includes(query),
   );
 });
 let sequence = 0;

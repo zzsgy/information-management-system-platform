@@ -3,12 +3,15 @@ package com.company.platform.meeting;
 import com.company.platform.*;
 import jakarta.servlet.http.HttpServletRequest;
 import com.company.platform.intake.ImportWorkbook;
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.CacheControl;
 import org.springframework.http.ContentDisposition;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.io.IOException;
+import java.time.LocalDate;
 import java.util.*;
 
 /** 会议接口复用平台的会话、CSRF、统一响应和错误包装。 */
@@ -20,17 +23,19 @@ public class MeetingController {
     private final MeetingPermissions permissions;
     /** 发起人下载、预检和导入本次会议的 Excel 服务。 */
     private final MeetingWorkbooks workbooks;
+    private final MeetingWeeklyImports weeklyImports;
     private final Commands commands;
     private final MeetingIncompleteExport incomplete;
 
     public MeetingController(MeetingBookings bookings, MeetingFollowUp followUp, MeetingPermissions permissions,
-            Commands commands, MeetingWorkbooks workbooks, MeetingIncompleteExport incomplete) {
+            Commands commands, MeetingWorkbooks workbooks, MeetingIncompleteExport incomplete, MeetingWeeklyImports weeklyImports) {
         this.incomplete=incomplete;
         this.bookings = bookings;
         this.followUp = followUp;
         this.permissions = permissions;
         this.commands = commands;
         this.workbooks = workbooks;
+        this.weeklyImports = weeklyImports;
     }
 
     @GetMapping("/meetings/options")
@@ -171,6 +176,15 @@ public class MeetingController {
     public Map<String, Object> importWorkbook(@PathVariable String id, @RequestBody Map<String, Object> body,
             HttpServletRequest r) {
         return ok(workbooks.importMaterials(actor(r), Inputs.uuid(id), ApiController.requestId(r), body), r);
+    }
+
+    /** 上传某日的周会汇总，确认参数取该场会议的预览响应。 */
+    @PostMapping(value="/meetings/{id}/workbooks/weekly-summary", consumes=MediaType.APPLICATION_OCTET_STREAM_VALUE)
+    public Map<String, Object> importWeeklySummary(@PathVariable String id,
+            @RequestParam @DateTimeFormat(iso=DateTimeFormat.ISO.DATE) LocalDate date,
+            @RequestParam(required=false) String preview, HttpServletRequest r) throws IOException {
+        return ok(weeklyImports.importSummary(actor(r), Inputs.uuid(id), ApiController.requestId(r),
+                date, preview, r.getInputStream()), r);
     }
 
     @PutMapping("/meetings/{id}/minutes")

@@ -139,7 +139,7 @@ public class MeetingWorkbooks {
     }
 
     /** 精确匹配工号，姓名复核避免材料归错员工。 */
-    private Map<String, Object> resolveEmployee(String value, String field) {
+    Map<String, Object> resolveEmployee(String value, String field) {
         var match = java.util.regex.Pattern.compile("^(.+?)[\\s+＋（(]+([A-Za-z0-9-]{1,64})[）)]?$").matcher(value.strip());
         if (!match.matches()) throw ApiFault.invalid(field + "请填写姓名和工号，例如 张三 BLK27001");
         var employee = bookings.workbookEmployee(match.group(2));
@@ -162,7 +162,7 @@ public class MeetingWorkbooks {
     }
 
     /** 将 Excel 部门与责任人转换为线上材料校验接受的员工标识。 */
-    private Map<String, Object> coordination(Map<String, Object> values) {
+    Map<String, Object> coordination(Map<String, Object> values) {
         String category = switch (Objects.toString(values.get("category"), "")) {
             case "需公司协调" -> "COMPANY";
             case "需其他部门配合" -> "DEPARTMENT";
@@ -207,9 +207,9 @@ public class MeetingWorkbooks {
                                 ? result.get("assigneeName") : value(row, "assigneeName"));
                         if (result != null) {
                             line.put("conclusion", result.get("conclusion"));
-                            if (result.get("dueAt") instanceof String dueAt)
-                                line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
                         }
+                        String dueAt = result == null ? row.path("dueAt").asText(null) : (String) result.get("dueAt");
+                        if (dueAt != null) line.put("dueAt", EXPORT_TIME.format(Instant.parse(dueAt)));
                         output.add(line);
                         index++;
                     }
