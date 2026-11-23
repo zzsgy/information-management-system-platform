@@ -24,6 +24,15 @@ try {
     # 清理本配置的构建目录，防止已移除的类或过期网页资源继续混入新包。
     & $MavenCommand -B --no-transfer-progress -f backend/pom.xml -Pplatform clean verify
     if ($LASTEXITCODE -ne 0) { throw '后端测试或打包失败。' }
+    # 下载入口读取 JAR 内的助手和版本清单，校验最终发布物而非仅检查构建目录。
+    $platformJar = Join-Path $repositoryRoot 'backend/target-platform/archive-service-0.1.0.jar'
+    $archive = [IO.Compression.ZipFile]::OpenRead($platformJar)
+    try {
+        foreach ($file in 'ims-todo-helper.exe', 'ims-todo-helper-version.json') {
+            $entry = $archive.GetEntry("BOOT-INF/classes/static/downloads/$file")
+            if ($null -eq $entry -or $entry.Length -eq 0) { throw "平台 JAR 缺少托盘助手下载文件：$file" }
+        }
+    } finally { $archive.Dispose() }
     # PDF 原型使用独立项目和依赖，避免将处理组件加入旧档案系统的运行包。
     & $MavenCommand -B --no-transfer-progress -f processing/pdf-renderer/pom.xml verify
     if ($LASTEXITCODE -ne 0) { throw 'PDF 工作器测试或打包失败。' }

@@ -10,11 +10,13 @@ const enabled = ref(false);
 const online = ref(false);
 const installedVersion = ref<string | null>(null);
 const availableVersion = ref("");
+const helperAvailable = ref<boolean | null>(null);
 const code = ref("");
 const error = ref("");
 const message = ref("");
 const busy = ref(false);
 const endpoint = "/portal/todo-reminders/desktop";
+const helperDownload = "/downloads/ims-todo-helper.exe";
 type DesktopStatus = { paired: boolean; connected: boolean; enabled: boolean; online: boolean; clientVersion: string | null };
 let pendingCheck: ReturnType<typeof setInterval> | undefined;
 const updateAvailable = computed(() => connected.value && !!availableVersion.value &&
@@ -43,11 +45,25 @@ function open() {
   error.value = "";
   dialog.value?.showModal();
   void refresh();
+  void refreshHelperAvailability();
   void refreshAvailableVersion();
+}
+
+/** 缺少助手的部署会返回 JSON 错误，不能交给浏览器作为文件下载。 */
+async function refreshHelperAvailability() {
+  helperAvailable.value = null;
+  try {
+    const response = await fetch(helperDownload, { method: "HEAD", cache: "no-store" });
+    const media = response.headers.get("Content-Type") ?? "";
+    helperAvailable.value = response.ok && !/text\/html|application\/(?:problem\+)?json/i.test(media);
+  } catch {
+    helperAvailable.value = false;
+  }
 }
 
 /** 下载清单由部署产物生成，版本检查不影响现有提醒设置。 */
 async function refreshAvailableVersion() {
+  availableVersion.value = "";
   try {
     const response = await fetch("/downloads/ims-todo-helper-version.json", { cache: "no-store" });
     if (!response.ok) return;
@@ -164,16 +180,19 @@ onUnmounted(stopStatusChecks);
       <textarea :value="code" rows="3" readonly />
     </label>
     <div class="desktop-release">
-      <p v-if="availableVersion" class="muted">
+      <p v-if="helperAvailable && availableVersion" class="muted">
         本机版本 {{ connected ? installedVersion || "旧版" : "未连接" }} · 可用版本 {{ availableVersion }}
       </p>
-      <p v-if="updateAvailable">
+      <p v-if="helperAvailable && updateAvailable">
         {{ installedVersion ? "有新版本。右键 Windows 托盘图标，选择「检查更新」。"
           : "旧版没有更新入口。请退出旧助手，下载新版覆盖后重新打开。" }}
       </p>
-      <a class="text-button" :href="'/downloads/ims-todo-helper.exe' + (availableVersion ? '?v=' + availableVersion : '')" download>
+      <a v-if="helperAvailable" class="text-button" :href="helperDownload + (availableVersion ? '?v=' + availableVersion : '')" download="ims-todo-helper.exe">
         {{ updateAvailable ? "下载新版 Windows 托盘助手" : "下载 Windows 托盘助手" }}
       </a>
+      <p v-else class="muted" role="status">
+        {{ helperAvailable === null ? "正在检查托盘助手下载…" : "当前托盘助手下载不可用，请联系管理员。" }}
+      </p>
     </div>
     <div class="dialog-actions">
       <button type="button" class="secondary" :disabled="busy" @click="dialog?.close()">关闭</button>
