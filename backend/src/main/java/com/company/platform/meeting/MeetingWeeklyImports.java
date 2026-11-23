@@ -10,10 +10,14 @@ import java.io.InputStream;
 import java.nio.file.Files;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.function.Function;
 
 /** 发起人在已有会议内补录部门汇总及协调事宜，沿用标准会议材料和纪要。 */
 @Service
 public class MeetingWeeklyImports {
+    // 周会模板沿用研发分部页签，组织尚未单独登记时归入研发部。
+    private static final String RESEARCH_DEPARTMENT_CODE = "YF";
+    private static final Set<String> RESEARCH_SECTIONS = Set.of("研发三部", "研发四部");
     private final Sql db;
     private final MeetingBookings bookings;
     private final MeetingWorkbooks workbooks;
@@ -26,6 +30,8 @@ public class MeetingWeeklyImports {
 
     private record Key(UUID employee, String kind) {}
     private record Material(Key key, String sheet, String department, String name, Object content) {}
+    /** 归入研发部的页签共同生成材料，其余工作表按原页处理。 */
+    private record ReportGroup(Map<String, Object> unit, String separateSheet) {}
 
     /** 预览不写入；确认时重新核对人员、内容和已有材料，按整批事务写入。 */
     @Transactional(rollbackFor = IOException.class)
@@ -97,9 +103,22 @@ public class MeetingWeeklyImports {
 
     private Map<Key, Material> prepare(WeeklySummaryWorkbook.Summary summary, List<String> errors) {
         var materials = new LinkedHashMap<Key, Material>();
+        var departmentPages = new LinkedHashMap<ReportGroup, List<WeeklySummaryWorkbook.Department>>();
         for (var page : summary.departments()) {
             try {
                 var unit = department(page.sheet());
+                var group = new ReportGroup(unit, RESEARCH_DEPARTMENT_CODE.equals(unit.get("code")) ? null : page.sheet());
+                departmentPages.computeIfAbsent(group, ignored -> new ArrayList<>()).add(page);
+            } catch (ApiFault error) {
+                errors.add("「" + page.sheet() + "」" + error.getMessage());
+            }
+        }
+        for (var group : departmentPages.entrySet()) {
+            var unit = group.getKey().unit();
+            var pages = group.getValue();
+            var sheetNames = pages.stream().map(WeeklySummaryWorkbook.Department::sheet).toList();
+            String sheets = String.join("、", sheetNames);
+            try {
                 var leads = db.rows("""
                         SELECT u.id,u.name FROM iam.department_manager m
                         JOIN iam.user_account u ON u.id=m.user_id AND u.department_id=m.department_id
@@ -108,10 +127,14 @@ public class MeetingWeeklyImports {
                           AND u.status='ACTIVE' AND NOT u.it_shared_account
                         """, unit.get("id"));
                 if (leads.size() != 1) throw ApiFault.invalid("请为该部门配置唯一的有效部门负责人");
-                addReport(materials, page.sheet(), unit, leads.getFirst(), "REPORT", page.work());
-                addReport(materials, page.sheet(), unit, leads.getFirst(), "WEEKLY_PLAN", page.plan());
+                boolean labelSections = pages.size() > 1
+                        || (RESEARCH_DEPARTMENT_CODE.equals(unit.get("code")) && RESEARCH_SECTIONS.contains(pages.getFirst().sheet()));
+                addReport(materials, sheets, unit, leads.getFirst(), "REPORT",
+                        reportText(pages, WeeklySummaryWorkbook.Department::work, labelSections));
+                addReport(materials, sheets, unit, leads.getFirst(), "WEEKLY_PLAN",
+                        reportText(pages, WeeklySummaryWorkbook.Department::plan, labelSections));
             } catch (ApiFault error) {
-                errors.add("「" + page.sheet() + "」" + error.getMessage());
+                errors.add("「" + sheets + "」" + error.getMessage());
             }
         }
         for (var row : summary.coordination()) {
@@ -122,7 +145,7 @@ public class MeetingWeeklyImports {
                 if (!unit.get("id").equals(author.get("department_id")))
                     throw ApiFault.invalid("填报部门与员工档案不一致");
                 values.put("department", department(Inputs.text(values, "department", 128)).get("code"));
-                var entry = workbooks.coordination(values);
+                var entry = workbooks.coordination(values, false);
                 if (values.containsKey("deadlineText")) entry.put("deadlineText", values.get("deadlineText"));
                 var key = new Key((UUID) author.get("user_id"), "COORDINATION");
                 var material = materials.computeIfAbsent(key, ignored -> new Material(key, "协调事宜",
@@ -137,7 +160,18 @@ public class MeetingWeeklyImports {
         return materials;
     }
 
-    /** 同一负责人同类材料只对应一张部门表，避免重复页静默覆盖。 */
+    /** 归入同一部门的分部页保留各自标题，避免同类材料覆盖。 */
+    private static String reportText(List<WeeklySummaryWorkbook.Department> pages,
+                                     Function<WeeklySummaryWorkbook.Department, String> content, boolean labelSections) {
+        var sections = new ArrayList<String>();
+        for (var page : pages) {
+            String text = content.apply(page);
+            if (text != null) sections.add(labelSections ? "【" + page.sheet() + "】\n" + text : text);
+        }
+        return sections.isEmpty() ? null : String.join("\n\n", sections);
+    }
+
+    /** 同一负责人同类材料只保存一份，避免覆盖其他部门材料。 */
     private void addReport(Map<Key, Material> materials, String sheet, Map<String, Object> unit,
                            Map<String, Object> lead, String kind, String text) {
         if (text == null) return;
@@ -147,17 +181,22 @@ public class MeetingWeeklyImports {
             throw ApiFault.invalid("该部门已经有同一类工作表");
     }
 
-    /** 部门简称采用组织编码，子部门可用名称、编码或“上级/下级”。 */
+    /** 研发分部优先匹配研发部下的组织，未单独登记时使用研发部。 */
     private Map<String, Object> department(String label) {
         String[] path = label.split("[/／>＞]", 2);
         String name = path.length == 2 ? path[1].strip() : label;
         String parent = path.length == 2 ? path[0].strip() : "";
+        boolean researchSection = RESEARCH_SECTIONS.contains(name)
+                && (parent.isEmpty() || parent.equals("研发部") || parent.equalsIgnoreCase(RESEARCH_DEPARTMENT_CODE));
+        String exact = researchSection ? "研发部/" + name : label;
+        if (researchSection) parent = RESEARCH_DEPARTMENT_CODE;
         var units = db.rows("""
                 SELECT d.id,d.code,d.name,p.code AS parent_code,p.name AS parent_name FROM iam.department d
                 LEFT JOIN iam.department p ON p.id=d.parent_id
                 WHERE d.status='ACTIVE' AND (upper(d.code)=upper(?) OR d.name=? OR
                     ((upper(d.code)=upper(?) OR d.name=?) AND ?<>'' AND (upper(p.code)=upper(?) OR p.name=?)))
-                """, label, label, name, name, parent, parent, parent);
+                """, exact, exact, name, name, parent, parent, parent);
+        if (units.isEmpty() && researchSection) return department(RESEARCH_DEPARTMENT_CODE);
         if (units.size() != 1) throw ApiFault.invalid("未能唯一匹配部门「" + label + "」");
         return units.getFirst();
     }

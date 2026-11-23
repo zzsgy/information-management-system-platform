@@ -92,7 +92,7 @@ public class MeetingWorkbooks {
                     throw ApiFault.invalid("填报部门与员工档案不一致");
                 if (values.keySet().stream().allMatch(Set.of("author", "authorDepartment")::contains)) continue;
                 if (!types(meeting).contains("COORDINATION")) throw ApiFault.invalid("本场会议未征集协调事宜");
-                entries.add(coordination(values));
+                entries.add(coordination(values, true));
                 lines.add(row.number());
             } catch (ApiFault fault) {
                 errors.add("「协调事宜」第 " + row.number() + " 行：" + fault.getMessage());
@@ -161,8 +161,8 @@ public class MeetingWorkbooks {
         }
     }
 
-    /** 将 Excel 部门与责任人转换为线上材料校验接受的员工标识。 */
-    Map<String, Object> coordination(Map<String, Object> values) {
+    /** 将 Excel 部门与已填责任人转换为会议材料使用的标识。 */
+    Map<String, Object> coordination(Map<String, Object> values, boolean requireAssignee) {
         String category = switch (Objects.toString(values.get("category"), "")) {
             case "需公司协调" -> "COMPANY";
             case "需其他部门配合" -> "DEPARTMENT";
@@ -171,11 +171,12 @@ public class MeetingWorkbooks {
         String department = Inputs.text(values, "department", 128);
         var matches = db.rows("SELECT id FROM iam.department WHERE status='ACTIVE' AND (code=? OR name=?)", department, department);
         if (matches.size() != 1) throw ApiFault.invalid("请填写有效且唯一的配合部门名称或编码");
-        if (!values.containsKey("assignee")) throw ApiFault.invalid("请填写责任人的姓名和工号");
-        var assignee = resolveEmployee(Inputs.text(values, "assignee", 128), "责任人");
+        if (requireAssignee && !values.containsKey("assignee")) throw ApiFault.invalid("请填写责任人的姓名和工号");
+        String assignee = values.containsKey("assignee")
+                ? resolveEmployee(Inputs.text(values, "assignee", 128), "责任人").get("user_id").toString() : null;
         return bookings.structuredRow("COORDINATION", Sql.map("category", category, "subject", values.get("subject"),
                 "support", values.get("support"), "expected", values.get("expected"),
-                "departmentId", matches.getFirst().get("id").toString(), "personId", assignee.get("user_id").toString()));
+                "departmentId", matches.getFirst().get("id").toString(), "personId", assignee), requireAssignee);
     }
 
 

@@ -601,13 +601,13 @@ public class MeetingBookings {
         } else {
             var rows = Inputs.objects(body.get("rows"),30);
             if (rows.isEmpty()) throw ApiFault.invalid("请至少填写一条");
-            payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row)).toList());
+            payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row, true)).toList());
         }
         return addMaterialAuthor(payload, attendee);
     }
 
-    /** 校验一行议题或协调事项，代导入可准确标出发生错误的 Excel 行。 */
-    Map<String, Object> structuredRow(String kind, Map<String, Object> row) {
+    /** 校验一行议题或协调事项，周会汇总允许保留未指定责任人的事项。 */
+    Map<String, Object> structuredRow(String kind, Map<String, Object> row, boolean requireAssignee) {
         Inputs.only(row, "subject", "expected", "departmentId", "personId", "category", "support");
         String subject = optional(row, "subject", 500);
         String expected = optional(row, "expected", 1000);
@@ -623,11 +623,13 @@ public class MeetingBookings {
             if (department == null) throw ApiFault.invalid("请选择配合部门");
             String partner = coordinationDepartmentName(department);
             UUID assignee = Inputs.nullableUuid(row.get("personId"));
-            if (assignee == null) throw ApiFault.invalid("请选择配合部门的一名责任人");
+            if (assignee == null && requireAssignee) throw ApiFault.invalid("请选择配合部门的一名责任人");
             entry.put("department", partner);
             entry.put("departmentId", department);
-            entry.put("assigneeId", assignee);
-            entry.put("assigneeName", coordinationAssignee(assignee, department).get("name"));
+            if (assignee != null) {
+                entry.put("assigneeId", assignee);
+                entry.put("assigneeName", coordinationAssignee(assignee, department).get("name"));
+            }
         }
         return entry;
     }

@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
@@ -1021,6 +1022,8 @@ class MeetingIntegrationTest {
         assertEquals("12月之前", rows.get(4).path("deadlineText").asText());
         assertEquals("2026/11/25 17:30", rows.get(5).path("deadlineText").asText());
         assertFalse(rows.get(3).has("dueAt"));
+        assertFalse(rows.get(5).has("assigneeId"));
+        assertTrue(rows.get(0).hasNonNull("assigneeId"));
         var employeeMaterials = values(attendee(organizer, id, employee), "materials");
         var companyRow = Crypto.JSON.valueToTree(employeeMaterials.getFirst().get("data")).path("rows").get(0);
         assertEquals("COMPANY", companyRow.path("category").asText());
@@ -1045,14 +1048,54 @@ class MeetingIntegrationTest {
         assertEquals("2026-12-07T09:00:00Z", result.get("dueAt"));
     }
 
-    /** 按截图列顺序构造两页可复现的源 XLSX，日期和名称与合并区域一致。 */
-    private static byte[] weeklySummary(String child, String partner, String author, String assignee) throws IOException {
+    /** 研发分部未单独登记时，研发部负责人名下仍能查到各页的工作内容。 */
+    @Test @Transactional
+    void weeklySummaryImportsBothResearchSectionsUnderResearchDepartment() throws IOException {
+        for (var lead : Map.of("YF", outsider, "QA", person(), "QC", person()).entrySet()) {
+            UUID unit = (UUID) db.required("SELECT id FROM iam.department WHERE code=?", lead.getKey()).get("id");
+            db.update("UPDATE iam.user_account SET department_id=? WHERE id=?", unit, lead.getValue().userId());
+            db.update("""
+                    INSERT INTO iam.department_manager(id,department_id,user_id,duty_type,valid_from,change_reason,changed_by)
+                    VALUES (?,?,?,'DEPARTMENT_MANAGER',CURRENT_TIMESTAMP,'周会补录验收',?)
+                    """, request(), unit, lead.getValue().userId(), admin.userId());
+        }
+        String partner = db.required("SELECT code FROM iam.department WHERE id=?", department).get("code").toString();
+        UUID id = bookings.create(organizer, request(), meeting(roomA, Instant.now().plusSeconds(3600), employee));
+        bookings.start(organizer, id, request());
+        bookings.end(organizer, id, request());
+
+        var bytes = weeklySummary("研发三部", partner, employeeLabel(outsider), employeeLabel(employee),
+                "研发部", "研发四部", "QA", "QC");
+        var date = LocalDate.parse("2026-11-23");
+        var preview = weeklyImports.importSummary(organizer, id, request(), date, null, new ByteArrayInputStream(bytes));
+        assertEquals(List.of(), preview.get("errors"));
+        var previewMaterials = values(preview, "materials");
+        assertEquals(8, previewMaterials.size());
+        assertEquals(List.of("质量保证部", "质量保证部"), previewMaterials.stream()
+                .filter(row -> "QA".equals(row.get("sheet"))).map(row -> row.get("department")).toList());
+        assertEquals(List.of("质量检定部", "质量检定部"), previewMaterials.stream()
+                .filter(row -> "QC".equals(row.get("sheet"))).map(row -> row.get("department")).toList());
+        assertEquals(8, weeklyImports.importSummary(organizer, id, request(), date, (String) preview.get("preview"),
+                new ByteArrayInputStream(bytes)).get("imported"));
+
+        var materials = values(attendee(organizer, id, outsider), "materials");
+        for (String kind : List.of("REPORT", "WEEKLY_PLAN")) {
+            var material = materials.stream().filter(row -> kind.equals(row.get("kind"))).findFirst().orElseThrow();
+            var data = Crypto.JSON.valueToTree(material.get("data"));
+            assertEquals("研发部", data.path("author").path("department").asText());
+            for (String sheet : List.of("研发部", "研发三部", "研发四部"))
+                assertTrue(data.path("text").asText().contains("【" + sheet + "】"));
+        }
+    }
+
+    /** 按模板列顺序构造测试 XLSX，日期和名称与合并区域一致。 */
+    private static byte[] weeklySummary(String child, String partner, String author, String assignee, String... extraSheets) throws IOException {
         var file = new ByteArrayOutputStream();
         var bindings = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
-        var workbook = "<workbook xmlns:r=\"" + bindings + "\"><sheets>"
-                + "<sheet name=\"协调事宜\" r:id=\"rId1\"/><sheet name=\"" + child + "\" r:id=\"rId2\"/></sheets></workbook>";
-        var relationships = "<Relationships><Relationship Id=\"rId1\" Type=\"" + bindings + "/worksheet\" Target=\"worksheets/sheet1.xml\"/>"
-                + "<Relationship Id=\"rId2\" Type=\"" + bindings + "/worksheet\" Target=\"/xl/worksheets/sheet2.xml\"/></Relationships>";
+        var sheets = new ArrayList<>(List.of("协调事宜", child));
+        sheets.addAll(List.of(extraSheets));
+        var workbook = new StringBuilder("<workbook xmlns:r=\"" + bindings + "\"><sheets>");
+        var relationships = new StringBuilder("<Relationships>");
         var headers = List.of("序号", "事项类别", "具体事宜", "需协调 / 配合什么", "期望结果 /验收标准", "填报部门", "填报人+工号",
                 "配合部门", "责任人（唯一，姓名+工号）", "截止时间");
         var first = weeklyRow(2, List.of("1", "需其他部门配合", "协调设备", "提供帮助", "核对完成", child,
@@ -1072,7 +1115,7 @@ class MeetingIntegrationTest {
                 + weeklyRow(7, List.of("6", "需其他部门配合", "准备年底台账", "", "确认完成", child,
                 author, partner, assignee, "12月之前"))
                 + weeklyRow(8, List.of("7", "需其他部门配合", "确认维修工单", "", "办结工单", child,
-                author, partner, assignee, "2026/11/25 17:30")) + "</sheetData></worksheet>";
+                author, partner, "", "2026/11/25 17:30")) + "</sheetData></worksheet>";
         var report = "<worksheet><sheetData>" + weeklyRow(1, List.of("日期", "名称", "序号", "事项说明", "备注"))
                 + weeklyRow(2, List.of("2026.11.16", "上周总结", "1", "上一周旧数据"))
                 + weeklyRow(3, List.of("2026.11.23", "上周总结", "1", "上周事项", "保留备注"))
@@ -1082,8 +1125,19 @@ class MeetingIntegrationTest {
                 + "<mergeCells><mergeCell ref=\"A3:A6\"/><mergeCell ref=\"B3:B4\"/></mergeCells></worksheet>";
         try (var zip = new ZipOutputStream(file)) {
             String styles = "<styleSheet><cellXfs><xf numFmtId=\"0\"/><xf numFmtId=\"22\"/></cellXfs></styleSheet>";
-            for (var entry : Map.of("xl/workbook.xml", workbook, "xl/_rels/workbook.xml.rels", relationships, "xl/styles.xml", styles,
-                    "xl/worksheets/sheet1.xml", coordination, "xl/worksheets/sheet2.xml", report).entrySet()) {
+            var parts = new LinkedHashMap<String, String>();
+            for (int index = 0; index < sheets.size(); index++) {
+                String ref = "rId" + (index + 1);
+                String sheetPath = "worksheets/sheet" + (index + 1) + ".xml";
+                workbook.append("<sheet name=\"").append(sheets.get(index)).append("\" r:id=\"").append(ref).append("\"/>");
+                relationships.append("<Relationship Id=\"").append(ref).append("\" Type=\"").append(bindings)
+                        .append("/worksheet\" Target=\"").append(index == 0 ? "" : "/xl/").append(sheetPath).append("\"/>");
+                parts.put("xl/" + sheetPath, index == 0 ? coordination : report);
+            }
+            parts.put("xl/workbook.xml", workbook.append("</sheets></workbook>").toString());
+            parts.put("xl/_rels/workbook.xml.rels", relationships.append("</Relationships>").toString());
+            parts.put("xl/styles.xml", styles);
+            for (var entry : parts.entrySet()) {
                 zip.putNextEntry(new ZipEntry(entry.getKey()));
                 zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
                 zip.closeEntry();
