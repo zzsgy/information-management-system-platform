@@ -107,6 +107,15 @@ const canManage = computed(
       (role) => ["PLATFORM", "DRIVE"].includes(role.module) && role.code === "IT_ADMIN",
     ),
 );
+/** 单一只读分区不重复显示目录入口；保留多级浏览及上传、目录管理所需的导航。 */
+const showFolderNavigation = computed(
+  () =>
+    !["COMPANY_SHARED", "OWN_INTERNAL"].includes(space.value) ||
+    !!selected.value ||
+    folders.value.length > 1 ||
+    moreFolders.value ||
+    folders.value.some((folder) => folder.canUpload || folder.canManage),
+);
 const uploadAbort = new AbortController();
 /** 阅读会话元数据与连续阅读器分开，正文由阅读器按可见范围加载。 */
 const reading = ref<Document | null>(null),
@@ -440,27 +449,35 @@ onUnmounted(() => {
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <p v-if="notice" class="drive-notice" role="status">{{ notice }}</p>
   <div>
-    <nav class="module-tabs" aria-label="企业公盘视图">
+    <div class="drive-view-bar">
+      <nav class="module-tabs" aria-label="企业公盘视图">
+        <button
+          type="button"
+          :class="{ active: !recycle }"
+          :aria-pressed="!recycle"
+          @click="back(-1)"
+        >
+          <Icon name="file" :size="18" />企业公盘
+        </button>
+        <button
+          type="button"
+          :class="{ active: recycle }"
+          :aria-pressed="recycle"
+          @click="
+            recycle = true;
+            detailId = '';
+          "
+        >
+          <Icon name="trash" :size="18" />回收站
+        </button>
+      </nav>
       <button
+        v-if="!recycle && canManage"
         type="button"
-        :class="{ active: !recycle }"
-        :aria-pressed="!recycle"
-        @click="back(-1)"
-      >
-        <Icon name="file" :size="18" />企业公盘
-      </button>
-      <button
-        type="button"
-        :class="{ active: recycle }"
-        :aria-pressed="recycle"
-        @click="
-          recycle = true;
-          detailId = '';
-        "
-      >
-        <Icon name="trash" :size="18" />回收站
-      </button>
-    </nav>
+        class="secondary drive-manage-button"
+        @click="management = true"
+      >管理配置</button>
+    </div>
     <section class="panel drive-files">
       <DriveRecycle v-if="recycle" @changed="load" />
       <template v-else>
@@ -596,7 +613,7 @@ onUnmounted(() => {
             </div>
           </div>
         </section>
-        <div class="drive-toolbar">
+        <div v-if="showFolderNavigation" class="drive-toolbar">
           <div class="drive-crumb">
             <Icon name="folder" :size="18" />
             <button @click="back(-1)">公盘</button
@@ -619,11 +636,8 @@ onUnmounted(() => {
               加载更多目录
             </button>
           </div>
-          <div class="drive-toolbar-actions">
+          <div v-if="selected" class="drive-toolbar-actions">
             <span v-if="selected && !selected.canUpload && !error" class="muted">当前账号没有此目录的上传权限</span>
-            <button v-if="canManage" class="secondary" @click="management = true">
-              管理配置
-            </button>
             <button
               v-if="selected?.canUpload"
               class="primary"
@@ -633,14 +647,14 @@ onUnmounted(() => {
               {{ busy ? uploadLabel : "上传文件" }}
             </button>
           </div>
-          <input
-            ref="picker"
-            type="file"
-            :accept="driveAccept"
-            hidden
-            @change="upload"
-          />
         </div>
+        <input
+          ref="picker"
+          type="file"
+          :accept="driveAccept"
+          hidden
+          @change="upload"
+        />
         <div v-if="busy" class="drive-progress" role="status">
           <span
             >{{ uploadLabel
@@ -818,6 +832,25 @@ onUnmounted(() => {
   border-radius: 30px;
   padding: 8px 12px;
   font-size: 13px;
+}
+/* 视图标签与管理操作共用一行，按钮独立于标签样式，右侧对齐页面边缘。 */
+.drive-view-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+.drive-view-bar > .module-tabs {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  border-bottom: 0;
+}
+.drive-manage-button {
+  flex-shrink: 0;
+  min-height: 34px;
+  margin-bottom: 4px;
 }
 .drive-files {
   /* 分组强调色跟随外观；暖纸主题沿用金色，不影响全局主要按钮。 */
