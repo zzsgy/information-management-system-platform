@@ -30,6 +30,11 @@ public class PortalController {
     @GetMapping("/admin/portal/announcements") public Map<String,Object> managedAnnouncements(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(content.announcements(actor(r),query,true),r);}
     /** 管理详情包含正文和部门选择，不授予其他管理权限。 */
     @GetMapping("/admin/portal/announcements/{id}") public Map<String,Object> managedAnnouncement(@PathVariable String id,HttpServletRequest r){return ok(content.announcement(actor(r),Inputs.uuid(id),true),r);}
+    /** 公告维护人员查看范围内的阅读人数和分页名单；未开放的公告返回404，无维护权返回403。 */
+    @GetMapping("/admin/portal/announcements/{id}/readership")
+    public Map<String,Object> announcementReadership(@PathVariable String id,@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(content.announcementReadership(actor(r),Inputs.uuid(id),query),r);
+    }
     /** 公告范围选择使用最小部门投影。 */
     @GetMapping("/admin/portal/departments") public Map<String,Object> departments(HttpServletRequest r){return ok(content.departments(actor(r)),r);}
     /** 创建只接收声明字段，稳定操作号避免重复发布。 */

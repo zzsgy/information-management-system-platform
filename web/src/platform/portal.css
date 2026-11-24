@@ -332,6 +332,20 @@
   margin-right: 8px;
   vertical-align: 1px;
 }
+.announcement-read-state {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.announcement-read-state.unread {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
 .portal-home-side {
   display: grid;
   min-width: 0;

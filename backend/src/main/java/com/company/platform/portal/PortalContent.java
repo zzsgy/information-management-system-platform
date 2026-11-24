@@ -15,7 +15,8 @@ public class PortalContent {
     /** 公告摘要白名单，列表不传输正文。 */
     private static final String SUMMARY="id,title,category,state,scope,valid_from,valid_until,pinned,publisher_name,publisher_department,published_at,row_version";
     /** 展示范围使用员工当前部门，调岗后不会继续显示原部门公告。 */
-    private static final String PUBLISHED_IN_SCOPE="a.state='PUBLISHED' AND a.valid_from<=CURRENT_TIMESTAMP AND (a.scope='COMPANY' OR EXISTS(SELECT 1 FROM portal.announcement_department d JOIN iam.user_account u ON u.department_id=d.department_id WHERE d.announcement_id=a.id AND u.id=?))";
+    private static final String AUDIENCE_SCOPE="(a.scope='COMPANY' OR EXISTS(SELECT 1 FROM portal.announcement_department ad WHERE ad.announcement_id=a.id AND ad.department_id=u.department_id))";
+    private static final String PUBLISHED_IN_SCOPE="a.state='PUBLISHED' AND a.valid_from<=CURRENT_TIMESTAMP AND EXISTS(SELECT 1 FROM iam.user_account u WHERE u.id=? AND "+AUDIENCE_SCOPE+")";
     private static final String CURRENT="(a.valid_until IS NULL OR a.valid_until>CURRENT_TIMESTAMP)";
     public PortalContent(Sql db){this.db=db;}
 
@@ -38,13 +39,14 @@ public class PortalContent {
         int page=Inputs.integer(query.get("page"),1,1,100000),size=Inputs.integer(query.get("pageSize"),10,1,100);
         List<Object> args=new ArrayList<>();
         String from=" FROM portal.announcement a";
-        if(view.equals("READ")){
-            from+=" JOIN portal.announcement_read r ON r.announcement_id=a.id AND r.user_id=?";
+        if(!manage){
+            from+=" LEFT JOIN portal.announcement_read r ON r.announcement_id=a.id AND r.user_id=?";
             args.add(actor.userId());
         }
         from+=" WHERE "+(manage?"true":PUBLISHED_IN_SCOPE+switch(view){
             case "CURRENT" -> " AND "+CURRENT;
             case "EXPIRED" -> " AND a.valid_until<=CURRENT_TIMESTAMP";
+            case "READ" -> " AND r.user_id IS NOT NULL";
             default -> "";
         });
         if(!manage)args.add(actor.userId());
@@ -53,7 +55,9 @@ public class PortalContent {
             .choice("category","a.category","通知公告","公司动态","制度通知")
             .choice("state","a.state","DRAFT","PUBLISHED","WITHDRAWN").dates("published","a.published_at").sql();
         long total=db.count("SELECT count(*)"+from,args.toArray());args.add(size);args.add((page-1)*size);
-        return Sql.map("items",db.rows("SELECT a.*"+from+" ORDER BY a.pinned DESC,a.published_at DESC NULLS LAST,a.created_at DESC,a.id LIMIT ? OFFSET ?",args.toArray()).stream().map(row->Sql.view(row,SUMMARY)).toList(),"page",page,"pageSize",size,"total",total);
+        String select=manage?"SELECT a.*":"SELECT a.*,r.user_id IS NOT NULL AS viewed";
+        String fields=manage?SUMMARY:SUMMARY+",viewed";
+        return Sql.map("items",db.rows(select+from+" ORDER BY a.pinned DESC,a.published_at DESC NULLS LAST,a.created_at DESC,a.id LIMIT ? OFFSET ?",args.toArray()).stream().map(row->Sql.view(row,fields)).toList(),"page",page,"pageSize",size,"total",total);
     }
     /** 发布范围内的员工可打开当前及到期公告；草稿、撤下和越权统一404。 */
     public Map<String,Object> announcement(Actor actor,UUID id,boolean manage){
@@ -70,6 +74,35 @@ public class PortalContent {
         var result=announcement(actor,id,false);
         db.update("INSERT INTO portal.announcement_read(user_id,announcement_id) VALUES(?,?) ON CONFLICT DO NOTHING",actor.userId(),id);
         return result;
+    }
+    /** 公告维护人员按当前发布范围统计启用的个人账号；到期或撤下后仍可追溯首次阅读时间。 */
+    public Map<String,Object> announcementReadership(Actor actor, UUID id, Map<String,String> query) {
+        actor.require("PLATFORM.ANNOUNCEMENTS_MANAGE");
+        Inputs.only(query,"status","page","pageSize");
+        String status=Inputs.choice(query.getOrDefault("status","ALL"),"ALL","READ","UNREAD");
+        int page=Inputs.integer(query.get("page"),1,1,100000);
+        int size=Inputs.integer(query.get("pageSize"),10,1,100);
+        // 以公告作左表，范围内没有员工时返回零人统计，并与查询不到公告区分。
+        String audience="""
+                FROM portal.announcement a
+                LEFT JOIN iam.user_account u ON u.status='ACTIVE' AND NOT u.it_shared_account AND %s
+                LEFT JOIN iam.department d ON d.id=u.department_id
+                LEFT JOIN portal.announcement_read r ON r.announcement_id=a.id AND r.user_id=u.id
+                WHERE a.id=? AND a.state IN ('PUBLISHED','WITHDRAWN') AND a.published_at IS NOT NULL
+                  AND a.valid_from<=CURRENT_TIMESTAMP
+                """.formatted(AUDIENCE_SCOPE);
+        String statusFilter=switch(status) {
+            case "READ" -> "r.read_at IS NOT NULL";
+            case "UNREAD" -> "r.read_at IS NULL";
+            default -> "TRUE";
+        };
+        var counts=db.required("SELECT count(r.read_at) AS read_count,count(u.id)-count(r.read_at) AS unread_count, "
+            +"count(u.id) FILTER (WHERE "+statusFilter+") AS total "+audience+" GROUP BY a.id",id);
+        var items=db.rows("SELECT u.employee_no,u.name,d.name AS department_name,r.read_at "+audience
+            +" AND u.id IS NOT NULL AND "+statusFilter+" ORDER BY d.sort_order,d.code,u.employee_no LIMIT ? OFFSET ?",
+            id,size,(page-1)*size).stream().map(row->Sql.view(row,"employee_no,name,department_name,read_at")).toList();
+        return Sql.map("items",items,"page",page,"pageSize",size,"total",counts.get("total"),
+            "readCount",counts.get("read_count"),"unreadCount",counts.get("unread_count"));
     }
     /** 有权限的编辑者取得最小部门选择数据，不借用人员管理接口。 */
     public Map<String,Object> departments(Actor actor){actor.require("PLATFORM.ANNOUNCEMENTS_MANAGE");return Sql.map("items",db.rows("SELECT id,name FROM iam.department WHERE status='ACTIVE' ORDER BY sort_order,code"));}

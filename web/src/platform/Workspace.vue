@@ -177,7 +177,9 @@ onActivated(async () => {
           ><strong
             ><span v-if="item.pinned" class="portal-pin">置顶</span
             >{{ item.title }}
-            <span v-if="!item.viewed" class="status-badge">未查看</span></strong
+            <span class="announcement-read-state" :class="{ unread: !item.viewed }">
+              {{ item.viewed ? "已读" : "未读" }}
+            </span></strong
           ><span class="portal-meta"
             ><span>{{ item.category }}</span
             ><span>{{ item.publisherName }}</span

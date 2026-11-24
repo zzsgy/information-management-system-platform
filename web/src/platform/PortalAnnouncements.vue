@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import RichTextView from "./RichTextView.vue";
 import RichTextEditor from "./RichTextEditor.vue";
+import AnnouncementReadership from "./AnnouncementReadership.vue";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
@@ -18,6 +19,8 @@ const rows = ref<Announcement[]>([]),
   error = ref(""),
   editing = ref(false);
 const departments = ref<{ id: string; name: string }[]>([]);
+/** 管理员打开统计时保留原列表页或公告详情。 */
+const readershipTarget = ref<Announcement | null>(null);
 const askPassword =
   inject<(title: string) => Promise<string | null>>("askPassword")!;
 /** 本地时间控件提交时显式转换为ISO时刻，后端不猜测时区。 */
@@ -66,10 +69,18 @@ async function open(id: string, activity = true) {
       markRead ? { method: "POST" } : {},
       activity,
     );
+    if (markRead) {
+      const row = rows.value.find((item) => item.id === id);
+      if (row) row.viewed = true;
+    }
   } catch (e) {
     selected.value = null;
     error.value = (e as Error).message;
   }
+}
+/** 到期或撤下的公告仍可追溯，尚未对员工展示的公告没有阅读名单。 */
+function canShowReadership(item: Announcement) {
+  return props.manage && item.publishedAt && item.state !== "DRAFT" && Date.parse(item.validFrom) <= Date.now();
 }
 /** 历史公告默认不限日期，避免较早发布的公告被最近一周筛掉。 */
 function switchView(next: typeof view.value) {
@@ -240,7 +251,9 @@ const listFilters = ref(recentWeekFilters("published"));
         ><span>发布人：{{ selected.publisherName || "尚未发布" }}</span
         ><span>部门：{{ selected.publisherDepartment || "—" }}</span
         ><time>{{ portalTime(selected.publishedAt) }}</time
-        ><button v-if="manage" class="text-button" @click="edit(selected)">
+        ><button v-if="canShowReadership(selected)" class="text-button" @click="readershipTarget = selected">
+          阅读统计
+        </button><button v-if="manage" class="text-button" @click="edit(selected)">
           编辑公告
         </button>
       </div>
@@ -266,7 +279,7 @@ const listFilters = ref(recentWeekFilters("published"));
           v-for="(label, code) in {
             CURRENT: '当前公告',
             EXPIRED: '历史公告',
-            READ: '已查看',
+            READ: '已读公告',
           }"
           :key="code"
           type="button"
@@ -335,7 +348,9 @@ const listFilters = ref(recentWeekFilters("published"));
             ><span v-if="item.pinned" class="portal-pin">置顶</span
             >{{ item.title }}</strong
           ><span class="portal-meta"
-            ><span>{{ item.category }}</span
+            ><span v-if="!manage" class="announcement-read-state" :class="{ unread: !item.viewed }">
+              {{ item.viewed ? "已读" : "未读" }}
+            </span><span>{{ item.category }}</span
             ><span>{{ item.publisherName || "尚未发布" }}</span
             ><span>{{ item.publisherDepartment || "—" }}</span
             ><time>{{ portalTime(item.publishedAt) }}</time
@@ -346,7 +361,9 @@ const listFilters = ref(recentWeekFilters("published"));
               ]
             }}</span></span
           ></button
-        ><button v-if="manage" class="text-button" @click="edit(item)">
+        ><button v-if="canShowReadership(item)" class="text-button" @click="readershipTarget = item">
+          阅读统计
+        </button><button v-if="manage" class="text-button" @click="edit(item)">
           编辑
         </button>
       </article>
@@ -357,7 +374,7 @@ const listFilters = ref(recentWeekFilters("published"));
           Object.values(listFilters).some(Boolean)
             ? '没有符合筛选条件的公告'
             : view === 'READ'
-              ? '暂无已查看的公告'
+              ? '暂无已读公告'
               : view === 'EXPIRED'
                 ? '暂无历史公告'
                 : '暂无公告'
@@ -397,6 +414,7 @@ const listFilters = ref(recentWeekFilters("published"));
         </div>
       </footer>
     </section>
+    <AnnouncementReadership v-if="readershipTarget" :announcement="readershipTarget" @close="readershipTarget = null" />
   </section>
 </template>
 

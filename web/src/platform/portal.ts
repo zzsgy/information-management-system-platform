@@ -12,7 +12,7 @@ export interface Announcement {
   publisherDepartment: string | null;
   publishedAt: string | null;
   rowVersion: number;
-  /** 工作台公告中当前账号是否打开过正文。 */
+  /** 员工首页与公告列表均标识当前账号是否打开过正文。 */
   viewed?: boolean;
   body?: string;
   departmentIds?: string[];
