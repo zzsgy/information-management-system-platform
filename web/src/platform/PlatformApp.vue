@@ -662,7 +662,7 @@ onUnmounted(() => {
   <div
     v-else
     class="platform-shell"
-    :class="{ 'with-workspace-sidebar': workspaceSidebar }"
+    :class="{ 'with-workspace-sidebar': workspaceSidebar, 'workspace-home': allowedRoute === 'home' }"
   >
     <TodoReminderPopup :key="profile.user.id" />
     <header class="topbar">

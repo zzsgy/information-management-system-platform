@@ -264,69 +264,71 @@ function switchFilter(value: string) {
         下一页
       </button>
     </nav>
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <!-- 工作台保留刷新前的行，会议操作入口须等最新流程阶段返回后才能打开。 -->
-    <button
-      v-for="item in items"
-      :key="item.id"
-      class="portal-list-row"
-      :disabled="compact && busy && item.source === 'MEETING'"
-      @click="open(item)"
-    >
-      <span v-if="inbox" class="inbox-state" :class="{ unread: item.state !== 'READ' }">
-        {{ item.state === 'READ' ? '已读' : '未读' }}
-      </span>
-      <span v-else class="portal-dot" :class="{ read: item.category === 'COMPLETED' }" aria-hidden="true" />
-      <span
-        ><strong>{{
-          inbox ? item.content || messageNames[item.kind] || "业务状态有更新" : item.title
-        }}</strong>
+    <div :class="{ 'workspace-panel-body': compact }">
+      <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+      <!-- 工作台保留刷新前的行，会议操作入口须等最新流程阶段返回后才能打开。 -->
+      <button
+        v-for="item in items"
+        :key="item.id"
+        class="portal-list-row"
+        :disabled="compact && busy && item.source === 'MEETING'"
+        @click="open(item)"
+      >
+        <span v-if="inbox" class="inbox-state" :class="{ unread: item.state !== 'READ' }">
+          {{ item.state === 'READ' ? '已读' : '未读' }}
+        </span>
+        <span v-else class="portal-dot" :class="{ read: item.category === 'COMPLETED' }" aria-hidden="true" />
         <span
-          v-if="compact && !inbox"
-          class="status-badge compact-task-status pending"
-          >未处理</span
-        >
-        <small v-if="!inbox && item.source === 'MEETING'">
-          {{ meetingTaskStates[item.state] || (item.category === "COMPLETED" ? "已处理" : "待办理") }}
-          <template v-if="item.dueAt"> · 截止 {{ portalTime(item.dueAt) }}</template>
-        </small>
-        <small v-else
-          >{{
-            portalTime(
-              item.category === "COMPLETED"
-                ? item.completedAt
-                : inbox || item.source !== "SYSTEM"
-                  ? item.createdAt
-                  : item.dueAt,
-            )
-          }}{{
-            inbox
-              ? ""
-              : item.source === "SYSTEM"
-                ? item.category === "COMPLETED"
-                  ? item.state === "APPROVED"
-                    ? " · 已同意"
-                    : " · 已驳回"
-                  : item.category === "HANDLING"
-                    ? " · 待办理"
-                    : " · 待审批"
-                : ` · ${item.source === "PERSONAL" ? "个人待办" : "分派任务"} · ${todoStates[item.state]}`
-          }}</small
-        ></span
-      ><span aria-hidden="true">↗</span>
-    </button>
-    <EmptyState
-      v-if="!items.length && !busy && !error"
-      :icon="inbox ? 'message' : 'task'"
-      :title="
-        inbox
-          ? '暂无新消息'
-          : filter === 'COMPLETED'
-            ? '暂无已办记录'
-            : '当前没有待办事项'
-      "
-    />
-    <p v-if="busy && !items.length" class="muted">正在加载…</p>
+          ><strong>{{
+            inbox ? item.content || messageNames[item.kind] || "业务状态有更新" : item.title
+          }}</strong>
+          <span
+            v-if="compact && !inbox"
+            class="status-badge compact-task-status pending"
+            >未处理</span
+          >
+          <small v-if="!inbox && item.source === 'MEETING'">
+            {{ meetingTaskStates[item.state] || (item.category === "COMPLETED" ? "已处理" : "待办理") }}
+            <template v-if="item.dueAt"> · 截止 {{ portalTime(item.dueAt) }}</template>
+          </small>
+          <small v-else
+            >{{
+              portalTime(
+                item.category === "COMPLETED"
+                  ? item.completedAt
+                  : inbox || item.source !== "SYSTEM"
+                    ? item.createdAt
+                    : item.dueAt,
+              )
+            }}{{
+              inbox
+                ? ""
+                : item.source === "SYSTEM"
+                  ? item.category === "COMPLETED"
+                    ? item.state === "APPROVED"
+                      ? " · 已同意"
+                      : " · 已驳回"
+                    : item.category === "HANDLING"
+                      ? " · 待办理"
+                      : " · 待审批"
+                  : ` · ${item.source === "PERSONAL" ? "个人待办" : "分派任务"} · ${todoStates[item.state]}`
+            }}</small
+          ></span
+        ><span aria-hidden="true">↗</span>
+      </button>
+      <EmptyState
+        v-if="!items.length && !busy && !error"
+        :icon="inbox ? 'message' : 'task'"
+        :title="
+          inbox
+            ? '暂无新消息'
+            : filter === 'COMPLETED'
+              ? '暂无已办记录'
+              : '当前没有待办事项'
+        "
+      />
+      <p v-if="busy && !items.length" class="muted">正在加载…</p>
+    </div>
     <footer class="list-footer">
       <button
         type="button"

@@ -318,6 +318,40 @@ button:disabled {
   color: #8996a1;
 }
 
+/* 首页使用浏览器剩余高度，顶栏、服务提示和页脚按实际内容占位。 */
+@media (min-width: 1000px) and (min-height: 620px) {
+  .platform-shell.workspace-home {
+    display: flex;
+    flex-direction: column;
+    block-size: 100dvh;
+    min-block-size: 0;
+  }
+  .platform-shell.workspace-home > :is(.topbar, .service-health, .page-footer) {
+    flex: none;
+  }
+  .platform-shell.workspace-home > .service-health {
+    max-width: none;
+    max-block-size: 8dvh;
+    margin: 6px var(--page-gutter) 0;
+    padding: 6px 12px;
+    overflow: auto;
+  }
+  .platform-shell.workspace-home > .page-container {
+    display: flex;
+    flex: 1;
+    min-block-size: 0;
+    padding-block: clamp(10px, 1.7dvh, 20px);
+  }
+  .platform-shell.workspace-home > .page-footer {
+    padding-block: 6px 8px;
+  }
+}
+@media (min-width: 1000px) and (620px <= height < 720px) {
+  .platform-shell.workspace-home > .page-footer {
+    display: none;
+  }
+}
+
 /* 侧栏只提供模块导航，选中态用窄色条表示，不堆叠大色块。 */
 .platform-shell .management-layout {
   grid-template-columns: 208px minmax(0, 1fr);
