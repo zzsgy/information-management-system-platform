@@ -215,6 +215,45 @@ class PortalIntegrationTest {
         assertFalse(rows.getFirst().containsKey("body"));
     }
 
+    /** 统计与员工列表共用首次打开记录，人员范围在筛选、分页和计数前生效。 */
+    @Test void announcementReadershipTracksFirstOpenWithinCurrentAudience() {
+        var body=announcementBody();
+        UUID id=(UUID)create(body).get("id");
+        var employeeList=Map.of("keyword",body.get("title").toString());
+        assertEquals(false,items(content.announcements(employee,employeeList,false)).getFirst().get("viewed"));
+        content.announcement(editor,id,true);
+        var initial=content.announcementReadership(editor,id,Map.of("pageSize","1"));
+        assertEquals(0L,initial.get("readCount"));
+        assertEquals(2L,initial.get("unreadCount"));
+        assertEquals(2L,initial.get("total"));
+        assertEquals(1,items(initial).size());
+        status(403,()->content.announcementReadership(employee,id,Map.of()));
+
+        content.readAnnouncement(employee,id);
+        var readFilter=Map.of("status","READ");
+        var read=content.announcementReadership(editor,id,readFilter);
+        assertEquals(1L,read.get("total"));
+        assertEquals(1L,read.get("readCount"));
+        assertEquals(1L,read.get("unreadCount"));
+        var reader=items(read).getFirst();
+        assertEquals(employee.user().get("employeeNo"),reader.get("employeeNo"));
+        assertEquals("首页验收员工",reader.get("name"));
+        assertEquals("隔离验收部门",reader.get("departmentName"));
+        assertNotNull(reader.get("readAt"));
+        content.readAnnouncement(employee,id);
+        assertEquals(reader,items(content.announcementReadership(editor,id,readFilter)).getFirst());
+        assertEquals(true,items(content.announcements(employee,employeeList,false)).getFirst().get("viewed"));
+        assertEquals(false,items(content.announcements(editor,employeeList,false)).getFirst().get("viewed"));
+        var unread=content.announcementReadership(editor,id,Map.of("status","UNREAD"));
+        assertEquals(1L,unread.get("total"));
+        assertEquals(editor.user().get("employeeNo"),items(unread).getFirst().get("employeeNo"));
+        assertNull(items(unread).getFirst().get("readAt"));
+
+        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());
+        assertEquals(0L,content.announcementReadership(editor,id,readFilter).get("total"));
+        assertEquals(1L,content.announcementReadership(editor,id,Map.of()).get("total"));
+    }
+
     @Test void readHistoryRetainsExpiredNoticeWithinCurrentAudience() {
         var body=announcementBody();
         body.put("validFrom",Instant.now().minusSeconds(60).toString());
@@ -241,6 +280,7 @@ class PortalIntegrationTest {
         assertEquals(0L,content.announcements(editor,history,false).get("total"));
         assertEquals(body.get("body"),content.readAnnouncement(editor,id).get("body"));
         assertEquals(id,items(content.announcements(editor,history,false)).getFirst().get("id"));
+        assertEquals(2L,content.announcementReadership(editor,id,Map.of()).get("readCount"));
 
         db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());
         assertEquals(0L,content.announcements(employee,history,false).get("total"));
@@ -251,6 +291,7 @@ class PortalIntegrationTest {
         assertEquals(0L,content.announcements(employee,expired,false).get("total"));
         assertEquals(0L,content.announcements(employee,history,false).get("total"));
         status(404,()->content.announcement(employee,id,false));
+        assertEquals(2L,content.announcementReadership(editor,id,Map.of()).get("readCount"));
     }
     @Test void listFiltersApplyBeforePaginationAndPreserveDepartmentVisibility() {
         var body=announcementBody();
@@ -274,7 +315,22 @@ class PortalIntegrationTest {
         filters.put("publishedFrom",LocalDate.parse(today).plusDays(1).toString());
         status(400,()->content.announcements(employee,filters,false));
     }
-    @Test void companyAnnouncementVisibleAcrossDepartments(){var body=announcementBody();body.put("scope","COMPANY");body.put("departmentIds",List.of());UUID id=(UUID)create(body).get("id");assertEquals(id,content.announcement(other,id,false).get("id"));}
+    @Test void companyAnnouncementCountsActiveEmployeesAcrossDepartments() {
+        var body=announcementBody();
+        body.put("scope","COMPANY");
+        body.put("departmentIds",List.of());
+        UUID id=(UUID)create(body).get("id");
+        content.readAnnouncement(employee,id);
+        content.readAnnouncement(other,id);
+        content.readAnnouncement(admin,id);
+        var filter=Map.of("status","READ");
+        var read=content.announcementReadership(editor,id,filter);
+        assertEquals(2L,read.get("total"));
+        assertEquals(Set.of(employee.user().get("employeeNo"),other.user().get("employeeNo")),
+                Set.copyOf(items(read).stream().map(row->row.get("employeeNo")).toList()));
+        db.update("UPDATE iam.user_account SET status='DISABLED' WHERE id=?",other.userId());
+        assertEquals(1L,content.announcementReadership(editor,id,filter).get("total"));
+    }
     /** 草稿、未到生效时间和撤下公告不能从任何员工页签或详情打开。 */
     @Test void unpublishedAnnouncementsAreHiddenFromEmployeeHistory() {
         for(String scenario:List.of("DRAFT","SCHEDULED","WITHDRAWN")){
@@ -287,6 +343,7 @@ class PortalIntegrationTest {
                 assertEquals(0L,content.announcements(employee,Map.of("view",view,"keyword",body.get("title").toString()),false).get("total"));
             status(404,()->content.announcement(employee,id,false));
             assertEquals(id,content.announcement(editor,id,true).get("id"));
+            status(404,()->content.announcementReadership(editor,id,Map.of()));
         }
     }
     @Test void departmentChangeImmediatelyRemovesFormerScope(){UUID id=(UUID)create(announcementBody()).get("id");db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());status(404,()->content.announcement(employee,id,false));}
