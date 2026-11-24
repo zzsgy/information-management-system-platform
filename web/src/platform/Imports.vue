@@ -924,10 +924,10 @@ header p,
   margin-top: 0;
 }
 .panel {
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 24px;
+  padding: clamp(16px, 2vw, 24px);
   min-width: 0;
 }
 h3 {
@@ -944,7 +944,7 @@ label {
 button,
 .download {
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   color: var(--brand);
   padding: 9px 14px;
   border-radius: 7px;
@@ -966,7 +966,7 @@ button:disabled {
 }
 .primary {
   background: var(--brand);
-  color: #fff;
+  color: var(--brand-contrast);
   border-color: var(--brand);
 }
 .download {
@@ -1025,18 +1025,18 @@ th {
 }
 .error {
   padding: 12px;
-  background: #fff1ee;
-  color: #a43827;
+  background: var(--danger-soft);
+  color: var(--danger);
   border-radius: 8px;
 }
 .error-text {
   margin: 3px 0;
-  color: #a43827;
+  color: var(--danger);
 }
 .success {
   padding: 12px;
-  background: #edf8f3;
-  color: #2a6852;
+  background: var(--success-soft);
+  color: var(--success);
   font-size: 13px;
 }
 .confirm-area {
@@ -1069,7 +1069,7 @@ summary {
   .intake-embedded .panel {
     padding: 16px;
   }
-  .intake-embedded .row {
+  .row {
     flex-wrap: wrap;
   }
 }

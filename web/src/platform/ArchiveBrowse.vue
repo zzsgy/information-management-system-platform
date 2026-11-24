@@ -735,9 +735,8 @@ onUnmounted(() => {
 const classificationFilter = ref("");
 </script>
 <template>
-  <section class="archive-heading">
+  <header class="page-heading archive-heading">
     <div>
-      <span class="eyebrow">档案中心</span>
       <h1>档案查询</h1>
       <p class="muted">在授权范围内检索资料，按实际用途申请与查阅。</p>
     </div>
@@ -751,7 +750,7 @@ const classificationFilter = ref("");
         登记文件
       </button>
     </div>
-  </section>
+  </header>
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <p v-if="busy && progress" class="archive-progress" role="status">
     {{ progress }}
@@ -764,7 +763,7 @@ const classificationFilter = ref("");
     >
       <h2>资料范围</h2>
       <button
-        :class="{ chosen: !state }"
+        :class="{ chosen: !state }" :aria-pressed="!state"
         @click="
           state = '';
           page = 1;
@@ -774,7 +773,7 @@ const classificationFilter = ref("");
       >
         <Icon name="file" :size="18" />全部获权资料</button
       ><button
-        :class="{ chosen: state === 'PUBLISHED' }"
+        :class="{ chosen: state === 'PUBLISHED' }" :aria-pressed="state === 'PUBLISHED'"
         @click="
           state = 'PUBLISHED';
           page = 1;
@@ -785,7 +784,7 @@ const classificationFilter = ref("");
         已归档资料</button
       ><button
         v-if="canManage"
-        :class="{ chosen: state === 'DRAFT' }"
+        :class="{ chosen: state === 'DRAFT' }" :aria-pressed="state === 'DRAFT'"
         @click="
           state = 'DRAFT';
           page = 1;
@@ -796,7 +795,7 @@ const classificationFilter = ref("");
         草稿与待检查</button
       ><button
         v-if="canManage"
-        :class="{ chosen: state === 'PENDING_REVIEW' }"
+        :class="{ chosen: state === 'PENDING_REVIEW' }" :aria-pressed="state === 'PENDING_REVIEW'"
         @click="
           state = 'PENDING_REVIEW';
           page = 1;
@@ -809,7 +808,7 @@ const classificationFilter = ref("");
     </section>
     <nav class="archive-list-tabs" aria-label="档案列表类型">
       <button
-        :class="{ active: listTab === 'RECORD' }"
+        :class="{ active: listTab === 'RECORD' }" :aria-pressed="listTab === 'RECORD'"
         @click="
           listTab = 'RECORD';
           load();
@@ -818,7 +817,7 @@ const classificationFilter = ref("");
         <Icon name="file" :size="18" />文件目录
       </button>
       <button
-        :class="{ active: listTab === 'BOX' }"
+        :class="{ active: listTab === 'BOX' }" :aria-pressed="listTab === 'BOX'"
         @click="
           listTab = 'BOX';
           load();
@@ -1874,14 +1873,7 @@ const classificationFilter = ref("");
 
 /* 模块导航由外层统一承载，查询页仅保留横向业务筛选，避免重复左侧栏。 */
 .archive-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 0 22px;
-}
-.archive-heading h1 {
-  font-size: 24px;
-  margin: 6px 0;
+  flex-wrap: wrap;
 }
 .archive-heading-actions {
   display: flex;
@@ -1935,12 +1927,12 @@ const classificationFilter = ref("");
   cursor: pointer;
 }
 .archive-filters > button.chosen {
-  background: var(--surface-muted);
-  color: var(--ink);
+  background: var(--brand-soft);
+  color: var(--brand-hover);
   font-weight: 600;
 }
 .archive-main {
-  padding: 24px;
+  padding: clamp(14px, 1.65vw, 24px);
   overflow: hidden;
 }
 .archive-query-area {
@@ -1969,18 +1961,19 @@ section.archive-main .archive-tools input {
 }
 .archive-table {
   width: 100%;
+  min-width: 590px;
   border-collapse: collapse;
   font-size: 13px;
 }
 .archive-table th {
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text-secondary);
   text-align: left;
   background: var(--surface-muted);
   padding: 14px 10px;
 }
 .archive-table td {
-  padding: 21px 10px;
+  padding: 15px 10px;
   border-bottom: 1px solid var(--line);
 }
 .archive-table .select-column {
@@ -1988,7 +1981,7 @@ section.archive-main .archive-tools input {
 }
 .archive-table input[type="checkbox"] {
   width: 16px;
-  accent-color: var(--ink);
+  accent-color: var(--brand);
 }
 .archive-name {
   display: flex;
@@ -1996,13 +1989,13 @@ section.archive-main .archive-tools input {
   gap: 12px;
 }
 .archive-name strong {
-  font-weight: 500;
+  font-weight: 600;
 }
 .archive-name small,
 .row-state {
   display: block;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 7px;
 }
 .archive-file-icon {
@@ -2010,25 +2003,25 @@ section.archive-main .archive-tools input {
   place-items: center;
   width: 38px;
   height: 44px;
-  background: var(--surface-muted);
+  background: var(--brand-soft);
   border-radius: 8px;
-  color: var(--ink);
+  color: var(--brand-hover);
   flex-shrink: 0;
 }
 .archive-grade {
-  font-size: 10px;
+  font-size: 12px;
   padding: 4px 7px;
   background: var(--surface-muted);
   color: var(--text-secondary);
   border-radius: 4px;
 }
 .archive-grade.important {
-  background: #faf0df;
-  color: #a37f46;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .archive-grade.core {
-  background: #f7e9e5;
-  color: #ae715b;
+  background: var(--danger-soft);
+  color: var(--danger);
 }
 .archive-row-actions {
   display: flex;
@@ -2159,15 +2152,15 @@ section.archive-main label.archive-inline-field {
   color: var(--text-secondary);
 }
 .archive-status.published {
-  background: #e8f5ee;
-  color: #28714e;
+  background: var(--success-soft);
+  color: var(--success);
 }
 .archive-status.pending_review {
-  background: #fff2dc;
-  color: #95630d;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .danger-text {
-  color: #b54d40;
+  color: var(--danger);
 }
 .registration-dialog {
   --flow-dialog-width: 960px;

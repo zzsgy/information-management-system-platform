@@ -338,6 +338,7 @@ onMounted(load);
 .sites-table {
   width: 100%;
   table-layout: fixed;
+  min-width: 690px;
   margin: 0;
 }
 .site-name-column {
@@ -384,8 +385,8 @@ onMounted(load);
   white-space: nowrap;
 }
 .site-status.enabled {
-  color: #23724b;
-  background: #eef8f1;
+  color: var(--success);
+  background: var(--success-soft);
 }
 .site-action {
   text-align: right;

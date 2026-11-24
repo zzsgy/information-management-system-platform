@@ -360,6 +360,10 @@ const calendarDay = new Intl.DateTimeFormat("zh-CN", {
   month: "long",
   day: "numeric",
 });
+/** 会议日期卡片以北京时间展示星期，和排期时段使用同一时区。 */
+const weekDay = new Intl.DateTimeFormat("zh-CN", {
+  timeZone: "Asia/Shanghai", weekday: "long",
+});
 const clock = new Intl.DateTimeFormat("zh-CN", {
   timeZone: "Asia/Shanghai",
   hour: "2-digit",
@@ -617,11 +621,10 @@ function replyLabel(reply?: string) {
         class="booking-row"
         :href="'#/meetings?id=' + meeting.id"
       >
-        <span class="booking-date"
-          ><Icon name="calendar" :size="17" />{{
-            dateLabel(meeting.startsAt)
-          }}</span
-        >
+        <time class="booking-date" :datetime="meeting.startsAt">
+          <small>{{ weekDay.format(new Date(meeting.startsAt)) }}</small>
+          <strong>{{ dateLabel(meeting.startsAt) }}</strong>
+        </time>
         <div class="booking-copy">
           <div class="booking-title">
             <strong>{{ meeting.subject }}</strong>
@@ -1255,6 +1258,7 @@ function replyLabel(reply?: string) {
 .booking-list-head {
   border-bottom: 1px solid var(--line);
   justify-content: space-between;
+  flex-wrap: wrap;
 }
 .booking-count,
 .booking-list-note {
@@ -1281,17 +1285,19 @@ function replyLabel(reply?: string) {
   background: var(--surface-muted);
 }
 .booking-date {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  padding: 8px 4px;
+  display: inline-grid;
+  justify-items: center;
+  align-content: center;
+  padding: 6px 8px;
   border-radius: 8px;
   background: var(--brand-soft);
-  color: var(--brand);
+  color: var(--brand-hover);
   font-size: 13px;
+  font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.booking-date small { color: var(--text-secondary); font-size: 11px; }
+.booking-title strong { font-size: 1.08rem; line-height: 1.5; }
 .booking-copy,
 .booking-title {
   min-width: 0;
@@ -1334,9 +1340,10 @@ function replyLabel(reply?: string) {
 .booking-badge.urgent,
 .booking-badge[data-state="AWAITING_MINUTES"],
 .booking-badge[data-state="FOLLOW_UP"] {
-  background: #fff3db;
-  color: #805210;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
+.booking-badge[data-state="CLOSED"] { background: var(--success-soft); color: var(--success); }
 .booking-chevron {
   color: var(--text-secondary);
 }
@@ -1391,6 +1398,9 @@ function replyLabel(reply?: string) {
   .booking-date {
     justify-self: start;
     grid-row: 1;
+    display: inline-flex;
+    align-items: baseline;
+    gap: 6px;
   }
   .booking-copy {
     grid-column: 1 / -1;
@@ -1652,7 +1662,7 @@ function replyLabel(reply?: string) {
 .meeting-page .meeting-person-panel,
 .meeting-page .meeting-fieldset {
   max-width: 100%;
-  border: 1px solid #dce5ef;
+  border: 1px solid var(--line);
   padding: 12px;
   margin-top: 8px;
   border-radius: 8px;
@@ -1682,7 +1692,7 @@ function replyLabel(reply?: string) {
 }
 .meeting-page .meeting-history li {
   padding-block: 8px;
-  border-bottom: 1px solid #e8edf4;
+  border-bottom: 1px solid var(--line);
 }
 .meeting-page .meeting-history small {
   margin-block: 3px;

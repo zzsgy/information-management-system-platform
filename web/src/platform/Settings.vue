@@ -423,9 +423,9 @@ onMounted(async () => {
   </dialog>
 </template>
 <style scoped>
-/* 电脑端采用宽屏分区与稳定表格，不在小屏降级隐藏必要配置字段。 */
+/* 同时查看公司与部门职责，窄屏保留完整的配置字段。 */
 .settings-heading {
-  padding: 44px 0 28px;
+  margin-bottom: 24px;
 }
 .settings-heading h1 {
   font-size: 24px;
@@ -433,14 +433,16 @@ onMounted(async () => {
 }
 .settings-grid {
   display: grid;
-  grid-template-columns: 1fr 1.5fr;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
   gap: 24px;
 }
 .settings-card {
-  padding: 30px;
+  padding: clamp(16px, 2vw, 28px);
+  min-width: 0;
 }
 .settings-title {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 20px;
@@ -473,6 +475,7 @@ onMounted(async () => {
 }
 .settings-links {
   display: flex;
+  flex-wrap: wrap;
   gap: 16px;
   margin-top: 24px;
 }
@@ -511,5 +514,8 @@ onMounted(async () => {
   border-radius: 6px;
   background: var(--surface-muted);
   overflow-wrap: anywhere;
+}
+@media (max-width: 960px) {
+  .settings-grid { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

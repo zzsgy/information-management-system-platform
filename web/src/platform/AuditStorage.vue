@@ -129,7 +129,7 @@ onMounted(load);
   </section>
   <p v-if="error" class="error" role="alert">{{ error }}</p>
   <template v-if="data">
-    <div class="storage-metrics">
+    <div class="management-summary storage-metrics">
       <article class="panel">
         <span>日志与索引</span
         ><strong>{{ bytes(data.latest?.total_bytes) }}</strong
@@ -283,13 +283,7 @@ onMounted(load);
   </footer>
 </template>
 <style scoped>
-.storage-metrics {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
 .storage-metrics article {
-  padding: 18px 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
@@ -305,6 +299,7 @@ onMounted(load);
 }
 .storage-note {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   gap: 16px;
   margin: 18px 0;
@@ -332,6 +327,7 @@ td {
 }
 .actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
 }
 </style>

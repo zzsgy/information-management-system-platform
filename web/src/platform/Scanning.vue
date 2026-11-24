@@ -1020,7 +1020,7 @@ header p,
 button {
   padding: 9px 14px;
   border: 1px solid var(--line);
-  background: #fff;
+  background: var(--surface);
   border-radius: 7px;
   color: var(--brand);
   cursor: pointer;
@@ -1033,11 +1033,12 @@ button:disabled {
 .primary {
   background: var(--brand);
   border-color: var(--brand);
-  color: #fff;
+  color: var(--brand-contrast);
 }
 .panel {
-  padding: 24px;
-  background: #fff;
+  min-width: 0;
+  padding: clamp(16px, 2vw, 24px);
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
   margin-bottom: 20px;
@@ -1197,18 +1198,18 @@ small {
 }
 .error {
   padding: 12px;
-  background: #fff1ee;
+  background: var(--danger-soft);
   border-radius: 8px;
-  color: #a43527;
+  color: var(--danger);
 }
 .notice {
   padding: 12px;
-  background: #eef8f2;
-  color: #2d6b53;
+  background: var(--success-soft);
+  color: var(--success);
   border-radius: 8px;
 }
 .danger {
-  color: #b74b38;
+  color: var(--danger);
 }
 .empty {
   padding: 40px;

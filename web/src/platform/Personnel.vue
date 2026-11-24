@@ -475,7 +475,8 @@ onMounted(() => {
   align-items: start;
 }
 .form-pane {
-  padding: 26px;
+  min-width: 0;
+  padding: clamp(16px, 2vw, 26px);
   display: grid;
   gap: 18px;
 }
@@ -505,7 +506,7 @@ onMounted(() => {
 }
 .impact-grid {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 96px), 1fr));
   gap: 12px;
 }
 .impact-grid > div {
@@ -583,7 +584,7 @@ onMounted(() => {
   margin: 0;
 }
 @media (max-width: 1050px) {
-  .transfer-layout {
+  .handover-layout {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -599,7 +600,7 @@ onMounted(() => {
 .people-list button {
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--surface);
   padding: 13px;
   text-align: left;
   cursor: pointer;

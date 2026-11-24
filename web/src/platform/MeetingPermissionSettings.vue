@@ -131,6 +131,8 @@ async function change(
 <style scoped>
 .permission-groups {
   display: grid;
+  gap: 12px;
+  padding: 16px;
   grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr));
 }
 .permission-group {
@@ -139,10 +141,9 @@ async function change(
   gap: 12px;
   padding: 16px 20px;
   border: 1px solid var(--line);
-  border-width: 1px 0 0;
-}
-.permission-group + .permission-group {
-  border-inline-start-width: 1px;
+  border-radius: 10px;
+  min-width: 0;
+  background: var(--surface-muted);
 }
 .permission-group li {
   justify-content: space-between;

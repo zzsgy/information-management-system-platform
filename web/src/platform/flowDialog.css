@@ -23,6 +23,7 @@
 
 .flow-dialog-header {
   border-bottom: 1px solid var(--line);
+  background: var(--surface-muted);
 }
 .flow-dialog-header > h2,
 .flow-dialog-title {
@@ -101,6 +102,7 @@
   flex-wrap: wrap;
   justify-content: flex-end;
   border-top: 1px solid var(--line);
+  background: var(--surface-muted);
 }
 .flow-dialog-section + .flow-dialog-section {
   border-top: 1px solid var(--line);

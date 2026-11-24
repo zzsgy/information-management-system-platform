@@ -14,13 +14,13 @@ const emit = defineEmits<{ close: []; error: [message: string] }>();
 const viewport = ref<HTMLElement>(),
   closeButton = ref<HTMLButtonElement>();
 const currentPage = ref(1),
-  scale = ref("100"),
+  scale = ref(window.matchMedia("(max-width: 760px)").matches ? "width" : "100"),
   viewportWidth = ref(1000);
 const images = ref<Record<number, string>>({}),
   ratios = ref<Record<number, string>>({});
 const width = computed(() =>
   scale.value === "width"
-    ? Math.max(240, viewportWidth.value - 80)
+    ? viewportWidth.value
     : (816 * Number(scale.value)) / 100,
 );
 const pages = new Map<number, HTMLElement>(),
@@ -170,8 +170,9 @@ onMounted(() => {
     },
     { root: viewport.value, rootMargin: "600px 0px" },
   );
-  resize = new ResizeObserver(() => {
-    viewportWidth.value = viewport.value!.clientWidth;
+  // 内容盒已经扣除桌面和窄屏各自的内边距，“适合宽度”直接使用正文可用空间。
+  resize = new ResizeObserver(([entry]) => {
+    viewportWidth.value = entry.contentRect.width;
   });
   resize.observe(viewport.value!);
   observePages();
@@ -317,16 +318,16 @@ onUnmounted(() => {
   z-index: 100;
   display: flex;
   flex-direction: column;
-  background: #e9edf2;
-  color: #23384b;
+  background: var(--canvas);
+  color: var(--ink);
 }
 .reader-heading {
   display: flex;
   align-items: center;
   gap: 14px;
   padding: 18px 28px;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
 }
 .reader-file-icon {
   width: 44px;
@@ -334,8 +335,8 @@ onUnmounted(() => {
   display: grid;
   place-items: center;
   border-radius: 10px;
-  background: #eaf4f7;
-  color: #087f8b;
+  background: var(--brand-soft);
+  color: var(--brand);
   flex-shrink: 0;
 }
 .reader-title {
@@ -351,7 +352,7 @@ onUnmounted(() => {
   text-overflow: ellipsis;
 }
 .reader-title span {
-  color: #718096;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 .reader-title i {
@@ -368,10 +369,11 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 28px;
+  flex-wrap: wrap;
+  gap: 8px 24px;
   padding: 9px 24px;
-  background: #fafbfd;
-  border-bottom: 1px solid #d8e0e9;
+  background: var(--surface-muted);
+  border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
 .reader-mode,
@@ -382,7 +384,7 @@ onUnmounted(() => {
   gap: 10px;
 }
 .reader-mode {
-  color: #64768a;
+  color: var(--text-secondary);
 }
 .reader-position {
   margin: 0;
@@ -396,21 +398,21 @@ onUnmounted(() => {
   min-width: 0;
   padding: 6px;
   text-align: center;
-  border: 1px solid #d7e0e8;
+  border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fff;
+  background: var(--surface);
   height: 32px;
 }
 .reader-zoom {
   padding-left: 24px;
-  border-left: 1px solid #dbe3eb;
+  border-left: 1px solid var(--line);
   gap: 4px;
 }
 .reader-zoom select {
   height: 32px;
-  border: 1px solid #d7e0e8;
+  border: 1px solid var(--line);
   border-radius: 5px;
-  background: #fff;
+  background: var(--surface);
   padding: 0 10px;
   color: inherit;
 }
@@ -425,7 +427,7 @@ onUnmounted(() => {
   color: inherit;
 }
 .reader-tool:hover {
-  background: #e7edf3;
+  background: var(--brand-soft);
 }
 .reader-tool:disabled {
   opacity: 0.35;
@@ -448,7 +450,7 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   margin: 0 0 36px;
-  background: #fff;
+  background: white;
   box-shadow: 0 2px 9px #23384b20;
   scroll-margin-top: 0;
 }
@@ -463,7 +465,7 @@ onUnmounted(() => {
   inset: 0;
   display: grid;
   place-items: center;
-  color: #8a98a8;
+  color: #475569;
   font-size: 14px;
 }
 .reader-page figcaption {
@@ -473,7 +475,7 @@ onUnmounted(() => {
   padding-top: 8px;
   text-align: center;
   font-size: 11px;
-  color: #7d8a99;
+  color: var(--text-secondary);
 }
 .reader-loading {
   min-height: 50vh;
@@ -481,15 +483,18 @@ onUnmounted(() => {
   align-items: center;
   justify-content: center;
   gap: 12px;
-  color: #63768a;
+  color: var(--text-secondary);
 }
 .reader-spinner {
   width: 18px;
   height: 18px;
-  border: 2px solid #cbd7e0;
-  border-top-color: #07848e;
+  border: 2px solid var(--line);
+  border-top-color: var(--brand);
   border-radius: 50%;
   animation: reader-spin 1s linear infinite;
+}
+@media (prefers-reduced-motion: reduce) {
+  .reader-spinner { animation: none; }
 }
 @keyframes reader-spin {
   to {
@@ -500,9 +505,9 @@ onUnmounted(() => {
   padding: 8px 28px;
   display: flex;
   justify-content: space-between;
-  background: #fafbfd;
-  border-top: 1px solid #d7dfe8;
-  color: #758699;
+  background: var(--surface-muted);
+  border-top: 1px solid var(--line);
+  color: var(--text-secondary);
   font-size: 12px;
 }
 @media (max-width: 760px) {

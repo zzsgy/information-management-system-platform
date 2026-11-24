@@ -146,28 +146,26 @@ onUnmounted(() => {
 }
 body {
   margin: 0;
-  background: #f3f5f8;
-  color: #21313d;
-  font:
-    14px "Microsoft YaHei",
-    sans-serif;
-  min-width: 1100px;
+  background: var(--canvas);
+  color: var(--ink);
+  font: 14px/1.6 var(--interface-font-family);
+  min-width: 0;
 }
 .print-toolbar {
   position: sticky;
   top: 0;
   z-index: 1;
-  background: #fff;
-  border-bottom: 1px solid #e3e9ef;
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
   padding: 16px 28px;
   display: flex;
   justify-content: space-between;
   align-items: center;
-  box-shadow: 0 3px 12px #123e3408;
+  box-shadow: var(--shadow-panel);
 }
 .print-toolbar span {
   font-size: 12px;
-  color: #60717e;
+  color: var(--text-secondary);
 }
 .print-toolbar h1 {
   font-size: 22px;
@@ -175,7 +173,7 @@ body {
 }
 .print-toolbar p {
   margin: 8px 0 0;
-  color: #60717e;
+  color: var(--text-secondary);
 }
 .print-actions {
   display: flex;
@@ -183,11 +181,13 @@ body {
   align-items: center;
 }
 button {
-  background: #087f88;
+  background: var(--brand);
   border: 0;
-  color: #fff;
+  color: var(--brand-contrast);
+  font: inherit;
+  font-weight: 600;
   padding: 9px 18px;
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   cursor: pointer;
 }
 button:disabled {
@@ -195,12 +195,15 @@ button:disabled {
   cursor: default;
 }
 .error {
-  color: #a74236 !important;
+  color: var(--danger) !important;
 }
 .paper {
   margin: 28px auto;
-  width: 800px;
+  width: min(800px, calc(100% - 28px));
   background: white;
+  color-scheme: light;
+  color: #111;
+  font-family: var(--font-system);
   padding: 0;
   box-shadow: 0 6px 24px #1c3f3518;
 }
@@ -212,13 +215,19 @@ button:disabled {
 .paper figcaption {
   text-align: center;
   padding: 10px;
-  color: #819085;
+  color: #475569;
 }
 main:not(.authorized) {
   visibility: hidden;
 }
+@media screen and (max-width: 640px) {
+  .print-toolbar { position: static; flex-wrap: wrap; gap: 12px; padding: 16px; }
+  .print-actions { flex-wrap: wrap; gap: 12px; }
+}
 @media print {
   body {
+    color: black;
+    font-family: var(--font-system);
     background: white;
     min-width: 0;
   }

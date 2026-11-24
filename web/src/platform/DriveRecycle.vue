@@ -308,6 +308,8 @@ onMounted(load);
 <style scoped>
 .recycle-heading {
   display: flex;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   justify-content: space-between;
   align-items: center;
 }
@@ -332,7 +334,7 @@ onMounted(load);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 20px 24px;
-  background: #f8fafc;
+  background: var(--surface-muted);
   padding: 16px 18px;
   border: 1px solid var(--line);
   border-radius: 10px;

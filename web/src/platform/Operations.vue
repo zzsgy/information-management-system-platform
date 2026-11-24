@@ -422,8 +422,8 @@ const listFilters = ref<Record<string, string>>({});
   border-radius: 4px;
 }
 .delivery-badge.manual {
-  background: #fcf2dd;
-  color: #9c7e37;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .operations-workspace td.operations-empty {
   padding: 0;

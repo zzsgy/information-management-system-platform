@@ -30,9 +30,9 @@ async function save(group: Group) {
 onMounted(load);
 </script>
 <template>
-<section class="panel deployment-settings" aria-label="部署运行配置">
+<section class="panel management-settings-panel deployment-settings" aria-label="部署运行配置">
  <header><div><h2>部署运行配置</h2><p class="muted">仅平台IT管理员可维护；服务授权和运行环境须分别完成。</p></div><button class="secondary" :disabled="busy" @click="load">重新读取配置</button></header>
- <nav class="tabs" aria-label="部署配置分类"><button v-for="(title,key) in titles" :key="key" :class="{active: selected === key}" @click="selected = key; error = ''; notice = ''">{{ title }}</button></nav>
+ <nav class="module-tabs" aria-label="部署配置分类"><button v-for="(title,key) in titles" :key="key" :class="{ active: selected === key }" :aria-pressed="selected === key" @click="selected = key; error = ''; notice = ''">{{ title }}</button></nav>
  <template v-for="group in groups" :key="group.id"><form v-if="group.section === selected" @submit.prevent="save(group)">
   <p class="description">{{ descriptions[group.section] }}</p>
   <div class="configuration-grid"><label v-for="field in group.fields" :key="field.key">{{ field.label }}
@@ -48,5 +48,5 @@ onMounted(load);
 </section>
 </template>
 <style scoped>
-.deployment-settings{margin:20px 0}header,footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}h2{margin:0}.tabs{display:flex;gap:4px;flex-wrap:wrap;border-bottom:1px solid var(--line);margin:20px 0}.tabs button{border:0;background:transparent;border-radius:0;padding:12px 16px}.tabs .active{color:var(--primary);border-bottom:2px solid currentColor}.description{line-height:1.8;max-width:1000px}.configuration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:24px 0}.configuration-grid label,.configuration-reason{display:grid;gap:8px;min-width:0}.configuration-reason{margin:20px 0}input,select{width:100%;min-width:0}footer{justify-content:flex-start}@media(max-width:800px){.configuration-grid{grid-template-columns:1fr}}
+header,footer{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}h2{margin:0}.description{line-height:1.8;max-width:1000px}.configuration-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:20px;margin:24px 0}.configuration-grid label,.configuration-reason{display:grid;gap:8px;min-width:0}.configuration-reason{margin:20px 0}input,select{width:100%;min-width:0}footer{justify-content:flex-start}@media(max-width:800px){.configuration-grid{grid-template-columns:1fr}}
 </style>

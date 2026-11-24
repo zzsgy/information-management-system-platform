@@ -13,6 +13,7 @@ import {
 } from "./lib/api";
 import { useAction } from "./lib/ui";
 import FormDialog from "./components/FormDialog.vue";
+import companyLogo from "./platform/assets/biolink-logo-white.png";
 import type { Row, Field } from "./lib/model";
 /** 当前页面和仅有权限的导航项。 */
 const route = useRoute();
@@ -81,18 +82,11 @@ async function changePassword(value: Row) {
   <div v-if="!session.ready" class="boot">正在连接信息管理系统…</div>
   <main v-else-if="!session.user" class="login-screen">
     <section class="login-intro">
-      <div class="wordmark">IMS <span>信息管理系统</span></div>
-      <p class="eyebrow">ARCHIVE WORKSPACE</p>
-      <h1>让每一份档案<br />有序可循。</h1>
-      <p>
-        集中管理档案，连接业务流程。<br />从接收归档到借阅使用，保留每一步记录。
-      </p>
-      <div class="intro-tags">
-        <span>统一身份</span><span>部门权限</span><span>全程留痕</span>
-      </div>
+      <img class="wordmark" :src="companyLogo" alt="BIO-LINK 百林科" />
+      <h1>档案管理工作台</h1>
+      <p>查询档案台账，办理借阅与审批，查看流转记录。</p>
     </section>
     <section class="login-card">
-      <p class="eyebrow">欢迎使用</p>
       <h2>登录档案工作台</h2>
       <p class="muted">使用管理员分配的账号访问</p>
       <form @submit.prevent="signIn">
@@ -140,7 +134,6 @@ async function changePassword(value: Row) {
           ><span class="nav-dot" />{{ item.meta.title }}</router-link
         >
       </nav>
-      <div class="sidebar-footer">集中管理 · 全程留痕</div>
     </aside>
     <div class="main-shell">
       <header class="topbar">

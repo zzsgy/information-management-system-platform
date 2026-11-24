@@ -674,8 +674,8 @@ onUnmounted(() => {
 .detail-file-icon {
   width: 54px;
   height: 62px;
-  background: #eaf2fb;
-  color: #477fb3;
+  background: var(--brand-soft);
+  color: var(--brand-hover);
   display: grid;
   place-items: center;
   border-radius: 10px;
@@ -684,7 +684,7 @@ onUnmounted(() => {
 .detail-close {
   border: 0;
   background: transparent;
-  color: #657b91;
+  color: var(--text-secondary);
   cursor: pointer;
   width: 36px;
   height: 36px;
@@ -695,7 +695,7 @@ onUnmounted(() => {
   place-items: center;
 }
 .detail-close:hover {
-  background: #eef3f7;
+  background: var(--surface-muted);
 }
 .detail-body {
   padding: 24px 28px 28px;
@@ -707,8 +707,8 @@ onUnmounted(() => {
   grid-template-columns: 0.7fr 0.8fr 0.7fr 0.9fr 1.6fr;
   gap: 20px;
   padding: 16px 20px;
-  background: #f6f8fb;
-  border: 1px solid #e9eef4;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
   border-radius: 10px;
   margin-bottom: 20px;
 }
@@ -718,7 +718,7 @@ onUnmounted(() => {
   gap: 8px;
 }
 .detail-summary small {
-  color: #7d8c9c;
+  color: var(--text-secondary);
   font-size: 12px;
 }
 .detail-summary strong {
@@ -746,7 +746,7 @@ onUnmounted(() => {
   font-size: 12px;
 }
 .version-heading > span {
-  color: #7b8b9c;
+  color: var(--text-secondary);
   font-size: 12px;
   flex-shrink: 0;
 }

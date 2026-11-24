@@ -26,7 +26,6 @@ onMounted(load);
 <template>
   <div class="page-heading">
     <div>
-      <p class="eyebrow">ARCHIVE WORKSPACE</p>
       <h1>工作概览</h1>
       <p>查看权限范围内的档案与到期提醒</p>
     </div>

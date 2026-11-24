@@ -196,10 +196,10 @@ const listFilters = ref(recentWeekFilters("created"));
         </button>
       </div>
     </form>
-    <section v-else-if="detail" class="panel portal-form">
+    <section v-else-if="detail" class="panel portal-form feedback-detail">
       <div class="portal-heading">
         <h2>{{ categories[detail.category] }}</h2>
-        <span class="chip">{{ states[detail.state] }}</span>
+        <span class="feedback-state" :data-state="detail.state">{{ states[detail.state] }}</span>
       </div>
       <div class="portal-meta">
         <span>{{ detail.applicantName }}</span
@@ -273,7 +273,7 @@ const listFilters = ref(recentWeekFilters("created"));
           ><strong
             >{{ categories[item.category] }} · {{ item.applicantName }}</strong
           ><small>{{ portalTime(item.createdAt) }}</small></span
-        ><span class="chip">{{ states[item.state] }}</span>
+        ><span class="feedback-state" :data-state="item.state">{{ states[item.state] }}</span>
       </button>
       <EmptyState
         v-if="!items.length && !busy"
@@ -321,4 +321,28 @@ const listFilters = ref(recentWeekFilters("created"));
 .feedback-body {
   margin: 10px 0 24px;
 }
+.feedback-state {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  padding: 3px 9px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  font-size: .86rem;
+  font-weight: 600;
+}
+.feedback-state[data-state="PROCESSING"] { color: var(--brand-hover); background: var(--brand-soft); }
+.feedback-state[data-state="RESOLVED"] { color: var(--success); background: var(--success-soft); }
+.feedback-detail > h3 { margin: 0 0 10px; }
+.feedback-detail .portal-reply {
+  margin: 0 0 10px;
+  padding: 12px 16px;
+  border: 0;
+  border-inline-start: 3px solid var(--brand);
+  border-radius: 0 8px 8px 0;
+  background: var(--surface-muted);
+}
+.feedback-detail .portal-reply .portal-meta { margin-bottom: 6px; }
+.feedback-detail > form { margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 </style>

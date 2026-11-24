@@ -429,7 +429,7 @@ function confirm() {
 }
 .picker-row[aria-pressed="true"] .picker-mark {
   background: var(--brand);
-  color: white;
+  color: var(--brand-contrast);
   border-color: var(--brand);
 }
 .picker-row span,

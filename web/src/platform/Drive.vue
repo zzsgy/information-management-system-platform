@@ -436,16 +436,12 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <section class="drive-heading">
+  <header class="page-heading">
     <div>
-      <span class="eyebrow">文档协作</span>
       <h1>企业公盘</h1>
       <p class="muted">在获准的空间内，查阅与共享工作资料。</p>
     </div>
-    <span class="drive-seal"
-      ><Icon name="shield" :size="22" />受控资料空间</span
-    >
-  </section>
+  </header>
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <p v-if="notice" class="drive-notice" role="status">{{ notice }}</p>
   <div>
@@ -614,12 +610,12 @@ onUnmounted(() => {
           </div>
         </section>
         <div v-if="showFolderNavigation" class="drive-toolbar">
-          <div class="drive-crumb">
+          <nav class="drive-crumb" aria-label="当前公盘目录">
             <Icon name="folder" :size="18" />
-            <button @click="back(-1)">公盘</button
+            <button :aria-current="!trail.length ? 'location' : undefined" @click="back(-1)">公盘</button
             ><template v-for="(folder, index) in trail" :key="folder.id"
-              ><span>/</span
-              ><button @click="back(index)">{{ folder.name }}</button></template
+              ><span aria-hidden="true">/</span
+              ><button :aria-current="index === trail.length - 1 ? 'location' : undefined" @click="back(index)">{{ folder.name }}</button></template
             >
             <select
               v-if="folders.length"
@@ -635,7 +631,7 @@ onUnmounted(() => {
             <button v-if="moreFolders" type="button" @click="nextFolders">
               加载更多目录
             </button>
-          </div>
+          </nav>
           <div v-if="selected" class="drive-toolbar-actions">
             <span v-if="selected && !selected.canUpload && !error" class="muted">当前账号没有此目录的上传权限</span>
             <button
@@ -813,26 +809,6 @@ onUnmounted(() => {
   color: var(--ink);
   word-break: break-all;
 }
-.drive-heading {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin: 0 0 22px;
-}
-.drive-heading h1 {
-  font-size: 24px;
-  margin: 6px 0;
-}
-.drive-seal {
-  display: flex;
-  gap: 10px;
-  align-items: center;
-  color: var(--ink);
-  background: var(--surface-muted);
-  border-radius: 30px;
-  padding: 8px 12px;
-  font-size: 13px;
-}
 /* 视图标签与管理操作共用一行，按钮独立于标签样式，右侧对齐页面边缘。 */
 .drive-view-bar {
   display: flex;
@@ -856,7 +832,7 @@ onUnmounted(() => {
   /* 分组强调色跟随外观；暖纸主题沿用金色，不影响全局主要按钮。 */
   --drive-accent: var(--paper-gold, var(--brand));
   --drive-accent-text: var(--paper-gold-text, var(--brand));
-  padding: 20px 24px;
+  padding: clamp(14px, 1.65vw, 24px);
   overflow: hidden;
 }
 .drive-spaces {
@@ -1041,10 +1017,13 @@ onUnmounted(() => {
 .drive-crumb button {
   border: 0;
   background: none;
-  color: var(--ink);
+  color: var(--text-secondary);
   cursor: pointer;
   padding: 0;
+  overflow-wrap: anywhere;
 }
+.drive-crumb button[aria-current] { color: var(--ink); font-weight: 650; }
+.drive-crumb button:hover { color: var(--brand-hover); text-decoration: underline; }
 .drive-crumb span {
   color: var(--text-secondary);
 }
@@ -1132,10 +1111,6 @@ onUnmounted(() => {
   }
 }
 @media (max-width: 600px) {
-  .drive-heading {
-    flex-wrap: wrap;
-    gap: 12px;
-  }
   .drive-files {
     padding: 16px;
   }
@@ -1193,7 +1168,9 @@ onUnmounted(() => {
   padding: 0;
   line-height: 1.7;
   overflow-wrap: anywhere;
+  font-weight: 600;
 }
+.drive-file-title .file-name:hover { color: var(--brand-hover); text-decoration: underline; }
 .drive-uploader {
   overflow-wrap: anywhere;
 }
@@ -1225,19 +1202,20 @@ onUnmounted(() => {
 .drive-table th {
   text-align: left;
   color: var(--text-secondary);
-  font-weight: 400;
+  font-weight: 600;
   background: var(--surface-muted);
   padding: 14px 12px;
 }
 .drive-table td {
-  padding: 22px 12px;
+  padding: 16px 12px;
   border-bottom: 1px solid var(--line);
 }
 .drive-pdf {
-  font-size: 9px;
-  letter-spacing: 0.3px;
-  background: #faece7;
-  color: #ae694e;
+  min-width: 35px;
+  text-align: center;
+  font: 600 .75rem/1.4 ui-monospace, monospace;
+  background: var(--brand-soft);
+  color: var(--brand-hover);
   border-radius: 6px;
   padding: 8px 6px;
   margin-right: 12px;
@@ -1248,9 +1226,9 @@ onUnmounted(() => {
   color: var(--text-secondary);
 }
 .drive-notice {
-  color: #537349;
+  color: var(--success);
   padding: 12px 16px;
-  background: #f0f6ed;
+  background: var(--success-soft);
   border-radius: 10px;
 }
 .drive-progress {
@@ -1262,6 +1240,6 @@ onUnmounted(() => {
   width: 100%;
   height: 6px;
   margin-top: 8px;
-  accent-color: var(--text-secondary);
+  accent-color: var(--brand);
 }
 </style>

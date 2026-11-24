@@ -387,6 +387,7 @@ label {
 }
 .field-flags {
   display: flex;
+  flex-wrap: wrap;
   gap: 22px;
 }
 .field-flags label {
@@ -401,7 +402,7 @@ label {
   min-height: 0;
   padding: 0;
   flex: 0 0 16px;
-  accent-color: var(--ink);
+  accent-color: var(--brand);
 }
 input,
 select {

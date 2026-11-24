@@ -57,7 +57,7 @@ async function check() {
 onMounted(load);
 </script>
 <template>
-  <section class="panel service-configuration">
+  <section class="panel management-settings-panel service-configuration">
     <header><div><h2>文件处理服务配置</h2><p class="muted">维护后台服务的部门范围、有效期和启停状态，保存后即时生效。</p></div>
       <div class="actions"><button class="secondary" :disabled="busy" @click="load">刷新配置</button><button class="primary" :disabled="busy" @click="check">检查运行环境</button></div>
     </header>
@@ -94,19 +94,18 @@ onMounted(load);
   </dialog>
 </template>
 <style scoped>
-.service-configuration { margin: 20px 0; }
 header, .service-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .actions { display: flex; gap: 10px; flex-wrap: wrap; }
-.services-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-top: 20px; }
-.services-grid article { border: 1px solid var(--line, #dbe6ec); border-radius: 10px; padding: 20px; min-width: 0; }
+.services-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 16px; margin-top: 20px; }
+.services-grid article { border: 1px solid var(--line); border-radius: 10px; padding: 20px; min-width: 0; }
 h2, h3 { margin: 0; }
 .service-form { display: grid; gap: 18px; }
 .service-form label { display: grid; gap: 8px; }
-.service-form fieldset { border: 1px solid var(--line, #dbe6ec); border-radius: 8px; padding: 16px; }
+.service-form fieldset { border: 1px solid var(--line); border-radius: 8px; padding: 16px; }
 .department-options { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); gap: 12px; margin-top: 12px; }
 .department-options label { display: flex; align-items: center; }
 .department-options input { width: auto; margin: 0; }
 .runtime-checks { padding-left: 22px; line-height: 1.8; }
-.runtime-checks .failed { color: var(--danger, #a65546); }
-@media (max-width: 800px) { .services-grid { grid-template-columns: 1fr; } }
+.runtime-checks .failed { color: var(--danger); }
+@media (max-width: 520px) { .department-options { grid-template-columns: minmax(0, 1fr); } }
 </style>
