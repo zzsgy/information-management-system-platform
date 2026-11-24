@@ -357,66 +357,6 @@
   min-width: 0;
   gap: 12px;
 }
-.portal-site-grid {
-  display: grid;
-  /* 五个入口优先同排；卡片再窄或继续新增网站时自动换行。 */
-  container-type: inline-size;
-  --site-gap: clamp(4px, 0.5vw, 8px);
-  grid-template-columns: repeat(
-    auto-fill,
-    minmax(min(100%, clamp(52px, (100% - 4 * var(--site-gap)) / 5, 76px)), 1fr)
-  );
-  gap: var(--site-gap);
-  padding: 0;
-  margin: 0;
-  list-style: none;
-}
-.portal-site {
-  display: grid;
-  justify-items: center;
-  align-content: start;
-  gap: 8px;
-  height: 100%;
-  padding: 8px 2px;
-  border-radius: 10px;
-  color: var(--ink);
-  text-align: center;
-  font-size: clamp(11px, 3.2cqi, 13px);
-  overflow-wrap: anywhere;
-}
-.portal-site:hover {
-  background: var(--surface-muted);
-  color: var(--brand-hover);
-}
-.portal-site:focus-visible {
-  outline: 2px solid var(--brand);
-  outline-offset: 2px;
-}
-.portal-site-icon {
-  --site-icon-size: clamp(34px, 13cqi, 52px);
-  --site-logo-size: calc(var(--site-icon-size) * 0.65);
-  width: var(--site-icon-size);
-  aspect-ratio: 1;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-muted);
-  color: var(--brand-hover);
-  font-size: calc(var(--site-icon-size) * 0.44);
-  font-weight: 600;
-}
-.portal-site-icon img {
-  display: block;
-  height: var(--site-logo-size);
-  width: auto;
-  max-width: none;
-}
-/* 横版企业标识仅在快捷方式里露出左侧品牌图形。 */
-.portal-site-brand-mark {
-  width: calc(var(--site-logo-size) * 0.82);
-  overflow: hidden;
-}
 .portal-empty {
   padding: 22px 8px;
   text-align: center;
