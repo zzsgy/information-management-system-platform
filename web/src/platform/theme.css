@@ -755,9 +755,6 @@ html,
   .portal-home-grid {
     grid-template-columns: minmax(260px, 1fr) minmax(340px, 1.3fr);
   }
-  .portal-home-side {
-    grid-column: 1 / -1;
-  }
 }
 
 /* 左侧导航占用全局左栏，首页和业务页面共用右侧内容区。 */
@@ -845,9 +842,6 @@ html,
     grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr) minmax(0, 0.85fr);
   }
 
-  .workspace-with-sidebar .portal-home-side {
-    grid-column: auto;
-  }
 }
 
 @media (min-width: 761px) and (max-width: 960px) {

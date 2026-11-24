@@ -17,6 +17,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.ZoneId;
 import java.util.*;
 import java.io.*;
 import java.nio.charset.StandardCharsets;
@@ -63,6 +64,44 @@ class MeetingIntegrationTest {
         outsider = person();
         roomA = bookings.saveRoom(admin, null, request(), Map.of("name", "隔离会议室 A " + request()));
         roomB = bookings.saveRoom(admin, null, request(), Map.of("name", "隔离会议室 B " + request()));
+    }
+
+    /** 次日工作台仍显示跨午夜的房间占用，会议主题和详情链接只提供给可读人。 */
+    @Test
+    void roomScheduleShowsOccupiedSlotsWithoutExposingPrivateMeetings() {
+        var zone = ZoneId.of("Asia/Shanghai");
+        LocalDate day = LocalDate.now(zone).plusDays(2);
+        Instant midnight = day.atStartOfDay(zone).toInstant();
+        var crossMidnight = meeting(roomA, midnight.minusSeconds(900), employee);
+        crossMidnight.put("subject", "受邀人员会议");
+        UUID meeting = bookings.create(organizer, request(), crossMidnight);
+
+        var cancelled = meeting(roomB, midnight.plusSeconds(1800), employee);
+        cancelled.put("subject", "已取消安排");
+        UUID cancelledId = bookings.create(organizer, request(), cancelled);
+        bookings.cancel(organizer, cancelledId, request(), Map.of("reason", "取消隔离会议"));
+
+        var roomName = db.required("SELECT name FROM portal.meeting_room WHERE id=?", roomA).get("name");
+        var cancelledRoom = db.required("SELECT name FROM portal.meeting_room WHERE id=?", roomB).get("name");
+        for (LocalDate included : List.of(day.minusDays(1), day)) {
+            var attendeeSlots = values(bookings.roomSchedule(employee, included), "items");
+            var accessible = attendeeSlots.stream().filter(row -> roomName.equals(row.get("roomName"))).findFirst().orElseThrow();
+            assertEquals(meeting, accessible.get("meetingId"));
+            assertEquals("受邀人员会议", accessible.get("subject"));
+            assertEquals(2L, accessible.get("participantCount"));
+            assertEquals("SCHEDULED", accessible.get("state"));
+            assertTrue(attendeeSlots.stream().noneMatch(row -> cancelledRoom.equals(row.get("roomName"))));
+
+            var publicSlot = values(bookings.roomSchedule(outsider, included), "items").stream()
+                    .filter(row -> roomName.equals(row.get("roomName"))).findFirst().orElseThrow();
+            assertEquals(accessible.get("startsAt"), publicSlot.get("startsAt"));
+            assertEquals(accessible.get("endsAt"), publicSlot.get("endsAt"));
+            assertNull(publicSlot.get("subject"));
+            assertNull(publicSlot.get("meetingId"));
+            assertNull(publicSlot.get("participantCount"));
+        }
+        assertTrue(values(bookings.roomSchedule(employee, day.plusDays(1)), "items").stream()
+                .noneMatch(row -> roomName.equals(row.get("roomName"))));
     }
 
     /** V81、V82 已保存的数据随部署保留，原在线周会回到会前填报、导入及正常开会流程。 */
