@@ -88,7 +88,6 @@
   --workspace-nav-selected: #203e48;
   --workspace-nav-selected-text: #9de9e2;
   --workspace-nav-focus: #9de9e2;
-  color-scheme: dark;
 }
 
 /* 字体原文件在本机同源托管，浏览器仅加载当前实际使用的字体，无外部字体请求。 */
@@ -113,6 +112,7 @@
 
 /* 背景图仅用于屏幕界面，打印使用原始纸面。 */
 @media screen {
+  :root[data-theme="aurora"] { color-scheme: dark; }
   :root[data-wallpaper="true"] body {
     background-image: linear-gradient(var(--wallpaper-wash), var(--wallpaper-wash)), var(--app-wallpaper);
     background-position: center;

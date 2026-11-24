@@ -225,7 +225,6 @@ main:not(.authorized) {
   .print-actions { flex-wrap: wrap; gap: 12px; }
 }
 @media print {
-  :root { color-scheme: light; }
   body {
     color: black;
     font-family: var(--font-system);
