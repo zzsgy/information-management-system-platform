@@ -527,7 +527,7 @@ onMounted(async () => {
             <td>
               <span
                 class="status-badge"
-                :class="{ inactive: user.status === 'DISABLED' }"
+                :class="{ inactive: user.status === 'DISABLED', pending: user.status === 'ACTIVE' && user.passwordSetupRequired }"
                 >{{
                   user.status === "DISABLED"
                     ? "已停用"

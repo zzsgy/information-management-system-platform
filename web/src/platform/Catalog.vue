@@ -1200,12 +1200,13 @@ onUnmounted(() => {
 <style scoped>
 .catalog-extra {
   display: block;
-  color: var(--ink);
+  color: var(--text-secondary);
   margin-top: 6px;
   overflow-wrap: anywhere;
 }
 .catalog-list {
-  overflow: hidden;
+  min-width: 0;
+  overflow-x: auto;
 }
 .retention-note {
   padding: 16px 20px;
@@ -1266,7 +1267,7 @@ td:first-child {
   padding: 16px 0;
 }
 small {
-  color: var(--ink);
+  color: var(--text-secondary);
 }
 </style>
 

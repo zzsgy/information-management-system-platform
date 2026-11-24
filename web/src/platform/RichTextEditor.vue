@@ -129,7 +129,7 @@ watch(model, (value) => validator.value?.setCustomValidity(
   position: relative;
   border: 1px solid var(--line, #d6e0e7);
   border-radius: 8px;
-  background: #fff;
+  background: var(--surface);
   color: var(--ink);
 }
 .rich-editor:focus-within {
@@ -156,7 +156,7 @@ watch(model, (value) => validator.value?.setCustomValidity(
 .rich-toolbar button:hover:not(:disabled),
 .rich-toolbar button:focus-visible {
   border-color: var(--line, #d6e0e7);
-  background: #fff;
+  background: var(--surface);
 }
 .bold { font-weight: 700; }
 .italic { font-style: italic; }

@@ -847,9 +847,8 @@ onUnmounted(() => {
 
 <template>
   <div class="archive-ledger">
-    <header class="ledger-heading">
+    <header class="ledger-heading page-heading">
       <div>
-        <span class="eyebrow">档案中心</span>
         <h1>档案查询</h1>
         <p>统一管理档案台账、电子清单与归档文档。</p>
       </div>
@@ -2083,6 +2082,7 @@ onUnmounted(() => {
 }
 .ledger-heading {
   display: flex;
+  flex-wrap: wrap;
   justify-content: space-between;
   align-items: center;
   gap: 24px;
@@ -2112,8 +2112,8 @@ h3 {
 }
 .heading-actions {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
-  flex-shrink: 0;
 }
 .heading-actions button,
 .box-contents header button {
@@ -2122,22 +2122,22 @@ h3 {
   gap: 8px;
 }
 .ledger-panel {
-  background: white;
-  border: 1px solid var(--line, #dce5ee);
+  background: var(--surface);
+  border: 1px solid var(--line);
   border-radius: 16px;
-  padding: 24px;
-  box-shadow: 0 3px 12px #20324603;
+  padding: clamp(14px, 1.65vw, 24px);
+  box-shadow: var(--shadow);
 }
 .ledger-filters {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   align-items: center;
-  gap: 22px 28px;
-  background: #f7f9fb;
-  border: 1px solid #e4ebf2;
+  gap: 16px 24px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
   border-radius: 12px;
-  padding: 24px;
-  margin-bottom: 28px;
+  padding: clamp(14px, 1.65vw, 24px);
+  margin-bottom: 20px;
 }
 .archive-ledger .ledger-panel .ledger-filters > label,
 .ledger-filters > .ledger-filter-field {
@@ -2240,27 +2240,27 @@ h3 {
 }
 th {
   text-align: left;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-secondary);
-  background: #f5f8fb;
+  background: var(--surface-muted);
   font-size: 13px;
 }
 th,
 td {
   padding: 17px 10px;
-  border-bottom: 1px solid #e3eaf1;
+  border-bottom: 1px solid var(--line);
   vertical-align: middle;
   overflow-wrap: anywhere;
 }
 .box-table > tbody > tr:not(.contents-row) > td {
-  height: 95px;
+  height: 72px;
 }
 .box-number {
   white-space: normal;
   word-break: break-all;
   font-size: 12px;
   font-variant-numeric: tabular-nums;
-  color: #475e73;
+  color: var(--text-secondary);
 }
 .box-title {
   white-space: normal;
@@ -2285,7 +2285,7 @@ td {
   height: 28px;
   border: 0;
   border-radius: 7px;
-  background: #f0f5f8;
+  background: var(--surface-muted);
   color: var(--text-secondary);
   padding: 0;
 }
@@ -2313,40 +2313,40 @@ small {
   white-space: nowrap;
 }
 .row-actions button:disabled {
-  color: #aab6c2;
+  color: var(--text-secondary);
   cursor: not-allowed;
 }
 .row-actions .danger-text {
-  color: #cf5a51;
+  color: var(--danger);
 }
 .classification,
 .state-badge {
   display: inline-block;
   padding: 5px 8px;
-  background: #f1f5f8;
+  background: var(--surface-muted);
   border-radius: 5px;
   font-size: 12px;
   white-space: nowrap;
 }
 .state-badge[data-state="PUBLISHED"] {
-  background: #e9f6f2;
-  color: #328265;
+  background: var(--success-soft);
+  color: var(--success);
 }
 .state-badge[data-state="PENDING_REVIEW"] {
-  background: #fff5e7;
-  color: #a57631;
+  background: var(--warning-soft);
+  color: var(--warning);
 }
 .expanded-box {
-  background: #f6fbfc;
+  background: var(--brand-soft);
 }
 .contents-row > td {
   padding: 0 0 20px;
-  background: #f6fbfc;
+  background: var(--brand-soft);
 }
 .box-contents {
   margin: 0 16px 0 40px;
-  border: 1px solid #dbe8ee;
-  background: white;
+  border: 1px solid var(--line);
+  background: var(--surface);
   border-radius: 10px;
   overflow: hidden;
 }
@@ -2403,7 +2403,7 @@ small {
   padding: 60px 20px;
 }
 .error-text {
-  color: #bb4e45;
+  color: var(--danger);
 }
 .ledger-dialog {
   --flow-dialog-width: 960px;
@@ -2477,8 +2477,8 @@ small {
 .file-field {
   display: block;
   padding: 22px;
-  background: #f5f9fb;
-  border: 1px dashed #bcd2dd;
+  background: var(--surface-muted);
+  border: 1px dashed var(--brand);
   border-radius: 10px;
   margin: 0;
   font-weight: 500;
@@ -2487,12 +2487,12 @@ small {
   display: block;
   margin: 12px 0 0;
   width: 100%;
-  background: white;
+  background: var(--surface);
 }
 .preview-table {
   max-height: 390px;
   overflow: auto;
-  border: 1px solid #e1e8ef;
+  border: 1px solid var(--line);
   border-radius: 9px;
   margin-top: 22px;
 }
@@ -2538,7 +2538,7 @@ small {
 }
 .details-grid > div {
   padding: 12px;
-  background: #f7f9fb;
+  background: var(--surface-muted);
   border-radius: 8px;
 }
 .review-documents > div {
@@ -2547,7 +2547,7 @@ small {
   align-items: center;
   gap: 20px;
   padding: 16px 0;
-  border-bottom: 1px solid #e4ebf1;
+  border-bottom: 1px solid var(--line);
   font-size: 14px;
 }
 .review-documents > div > span:first-child {
@@ -2620,7 +2620,13 @@ small {
   margin: 4px 4px 0 0;
   padding: 2px 7px;
   border-radius: 5px;
-  background: var(--surface-soft, #eef7f7);
-  color: var(--accent, #087f8c);
+  background: var(--brand-soft);
+  color: var(--brand-hover);
+}
+@media (max-width: 540px) {
+  .ledger-filters .filter-range { flex-direction: column; align-items: stretch; }
+  .ledger-filters .filter-range input { flex: auto; }
+  .ledger-filters .filter-range > span { text-align: center; }
+  .ledger-caption > div { flex-wrap: wrap; gap: 8px; }
 }
 </style>

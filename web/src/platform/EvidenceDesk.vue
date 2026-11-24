@@ -539,6 +539,7 @@ const listFilters = ref(recentWeekFilters("created"));
   margin: 7px 0 12px;
 }
 .continuity-toolbar {
+  flex-wrap: wrap;
   padding: 16px 20px;
   margin: 0;
 }
@@ -552,7 +553,7 @@ const listFilters = ref(recentWeekFilters("created"));
 }
 .evidence-facts {
   display: grid;
-  grid-template-columns: 1fr 1.5fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
   gap: 18px;
   background: var(--surface-muted);
   padding: 20px;
@@ -569,6 +570,7 @@ const listFilters = ref(recentWeekFilters("created"));
 }
 .attachment-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   border: 1px solid var(--line);

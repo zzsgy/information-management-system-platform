@@ -369,11 +369,11 @@ onUnmounted(() => {
 }
 .office-workspace {
   position: fixed;
-  inset: 16px;
-  background: #fff;
+  inset: clamp(0px, 1vw, 16px);
+  background: var(--surface);
   z-index: 90;
   box-shadow: 0 20px 70px #172b2480;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -382,7 +382,9 @@ onUnmounted(() => {
   padding: 14px 20px;
   display: flex;
   justify-content: space-between;
-  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 20px;
   border-bottom: 1px solid var(--line);
 }
 .office-workspace header p {
@@ -390,8 +392,11 @@ onUnmounted(() => {
   color: var(--ink);
   margin: 7px 0 0;
 }
-.office-workspace header button {
-  margin-left: 12px;
+.office-workspace header > div:last-child {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
 }
 .office-canvas {
   flex: 1;

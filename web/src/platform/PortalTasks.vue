@@ -164,9 +164,9 @@ function switchFilter(value: string) {
 }
 </script>
 <template>
-  <section class="panel portal-panel">
+  <section class="panel portal-panel personal-queue">
     <div class="portal-heading">
-      <h2>{{ inbox ? "我的消息" : "我的待办" }}</h2>
+      <component :is="compact ? 'h2' : 'h1'">{{ inbox ? "我的消息" : "我的待办" }}</component>
       <div class="todo-heading-actions">
         <button v-if="!inbox" class="secondary" @click="editor = {}">
           新建待办
@@ -203,6 +203,7 @@ function switchFilter(value: string) {
         :key="option[0]"
         class="text-button"
         :class="{ selected: filter === option[0] }"
+        :aria-pressed="filter === option[0]"
         @click="switchFilter(option[0]!)"
       >
         {{ option[1] }}
@@ -272,14 +273,11 @@ function switchFilter(value: string) {
       :disabled="compact && busy && item.source === 'MEETING'"
       @click="open(item)"
     >
+      <span v-if="inbox" class="inbox-state" :class="{ unread: item.state !== 'READ' }">
+        {{ item.state === 'READ' ? '已读' : '未读' }}
+      </span>
+      <span v-else class="portal-dot" :class="{ read: item.category === 'COMPLETED' }" aria-hidden="true" />
       <span
-        class="portal-dot"
-        :class="{
-          read: inbox
-            ? item.state === 'READ'
-            : item.category === 'COMPLETED',
-        }"
-      /><span
         ><strong>{{
           inbox ? item.content || messageNames[item.kind] || "业务状态有更新" : item.title
         }}</strong>
@@ -354,6 +352,27 @@ function switchFilter(value: string) {
 </template>
 
 <style scoped>
+.personal-queue > .portal-heading {
+  flex-wrap: wrap;
+  gap: 10px 16px;
+}
+.personal-queue .portal-list-row > span:nth-last-child(2) {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.inbox-state {
+  flex: none;
+  padding: 2px 8px;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  background: var(--surface-muted);
+  font-size: .85rem;
+}
+.inbox-state.unread {
+  color: var(--brand-hover);
+  background: var(--brand-soft);
+  font-weight: 600;
+}
 .portal-pagination {
   padding: 8px 0 12px;
   font-size: 13px;
@@ -379,7 +398,7 @@ function switchFilter(value: string) {
   white-space: nowrap;
 }
 .todo-list-link:hover {
-  color: #fff;
+  color: var(--brand-contrast);
   background: var(--brand-hover);
 }
 .todo-list-link:focus-visible {

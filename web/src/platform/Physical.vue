@@ -1274,12 +1274,12 @@ const listFilters = ref<Record<string, string>>({});
   min-width: 0;
 }
 .physical-panel {
-  background: white;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 13px;
-  padding: 26px 28px;
+  padding: clamp(14px, 1.8vw, 26px);
   margin-bottom: 20px;
-  box-shadow: 0 8px 22px #28504104;
+  box-shadow: var(--shadow);
 }
 .physical-toolbar {
   display: flex;
@@ -1311,18 +1311,19 @@ const listFilters = ref<Record<string, string>>({});
 }
 .physical-table {
   width: 100%;
+  min-width: 560px;
   border-collapse: collapse;
-  font-size: 12px;
+  font-size: 13px;
 }
 .physical-table th {
   text-align: left;
   background: var(--surface-muted);
   color: var(--text-secondary);
-  font-weight: 400;
+  font-weight: 600;
   padding: 14px 12px;
 }
 .physical-table td {
-  padding: 20px 12px;
+  padding: 16px 12px;
   border-bottom: 1px solid var(--line);
 }
 .physical-table strong {
@@ -1332,7 +1333,7 @@ const listFilters = ref<Record<string, string>>({});
 .physical-table small,
 .physical-notice small {
   display: block;
-  color: #87968d;
+  color: var(--text-secondary);
   margin-top: 7px;
 }
 .physical-badge {
@@ -1343,8 +1344,8 @@ const listFilters = ref<Record<string, string>>({});
   font-size: 11px;
 }
 .physical-badge.warn {
-  color: #987333;
-  background: #fbf3df;
+  color: var(--warning);
+  background: var(--warning-soft);
 }
 .physical-empty {
   padding: 36px !important;
@@ -1434,7 +1435,7 @@ const listFilters = ref<Record<string, string>>({});
   display: flex;
   justify-content: space-between;
   padding: 18px 0;
-  border-bottom: 1px solid #e8eee7;
+  border-bottom: 1px solid var(--line);
   font-size: 13px;
 }
 .physical-dialog {

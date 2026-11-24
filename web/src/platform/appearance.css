@@ -1,77 +1,25 @@
-/* 通用蓝白灰为默认；纸色主题同时调整底色和强调色，业务状态使用独立语义色。 */
-:root, :root[data-theme="blue"] {
-  --brand: #2563eb; --brand-hover: #1d4ed8; --brand-soft: #eff6ff;
-  --ink: #243247; --text-secondary: #64748b; --muted: var(--text-secondary);
-  --canvas: #f3f5f9; --surface: #fff; --surface-muted: #f8fafc; --line: #e2e8f0;
-  --green: var(--brand); --focus-ring: color-mix(in srgb, var(--brand) 18%, transparent);
-  --success: #23744b; --success-soft: #edf8f0;
-  --warning: #986715; --warning-soft: #fff8e6;
-  --danger: #b53f3f; --danger-soft: #fff1f1;
-  --brand-contrast: #fff;
-  --wallpaper-wash: #ffffff22;
-  /* 深色应用导航随当前强调色变化，避免新导航组件脱离全局主题。 */
-  --workspace-nav-background: color-mix(in srgb, var(--brand) 40%, #12213b);
-  --workspace-nav-text: #e8eef8;
-  --workspace-nav-muted: color-mix(in srgb, var(--workspace-nav-text) 72%, var(--workspace-nav-background));
-  --workspace-nav-line: #e8eef833;
-  --workspace-nav-hover: color-mix(in srgb, var(--brand) 20%, var(--workspace-nav-background));
-  --workspace-nav-selected: color-mix(in srgb, var(--brand) 40%, var(--workspace-nav-background));
-  --workspace-nav-selected-text: color-mix(in srgb, var(--brand) 20%, white);
-  --workspace-nav-focus: var(--workspace-nav-selected-text);
-  color-scheme: light;
-}
-:root[data-theme="teal"] { --brand: #087f88; --brand-hover: #05646d; --brand-soft: #e8f5f5; }
-:root[data-theme="green"] { --brand: #287451; --brand-hover: #1e5d40; --brand-soft: #edf7f0; }
-:root[data-theme="violet"] { --brand: #7254b3; --brand-hover: #5d409b; --brand-soft: #f4f0fb; }
-body { background: var(--canvas); color: var(--ink); }
-/* 原始背景图只用于界面装饰，不覆盖正文卡片、文件预览或打印产物。 */
-:root[data-wallpaper="true"] body {
-  background-image: linear-gradient(var(--wallpaper-wash), var(--wallpaper-wash)), var(--app-wallpaper);
-  background-position: center;
-  background-size: cover;
-  background-attachment: fixed;
-}
+body { background-color: var(--canvas); color: var(--ink); }
 :root[data-wallpaper="true"] .platform-shell { background: transparent; }
 :is(input, select, textarea) { background-color: var(--surface); }
 :is(input, select, textarea):focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--focus-ring); }
 :is(button, a):focus-visible { outline-color: var(--brand); }
 .platform-shell :is(.panel, .topbar, .management-sidebar), dialog { background-color: var(--surface); border-color: var(--line); }
-.platform-shell :is(.primary, button.primary), dialog .primary { background: var(--brand); border-color: var(--brand); color: var(--brand-contrast); }
+.platform-shell :is(.primary, button.primary), dialog .primary { background: var(--brand); border-color: var(--brand); color: var(--brand-contrast); font-weight: 600; box-shadow: 0 1px 2px color-mix(in srgb, var(--brand) 18%, transparent); }
 .platform-shell .primary:hover:not(:disabled), dialog .primary:hover:not(:disabled) { background: var(--brand-hover); border-color: var(--brand-hover); }
 .platform-shell :is(.secondary, .workspace-back), dialog .secondary { border-color: var(--line); }
+.platform-shell .secondary:where(:not(.danger)), dialog .secondary:where(:not(.danger)) { color: var(--ink); background-color: var(--surface); }
+.platform-shell .secondary:where(:not(.danger)):hover:not(:disabled), dialog .secondary:where(:not(.danger)):hover:not(:disabled) { border-color: var(--text-secondary); background-color: var(--surface-muted); }
 .platform-shell :is(.workspace-back, .management-nav-group a.active, .portal-filters .selected, .portal-tabs .selected) { background: var(--brand-soft); color: var(--brand); }
 .platform-shell :is(.text-button, .eyebrow), dialog .text-button { color: var(--brand); }
 .platform-shell :is(th, .rich-toolbar, .flow-dialog-section > summary) { background-color: var(--surface-muted); }
 .platform-shell label, dialog label { color: var(--ink); }
 .platform-shell .status-badge { color: var(--success); background: var(--success-soft); }
+.platform-shell .status-badge.inactive { color: var(--text-secondary); background: var(--surface-muted); }
+.platform-shell .status-badge.pending { color: var(--warning); background: var(--warning-soft); }
 .platform-shell :is(.form-error, .danger), dialog .form-error { color: var(--danger); }
 /* 已提交材料采用柔和按钮，保留本次内容是否已保存的视觉反馈。 */
 .platform-shell .material-submit.submitted-unchanged { background: var(--brand-soft); color: var(--text-secondary); border-color: var(--line); box-shadow: none; }
 
-/* 暖纸墨金：深墨蓝承担主要操作，金色用于选中状态及导航细节。 */
-:root[data-theme="paper"] {
-  --brand: #1a1a2e;
-  --brand-hover: #2d2d44;
-  --brand-soft: #f5ead6;
-  --ink: #1a1a2e;
-  --text-secondary: #4a4a5a;
-  --canvas: #faf8f5;
-  --surface: #fffdf9;
-  --surface-muted: #f5f0e8;
-  --line: #e7dfd2;
-  --paper-gold: #b8860b;
-  --paper-gold-text: #866109;
-  --focus-ring: #b8860b26;
-  --shadow: 0 2px 8px #1a1a2e06;
-  --workspace-nav-background: #252332;
-  --workspace-nav-text: #f1ece4;
-  --workspace-nav-muted: #c0b8ac;
-  --workspace-nav-line: #f1ece433;
-  --workspace-nav-hover: #373243;
-  --workspace-nav-selected: #443c2a;
-  --workspace-nav-selected-text: #f2d88f;
-  --workspace-nav-focus: #f2d88f;
-}
 :root[data-theme="paper"] .platform-shell :is(.management-nav-group a.active, .portal-filters .selected, .portal-tabs .selected, .workspace-back) {
   color: var(--paper-gold-text);
   background: var(--brand-soft);
@@ -83,8 +31,8 @@ body { background: var(--canvas); color: var(--ink); }
 :root[data-theme="paper"] .platform-shell :is(.eyebrow, .management-nav-group a.active::before) {
   color: var(--paper-gold-text);
 }
-:root[data-theme="paper"] .platform-shell .secondary,
-:root[data-theme="paper"] dialog .secondary {
+:root[data-theme="paper"] .platform-shell .secondary:where(:not(.danger)),
+:root[data-theme="paper"] dialog .secondary:where(:not(.danger)) {
   border-color: #d7bf89;
   color: var(--ink);
   background: var(--surface);
@@ -96,46 +44,8 @@ body { background: var(--canvas); color: var(--ink); }
   outline-color: var(--paper-gold);
 }
 
-/* 图片主题的表面、文字及边框均按背景色调调整，业务状态仍使用独立语义色。 */
-:root[data-theme="watercolor"] {
-  --brand: #277c83; --brand-hover: #1c6066; --brand-soft: #e4f3ef;
-  --ink: #203d40; --text-secondary: #536f70;
-  --canvas: #f1f7f4; --surface: #fff; --surface-muted: #edf4f1; --line: #cfdfd9;
-  --shadow: 0 3px 16px #234c4410;
-}
-:root[data-theme="sunrise"] {
-  --brand: #99502f; --brand-hover: #7c3d22; --brand-soft: #faeadb;
-  --ink: #4d3026; --text-secondary: #7b6256;
-  --canvas: #fff4e5; --surface: #fffdf8; --surface-muted: #fbf0e4; --line: #e8d2ba;
-  --shadow: 0 3px 16px #7d3e1e12;
-}
-:root[data-theme="botanical"] {
-  --brand: #617044; --brand-hover: #4a5930; --brand-soft: #edf0e2;
-  --ink: #343e2e; --text-secondary: #65715d;
-  --canvas: #f6f3e9; --surface: #fffef8; --surface-muted: #f0efe4; --line: #dcdcca;
-  --shadow: 0 3px 16px #3d4b2710;
-}
-:root[data-theme="aurora"] {
-  --brand: #66d5ce; --brand-hover: #96e7df; --brand-soft: #203e48; --brand-contrast: #062e30;
-  --ink: #e4edf8; --text-secondary: #b0c1d6;
-  --canvas: #081322; --surface: #101e32; --surface-muted: #182b43; --line: #30465e;
-  --success: #8dd8b1; --success-soft: #173e34;
-  --warning: #f0cc81; --warning-soft: #3b3225;
-  --danger: #ffadb0; --danger-soft: #462d3a;
-  --wallpaper-wash: #03101c33;
-  --shadow: 0 4px 20px #0003;
-  --workspace-nav-background: #0d1c30f5;
-  --workspace-nav-text: #e4edf8;
-  --workspace-nav-muted: #b0c1d6;
-  --workspace-nav-line: #30465e;
-  --workspace-nav-hover: #1c344b;
-  --workspace-nav-selected: #203e48;
-  --workspace-nav-selected-text: #9de9e2;
-  --workspace-nav-focus: #9de9e2;
-  color-scheme: dark;
-}
 /* 深色主题补齐历史组件的固定浅色表面，保留文档正文和品牌图片本身。 */
-:root[data-theme="aurora"] :is(.platform-shell, dialog) :is(.secondary, .icon-button, .application-card, .date-panel, .workspace-layout-picker, .role-card, .list-card) {
+:root[data-theme="aurora"] :is(.platform-shell, dialog) :is(.secondary:where(:not(.danger)), .icon-button, .date-panel, .role-card, .list-card) {
   color: var(--ink); background: var(--surface); border-color: var(--line);
 }
 :root[data-theme="aurora"] :is(.platform-shell, dialog) :is(input, select, textarea) {
@@ -144,7 +54,7 @@ body { background: var(--canvas); color: var(--ink); }
 :root[data-theme="aurora"] :is(input, textarea)::placeholder { color: #91a7c1; }
 :root[data-theme="aurora"] .platform-shell :is(.topbar, .panel, .management-sidebar) { background: var(--surface); }
 :root[data-theme="aurora"] .platform-shell .company-logo { filter: brightness(0) invert(1); }
-:root[data-theme="aurora"] .platform-shell :is(.portal-account-link, .profile-button, .management-nav-group a, th, td) { color: var(--ink); }
+:root[data-theme="aurora"] .platform-shell :is(.portal-account-link, .profile-button, .management-nav-group a) { color: var(--ink); }
 :root[data-theme="aurora"] .platform-shell :is(.management-nav-group h3, .directory-table small) { color: var(--text-secondary); }
 :root[data-theme="aurora"] .platform-shell .management-nav-group a.active { color: var(--brand); }
 :root[data-theme="aurora"] .platform-shell :is([role="dialog"], dialog) :is(.manage-card, .manage-body > form) { background: var(--surface); border-color: var(--line); }
@@ -161,24 +71,3 @@ body { background: var(--canvas); color: var(--ink); }
 :root[data-theme="aurora"] .login-form-panel { background: var(--surface); }
 :root[data-theme="aurora"] .login-form-inner :is(input, select) { color: var(--ink); background: var(--surface-muted); }
 :root[data-theme="aurora"] .login-form-inner .primary { color: var(--brand-contrast); }
-
-/* 字体原文件在本机同源托管，浏览器仅加载当前实际使用的字体，无外部字体请求。 */
-@font-face {
-  font-family: "IMS Noto Sans SC";
-  src: url("/fonts/noto-sans-sc/NotoSansSC.ttf") format("truetype");
-  font-style: normal; font-weight: 100 900; font-display: swap;
-}
-@font-face {
-  font-family: "IMS Noto Serif SC";
-  src: url("/fonts/noto-serif-sc/NotoSerifSC.ttf") format("truetype");
-  font-style: normal; font-weight: 200 900; font-display: swap;
-}
-@font-face {
-  font-family: "IMS LXGW WenKai";
-  src: url("/fonts/lxgw-wenkai/LXGWWenKai-Regular.ttf") format("truetype");
-  font-style: normal; font-weight: 400; font-display: swap;
-}
-:root { --interface-font-family: "Alibaba PuHuiTi 3.0", "Alibaba PuHuiTi", "Microsoft YaHei", sans-serif; font-family: var(--interface-font-family); }
-:root[data-font="noto-sans"] { --interface-font-family: "IMS Noto Sans SC", "Microsoft YaHei", sans-serif; }
-:root[data-font="noto-serif"] { --interface-font-family: "IMS Noto Serif SC", "Songti SC", serif; }
-:root[data-font="wenkai"] { --interface-font-family: "IMS LXGW WenKai", "Microsoft YaHei", sans-serif; }

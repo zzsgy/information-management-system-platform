@@ -401,7 +401,7 @@ defineExpose({ open, loadHistory });
 .export-history {
   margin: 20px 0 0;
   padding: 20px 24px;
-  background: #fff;
+  background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 12px;
 }

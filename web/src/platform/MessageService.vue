@@ -145,7 +145,7 @@ onMounted(load);
       "
     />
     <div class="table-scroll">
-      <table class="directory-table">
+      <table>
         <thead>
           <tr>
             <th>事项 / 员工</th>

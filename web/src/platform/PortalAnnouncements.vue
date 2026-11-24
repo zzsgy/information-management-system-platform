@@ -182,10 +182,7 @@ const listFilters = ref(recentWeekFilters("published"));
 <template>
   <section class="portal-announcements">
     <div class="portal-heading">
-      <div>
-        <span class="eyebrow">公司资讯</span>
-        <h1>{{ manage ? "公告管理" : "通知公告" }}</h1>
-      </div>
+      <h1>{{ manage ? "公告管理" : "通知公告" }}</h1>
       <button v-if="manage && !editing" class="primary" @click="edit()">
         新建公告</button
       ><button
@@ -268,7 +265,7 @@ const listFilters = ref(recentWeekFilters("published"));
       <button class="text-button" @click="edit(selected)">编辑公告</button>
     </AnnouncementLetter>
     <section v-else class="panel portal-panel">
-      <div v-if="!manage" class="portal-tabs" aria-label="公告范围">
+      <nav v-if="!manage" class="module-tabs" aria-label="公告范围">
         <button
           v-for="(label, code) in {
             CURRENT: '当前公告',
@@ -278,7 +275,6 @@ const listFilters = ref(recentWeekFilters("published"));
           }"
           :key="code"
           type="button"
-          class="text-button"
           :class="{ selected: view === code }"
           :aria-pressed="view === code"
           :disabled="busy"
@@ -286,7 +282,7 @@ const listFilters = ref(recentWeekFilters("published"));
         >
           {{ label }}
         </button>
-      </div>
+      </nav>
       <ListFilters
         :key="view"
         :class="{ 'managed-announcement-filters': manage }"
@@ -339,29 +335,33 @@ const listFilters = ref(recentWeekFilters("published"));
       </p>
       <article v-for="item in rows" :key="item.id" class="portal-notice-row">
         <button class="portal-notice-open" @click="open(item.id)">
-          <strong
-            ><span v-if="item.pinned" class="portal-pin">置顶</span
-            >{{ item.title }}</strong
-          ><span class="portal-meta"
-            ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+          <span class="notice-summary">
+            <strong><span v-if="item.pinned" class="portal-pin">置顶</span>{{ item.title }}</strong>
+            <span class="portal-meta">
+              <span>{{ item.category }}</span>
+              <span v-if="item.publisherName">{{ item.publisherName }}</span>
+              <span v-if="item.publisherDepartment">{{ item.publisherDepartment }}</span>
+              <span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+            </span>
+          </span>
+          <span class="notice-tracking">
             <span v-if="!manage && view !== 'CREATED'" class="announcement-read-state" :class="{ unread: !item.viewed }">
               {{ item.viewed ? "已读" : "未读" }}
-            </span><span>{{ item.category }}</span
-            ><span>{{ item.publisherName || "尚未发布" }}</span
-            ><span>{{ item.publisherDepartment || "—" }}</span
-            ><time>{{ portalTime(item.publishedAt) }}</time
-            ><span v-if="!manage && view === 'EXPIRED'">已到期</span>
+            </span>
             <span v-if="manage || view === 'CREATED'">{{
               { DRAFT: "草稿", PUBLISHED: "已发布", WITHDRAWN: "已撤下" }[
                 item.state
               ]
-            }}</span></span
-          ></button
-        ><button v-if="manage && hasReadership(item)" class="text-button" @click="readershipTarget = item">
-          阅读统计
-        </button><button v-if="manage" class="text-button" @click="edit(item)">
-          编辑
+            }}</span>
+            <span v-if="!manage && view === 'EXPIRED'">已到期</span>
+            <time v-if="item.publishedAt" :datetime="item.publishedAt">{{ portalTime(item.publishedAt) }}</time>
+            <span v-else>尚未发布</span>
+          </span>
         </button>
+        <div v-if="manage" class="notice-actions">
+          <button v-if="hasReadership(item)" class="text-button" @click="readershipTarget = item">阅读统计</button>
+          <button class="text-button" @click="edit(item)">编辑</button>
+        </div>
       </article>
       <EmptyState
         v-if="!rows.length && !busy && !error"
@@ -440,5 +440,12 @@ const listFilters = ref(recentWeekFilters("published"));
 .announcement-query-status {
   margin: 8px 0 10px;
   font-size: 13px;
+}
+@media (max-width: 660px) {
+  .portal-announcements > .portal-form {
+    margin-block: 16px;
+    padding: 16px;
+  }
+  .portal-form-grid { grid-template-columns: minmax(0, 1fr); gap: 14px; }
 }
 </style>

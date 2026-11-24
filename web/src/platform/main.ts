@@ -6,6 +6,7 @@ import "./portal.css";
 // 全平台共用品牌、控件密度和桌面布局；业务组件仅保留专有内容样式。
 import "./theme.css";
 import "./flowDialog.css";
+import "../design-tokens.css";
 import "./appearance.css";
 import { initializeAppearance } from "./appearance";
 initializeAppearance();

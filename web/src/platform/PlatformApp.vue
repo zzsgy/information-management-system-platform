@@ -86,6 +86,11 @@ const Operations = defineAsyncComponent(() => import("./Operations.vue"));
 const Settings = defineAsyncComponent(() => import("./Settings.vue"));
 /** 当前导航来自 hash，不携带认证凭据。 */
 const route = ref(location.hash.slice(2) || "home");
+/** 窄屏模块选择器与桌面链接共用 hash 导航，因此前进和后退均可恢复模块。 */
+function navigateToModule(event: Event) {
+  const moduleCode = (event.currentTarget as HTMLSelectElement).value;
+  location.hash = "#/" + moduleCode;
+}
 /** 批量导入入口可预选类型，导入页面再按实际权限过滤。 */
 const initialImportType = computed(
   () => new URLSearchParams(route.value.split("?")[1]).get("type") ?? undefined,
@@ -556,7 +561,6 @@ onUnmounted(() => {
     </section>
     <section class="login-form-panel">
       <div class="login-form-inner">
-        <span class="eyebrow">WELCOME BACK</span>
         <h2>
           {{
             profile?.user.passwordSetupRequired
@@ -695,31 +699,34 @@ onUnmounted(() => {
         <button class="primary">搜索</button>
       </form>
       <div class="account-actions">
-        <AppearanceSettings />
-        <a v-if="allowedRoute !== 'home'" class="workspace-back" href="#/home">
-          <Icon name="home" :size="16" aria-hidden="true" />
-          返回工作台
-        </a>
-        <a
-          class="portal-account-link"
-          href="#/inbox"
-          :class="{ active: allowedRoute === 'inbox' }"
-          :aria-current="allowedRoute === 'inbox' ? 'page' : undefined"
-          >我的消息</a
-        >
-        <a
-          class="portal-account-link"
-          href="#/feedback"
-          target="_blank"
-          rel="noopener"
-          :class="{ active: allowedRoute === 'feedback' }"
-          :aria-current="allowedRoute === 'feedback' ? 'page' : undefined"
-          >意见反馈</a
-        >
-        <button class="profile-button" @click="openAccount()">
-          <span class="avatar">{{ profile.user.name.slice(-1) }}</span
-          ><span>{{ profile.user.name }}</span></button
-        ><button class="text-button" @click="signOut">退出</button>
+        <div class="account-shortcuts">
+          <AppearanceSettings />
+          <a v-if="allowedRoute !== 'home'" class="workspace-back" href="#/home">
+            <Icon name="home" :size="16" aria-hidden="true" />
+            返回工作台
+          </a>
+          <a
+            class="portal-account-link"
+            href="#/inbox"
+            :class="{ active: allowedRoute === 'inbox' }"
+            :aria-current="allowedRoute === 'inbox' ? 'page' : undefined"
+          >我的消息</a>
+          <a
+            class="portal-account-link"
+            href="#/feedback"
+            target="_blank"
+            rel="noopener"
+            :class="{ active: allowedRoute === 'feedback' }"
+            :aria-current="allowedRoute === 'feedback' ? 'page' : undefined"
+          >意见反馈</a>
+        </div>
+        <div class="account-session">
+          <button class="profile-button" :aria-label="'个人账号：' + profile.user.name" @click="openAccount()">
+            <span class="avatar" aria-hidden="true">{{ profile.user.name.slice(-1) }}</span>
+            <span>{{ profile.user.name }}</span>
+          </button>
+          <button class="text-button" @click="signOut">退出</button>
+        </div>
       </div>
     </header>
     <WorkspaceSidebar
@@ -748,8 +755,14 @@ onUnmounted(() => {
       >
         <div class="management-sidebar-heading">
           <Icon name="shield" :size="22" />
-          <h2>管理中心</h2>
+          <h2 id="management-navigation-heading">管理中心</h2>
         </div>
+        <select class="compact-module-picker" aria-labelledby="management-navigation-heading" :value="allowedRoute"
+          @change="navigateToModule">
+          <optgroup v-for="group in managementGroups" :key="group.name" :label="group.name">
+            <option v-for="item in group.items" :key="item.code" :value="item.code">{{ item.name }}</option>
+          </optgroup>
+        </select>
         <nav aria-label="管理功能">
           <section
             v-for="group in managementGroups"
@@ -777,8 +790,12 @@ onUnmounted(() => {
       >
         <div class="management-sidebar-heading">
           <Icon name="archive" :size="22" />
-          <h2>档案管理</h2>
+          <h2 id="archive-navigation-heading">档案管理</h2>
         </div>
+        <select class="compact-module-picker" aria-labelledby="archive-navigation-heading" :value="allowedRoute"
+          @change="navigateToModule">
+          <option v-for="item in archiveTabs" :key="item.code" :value="item.code">{{ item.name }}</option>
+        </select>
         <nav class="management-nav-group" aria-label="档案业务">
           <a
             v-for="item in archiveTabs"
@@ -804,6 +821,7 @@ onUnmounted(() => {
       <div
         v-if="allowedRoute !== 'home'"
         class="platform-page-content"
+        :class="{ 'management-content': inManagement }"
         :key="route"
       >
         <PortalAnnouncements

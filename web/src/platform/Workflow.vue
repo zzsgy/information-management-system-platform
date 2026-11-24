@@ -608,56 +608,55 @@ const listFilters = ref(defaultListFilters(tab.value));
 const grantFilters = ref<Record<string, string>>({});
 </script>
 <template>
-  <section class="flow-heading">
+  <header class="page-heading">
     <div>
-      <span class="eyebrow">流程中心</span>
       <h1>流程中心</h1>
       <p class="muted">查看本人事项，按当前职责办理必要节点。</p>
     </div>
-  </section>
+  </header>
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
   <section class="panel flow-panel">
     <nav class="module-tabs" aria-label="流程分类">
       <button
         v-if="can('PLATFORM.DEPARTMENTS_MANAGE')"
-        :class="{ active: tab === 'progress' }"
+        :class="{ active: tab === 'progress' }" :aria-pressed="tab === 'progress'"
         @click="switchTab('progress')"
       >
         流程进度
       </button>
       <button
         v-if="can('ARCHIVE.ACCESS') && !can('ARCHIVE.IT_SHARED_BORROW')"
-        :class="{ active: tab === 'tasks' }"
+        :class="{ active: tab === 'tasks' }" :aria-pressed="tab === 'tasks'"
         @click="switchTab('tasks')"
       >
         待我办理</button
       ><button
         v-if="can('ARCHIVE.ACCESS')"
-        :class="{ active: tab === 'requests' }"
+        :class="{ active: tab === 'requests' }" :aria-pressed="tab === 'requests'"
         @click="switchTab('requests')"
       >
         我的借阅</button
       ><button
         v-if="canUsePhysical"
-        :class="{ active: tab === 'physical' }"
+        :class="{ active: tab === 'physical' }" :aria-pressed="tab === 'physical'"
         @click="switchTab('physical')"
       >
         纸质交付与归还</button
       ><button
         v-if="can('ARCHIVE.ACCESS')"
-        :class="{ active: tab === 'notifications' }"
+        :class="{ active: tab === 'notifications' }" :aria-pressed="tab === 'notifications'"
         @click="switchTab('notifications')"
       >
         到期提醒</button
       ><button
         v-if="can('ARCHIVE.ACCESS')"
-        :class="{ active: tab === 'grants' }"
+        :class="{ active: tab === 'grants' }" :aria-pressed="tab === 'grants'"
         @click="switchTab('grants')"
       >
         {{ security ? "授权管理" : "我的授权" }}</button
       ><button
         v-if="admin"
-        :class="{ active: tab === 'attention' }"
+        :class="{ active: tab === 'attention' }" :aria-pressed="tab === 'attention'"
         @click="switchTab('attention')"
       >
         需要改派
@@ -1870,28 +1869,19 @@ const grantFilters = ref<Record<string, string>>({});
 </template>
 <style scoped>
 /* 电脑端流程工作台，先显示用途、状态与必要职责，隐藏内部UUID和实现配置。 */
-.flow-heading {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin: 0 0 22px;
-}
-.flow-heading h1 {
-  font-size: 24px;
-  margin: 6px 0;
-}
 .flow-panel {
-  padding: 0 28px 26px;
+  padding: 0 clamp(14px, 2vw, 28px) 22px;
   min-height: 360px;
 }
 .flow-table {
   width: 100%;
+  min-width: 570px;
   border-collapse: collapse;
   font-size: 13px;
 }
 .flow-table th {
   text-align: left;
-  font-weight: 400;
+  font-weight: 600;
   color: var(--text-secondary);
   background: var(--surface-muted);
   padding: 14px 15px;
@@ -1902,12 +1892,12 @@ const grantFilters = ref<Record<string, string>>({});
 }
 .flow-table strong {
   font-size: 14px;
-  font-weight: 500;
+  font-weight: 600;
 }
 .flow-table small {
   display: block;
   color: var(--text-secondary);
-  font-size: 11px;
+  font-size: 12px;
   margin-top: 7px;
 }
 .flow-chip {
@@ -2010,8 +2000,8 @@ const grantFilters = ref<Record<string, string>>({});
   margin-top: 8px;
 }
 .borrow-progress-request .borrow-approved {
-  color: #23724b;
-  background: #eef8f1;
+  color: var(--success);
+  background: var(--success-soft);
 }
 .borrow-progress-history {
   display: flex;
@@ -2038,20 +2028,17 @@ const grantFilters = ref<Record<string, string>>({});
 }
 .grant-selector {
   display: flex;
+  flex-wrap: wrap;
   gap: 12px;
   margin: 10px 0 22px;
 }
-.grant-selector input {
-  width: 280px;
-}
-.grant-selector select {
-  width: 260px;
-}
+.grant-selector input { width: min(280px, 100%); }
+.grant-selector select { width: min(260px, 100%); }
 </style>
 
 <style scoped>
 .frozen-documents {
-  border: 1px solid #e1e8ef;
+  border: 1px solid var(--line);
   border-radius: 10px;
   padding: 16px;
   margin: 20px 0;
@@ -2066,6 +2053,6 @@ const grantFilters = ref<Record<string, string>>({});
   gap: 16px;
   overflow-wrap: anywhere;
   padding: 12px 0;
-  border-top: 1px solid #e5edf2;
+  border-top: 1px solid var(--line);
 }
 </style>

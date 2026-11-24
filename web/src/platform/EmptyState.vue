@@ -29,18 +29,20 @@ withDefaults(defineProps<{ title: string; hint?: string; icon?: string }>(), {
   place-items: center;
   width: 44px;
   height: 44px;
-  color: #95a8b7;
-  background: var(--surface-muted);
-  border-radius: 12px;
+  color: var(--brand-hover);
+  background: var(--brand-soft);
+  border-radius: var(--radius-panel);
   margin-bottom: 2px;
 }
 .empty-state-content p {
+  color: var(--ink);
+  font-weight: 600;
   font-size: 13px;
   line-height: 1.6;
   margin: 0;
 }
 .empty-state-content small {
-  color: #8394a1;
+  color: var(--text-secondary);
   font-size: 12px;
   line-height: 1.6;
 }

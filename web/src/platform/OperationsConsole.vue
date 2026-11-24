@@ -340,7 +340,7 @@ onUnmounted(() => {
   <DeploymentSettings v-if="profile?.roles.some(role => role.module === 'PLATFORM' && role.code === 'IT_ADMIN')" />
   <ServiceConfigurations v-if="profile?.roles.some(role => role.module === 'PLATFORM' && role.code === 'IT_ADMIN')" />
   <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-  <div v-if="summary" class="ops-cards">
+  <div v-if="summary" class="management-summary ops-cards">
     <article class="panel">
       <span>当前保护</span
       ><strong>{{
@@ -365,7 +365,7 @@ onUnmounted(() => {
       ><small>副本同步不能代替独立备份</small>
     </article>
   </div>
-  <section class="panel ops-panel">
+  <section class="panel management-settings-panel ops-panel">
     <div class="ops-section-heading">
       <h2>检查与维护申请</h2>
       <span v-if="!summary?.enabled" class="chip">维护任务尚未启用</span>
@@ -601,7 +601,7 @@ onUnmounted(() => {
       文件检测、预览和导出任务继续由原业务入口核对权限后重试，运维页面不能代替业务授权。
     </p>
   </section>
-  <section v-if="detail" class="panel ops-panel">
+  <section v-if="detail" class="panel management-settings-panel ops-panel">
     <h2>{{ labels[detail.kind] }} · {{ labels[detail.state] }}</h2>
     <p>任务编号：{{ detail.id }}</p>
     <p>申请依据：{{ detail.reason }}</p>
@@ -641,7 +641,7 @@ onUnmounted(() => {
       ><button class="secondary" @click="detail = null">收起详情</button>
     </div>
   </section>
-  <section v-if="can('PLATFORM.BACKUP_MANAGE')" class="panel ops-panel">
+  <section v-if="can('PLATFORM.BACKUP_MANAGE')" class="panel management-settings-panel ops-panel">
     <h2>每日独立备份计划</h2>
     <form class="toolbar" @submit.prevent="savePlan">
       <label
@@ -676,14 +676,7 @@ onUnmounted(() => {
   </section>
 </template>
 <style scoped>
-.ops-cards {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-bottom: 22px;
-}
 .ops-cards article {
-  padding: 24px;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -696,10 +689,6 @@ onUnmounted(() => {
 .ops-cards small,
 .ops-note {
   color: var(--text-secondary);
-}
-.ops-panel {
-  padding: 26px;
-  margin: 22px 0;
 }
 .ops-section-heading {
   display: flex;

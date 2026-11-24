@@ -155,10 +155,10 @@ h1 {
   gap: 8px;
   padding: 12px 16px;
   margin: 0 0 18px;
-  border: 1px solid #d5e8eb;
+  border: 1px solid var(--line);
   border-radius: 8px;
-  background: #f0f8f9;
-  color: #50777d;
+  background: var(--brand-soft);
+  color: var(--ink);
   font-size: 13px;
 }
 .intake-layout {
@@ -234,7 +234,7 @@ li:last-child {
 .active .step-number {
   color: var(--brand);
   background: var(--brand-soft);
-  border-color: #b9dade;
+  border-color: var(--brand);
 }
 h3 {
   margin: 3px 0 6px;
@@ -258,5 +258,8 @@ li p,
     grid-template-columns: minmax(0, 1fr) 260px;
     gap: 16px;
   }
+}
+@media (max-width: 900px) {
+  .intake-layout { grid-template-columns: minmax(0, 1fr); }
 }
 </style>

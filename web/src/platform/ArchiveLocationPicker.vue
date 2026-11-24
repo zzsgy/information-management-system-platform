@@ -269,7 +269,7 @@ function clear() {
 }
 .location-option[aria-pressed="true"] {
   background: var(--brand);
-  color: white;
+  color: var(--brand-contrast);
 }
 .location-actions {
   display: flex;

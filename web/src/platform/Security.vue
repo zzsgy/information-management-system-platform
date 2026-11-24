@@ -169,7 +169,7 @@ onMounted(() => void load());
     <a v-if="showAuditLink" class="secondary" href="#/audit">查看操作记录</a>
   </section>
   <p v-if="error" role="alert" class="form-error">{{ error }}</p>
-  <div class="security-rules">
+  <div class="management-summary security-rules">
     <article class="panel">
       <strong>登录保护</strong>
       <p>15分钟内连续5次密码错误，暂停15分钟；1小时内3次锁定触发告警。</p>
@@ -275,7 +275,7 @@ onMounted(() => void load());
       </div>
     </footer>
   </section>
-  <form v-if="selected" class="panel security-form" @submit.prevent="dispose">
+  <form v-if="selected" class="panel management-settings-panel security-form" @submit.prevent="dispose">
     <h2>处置 · {{ selected.userName }} · {{ names[selected.kind] }}</h2>
     <div v-for="item in history" :key="item.id" class="security-history">
       <strong>{{ item.operatorName }} · {{ dateTime(item.occurredAt) }}</strong>
@@ -307,7 +307,7 @@ onMounted(() => void load());
       </button>
     </div>
   </form>
-  <section class="panel security-form">
+  <section class="panel management-settings-panel security-form">
     <h2>日志保留</h2>
     <p>
       年限只能延长。档案日志及历史证据随档案持续保留；当前阶段不执行日志删除。
@@ -339,23 +339,10 @@ onMounted(() => void load());
 form.toolbar {
   align-items: flex-end;
 }
-.security-rules {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 18px;
-  margin-bottom: 22px;
-}
-.security-rules article {
-  padding: 22px;
-}
 .security-rules p,
 .security-form > p {
   color: var(--text-secondary);
   line-height: 1.7;
-}
-.security-form {
-  padding: 26px;
-  margin-top: 22px;
 }
 .security-form label {
   display: flex;
