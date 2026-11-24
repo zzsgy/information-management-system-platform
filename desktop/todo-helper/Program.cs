@@ -18,7 +18,7 @@ using System.Web.Script.Serialization;
 using System.Windows.Forms;
 using Microsoft.Win32;
 
-[assembly: AssemblyVersion("1.1.0.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
 
 internal static class Program
 {
@@ -46,8 +46,7 @@ internal sealed class TrayHelper : ApplicationContext
     private const string RunKey = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string RunName = "BioLinkImsTodoHelper";
     private readonly JavaScriptSerializer json = new JavaScriptSerializer();
-    private readonly HttpClient http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false, UseCookies = false })
-    { Timeout = TimeSpan.FromSeconds(7), MaxResponseContentBufferSize = HelperUpdater.MaxPackageBytes };
+    private readonly HttpClient http = HelperConnection.CreateClient();
     private readonly NotifyIcon tray;
     private readonly System.Windows.Forms.Timer timer = new System.Windows.Forms.Timer { Interval = 1000 };
     private readonly ToolStripMenuItem autostart;
@@ -156,7 +155,8 @@ internal sealed class TrayHelper : ApplicationContext
             using (var response = await http.SendAsync(request))
             {
                 if (response.StatusCode == HttpStatusCode.Unauthorized) throw new UnauthorizedAccessException();
-                response.EnsureSuccessStatusCode();
+                if (!response.IsSuccessStatusCode)
+                    throw new InvalidDataException("提醒服务返回 HTTP " + (int)response.StatusCode + "，请联系管理员检查该接口。");
                 var result = json.Deserialize<Envelope>(await response.Content.ReadAsStringAsync());
                 if (result == null || result.code != "OK" || result.data == null)
                     throw new InvalidDataException("提醒接口返回异常");
@@ -242,35 +242,32 @@ internal sealed class TrayHelper : ApplicationContext
         settingsOpen = true;
         try
         {
-            using (var form = new Form { Text = "百林科待办助手 · 配对", ClientSize = new Size(470, 208),
+            using (var form = new Form { Text = "百林科待办助手 · 配对", ClientSize = new Size(470, 232),
                 StartPosition = FormStartPosition.CenterScreen, FormBorderStyle = FormBorderStyle.FixedDialog,
                 MaximizeBox = false, MinimizeBox = false, Font = new Font("Microsoft YaHei UI", 10) })
             {
                 var tip = new Label { Text = "在系统「我的待办 → 桌面提醒」生成配对码并粘贴。", AutoSize = true, Left = 16, Top = 16 };
                 var input = new TextBox { Left = 16, Top = 48, Width = 438, UseSystemPasswordChar = true, MaxLength = 1024 };
                 var start = new CheckBox { Left = 16, Top = 86, AutoSize = true, Text = "登录 Windows 时启动", Checked = autostart.Checked };
-                var error = new Label { Left = 16, Top = 118, Width = 438, Height = 34, ForeColor = Color.Firebrick };
-                var save = new Button { Text = "连接", Left = 286, Top = 158, Width = 80, Height = 32 };
-                var cancel = new Button { Text = "关闭", Left = 374, Top = 158, Width = 80, Height = 32, DialogResult = DialogResult.Cancel };
+                var error = new Label { Left = 16, Top = 118, Width = 438, Height = 58, ForeColor = Color.Firebrick };
+                var save = new Button { Text = "连接", Left = 286, Top = 182, Width = 80, Height = 32 };
+                var cancel = new Button { Text = "关闭", Left = 374, Top = 182, Width = 80, Height = 32, DialogResult = DialogResult.Cancel };
                 save.Click += async (sender, args) =>
                 {
                     save.Enabled = cancel.Enabled = false;
                     error.Text = "";
                     try
                     {
-                        var candidate = ParsePairing(input.Text);
-                        await Fetch(candidate, null);
-                        SavePairing(candidate);
-                        pairing = candidate;
-                        ClosePopup();
-                        nextPoll = DateTime.MinValue;
-                        SetStartup(start.Checked);
+                        error.Text = await ConnectPairing(input.Text);
+                        if (error.Text.Length != 0) return;
+                        if (start.Checked != autostart.Checked)
+                        {
+                            try { SetStartup(start.Checked); }
+                            catch (Exception) { MessageBox.Show(form, "配对已保存，登录 Windows 时启动的设置未能更改。", form.Text); }
+                        }
                         input.Clear();
                         form.Close();
                     }
-                    catch (UnauthorizedAccessException) { error.Text = "配对码已失效，请在系统中重新生成。"; }
-                    catch (FormatException) { error.Text = "请粘贴系统生成的完整 HTTPS 配对码。"; }
-                    catch (Exception) { error.Text = "无法连接或保存设置，请检查网络和系统证书。"; }
                     finally { save.Enabled = cancel.Enabled = true; }
                 };
                 form.Controls.AddRange(new Control[] { tip, input, start, error, save, cancel });
@@ -282,12 +279,42 @@ internal sealed class TrayHelper : ApplicationContext
         finally { settingsOpen = false; }
     }
 
+    /// <summary>依次验证配对码、连接提醒服务并保存本机凭据，向员工说明实际失败的步骤。</summary>
+    private async Task<string> ConnectPairing(string code)
+    {
+        Pairing candidate;
+        try { candidate = ParsePairing(code); }
+        catch (FormatException) { return "请粘贴系统生成的完整 HTTPS 配对码。"; }
+
+        try { await Fetch(candidate, null); }
+        catch (UnauthorizedAccessException) { return "配对码已失效，请在系统中重新生成。"; }
+        catch (TaskCanceledException) { return "连接 " + candidate.origin + " 超时，请确认本机能访问该地址后重试。"; }
+        catch (HttpRequestException failure)
+        {
+            // .NET Framework 将 Windows 证书校验结果包装在 WebException 中。
+            var network = failure.InnerException as WebException;
+            if (network != null && network.Status == WebExceptionStatus.TrustFailure)
+                return "Windows 未能验证 " + candidate.origin + " 的证书。请联系 IT 核对访问地址、证书有效期和受信任的根证书。";
+            return "无法连接 " + candidate.origin + "，请检查内网连接和系统代理。";
+        }
+        catch (InvalidDataException failure) { return failure.Message; }
+        catch (Exception) { return "无法读取提醒服务的响应，请联系管理员检查系统入口。"; }
+
+        try { SavePairing(candidate); }
+        catch (Exception) { return "已连上系统，但未能保存配对。请检查当前 Windows 用户的本地应用数据目录和加密权限。"; }
+        pairing = candidate;
+        ClosePopup();
+        nextPoll = DateTime.MinValue;
+        return "";
+    }
+
     /// <summary>仅允许 HTTPS 源地址，凭据由 Windows 当前用户的数据保护机制保存。</summary>
     private Pairing ParsePairing(string raw)
     {
         Pairing value;
         try { value = json.Deserialize<Pairing>(raw); }
         catch (ArgumentException) { throw new FormatException(); }
+        catch (InvalidOperationException) { throw new FormatException(); }
         Uri origin;
         if (value == null || !Uri.TryCreate(value.origin, UriKind.Absolute, out origin) ||
             origin.Scheme != "https" || origin.AbsolutePath != "/" || origin.UserInfo.Length != 0 ||
