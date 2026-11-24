@@ -1,3 +1,5 @@
+@import "element-plus/theme-chalk/dark/css-vars.css" screen;
+
 /* 档案端沿用平台主题与本机托管的界面字体。 */
 :root,
 :root[data-theme] {
@@ -578,3 +580,22 @@ h3 {
   .sidebar { transition: none; }
 }
 :where(a, button):focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; }
+
+/* 独立档案工作台的浏览器打印使用纸面色；组件库的深色浮层、表单和表格仅在屏幕生效。 */
+@media print {
+  :root[data-theme],
+  html.dark {
+    color-scheme: light;
+    --interface-font-family: var(--font-system);
+    --canvas: white;
+    --surface: white;
+    --surface-muted: #f5f5f5;
+    --ink: #111;
+    --text-secondary: #444;
+    --line: #ccc;
+    --brand: #222;
+    --brand-hover: #111;
+    --brand-soft: #eee;
+    --brand-contrast: white;
+  }
+}
