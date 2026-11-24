@@ -10,6 +10,7 @@ import {
   siteCategories,
 } from "./portal";
 import PortalTasks from "./PortalTasks.vue";
+import WorkspaceRoomSchedule from "./WorkspaceRoomSchedule.vue";
 import biolinkLogo from "./assets/biolink-logo.png";
 import dingtalkIcon from "./assets/dingtalk-site-icon.png";
 const AnnouncementReader = defineAsyncComponent(() => import("./AnnouncementReader.vue"));
@@ -176,94 +177,91 @@ onActivated(async () => {
     </nav>
     <div class="portal-home-grid">
       <div class="workspace-tasks"><PortalTasks compact /></div>
-      <div class="workspace-reference">
-        <section class="panel portal-panel workspace-news">
-          <div class="portal-heading">
-            <h2>通知公告</h2>
-            <a class="text-button" href="#/announcements">查看公告与历史 ↗</a>
-          </div>
-          <a
-            v-for="item in orderedAnnouncements"
-            :key="item.id"
-            class="portal-home-notice"
-            :href="`#/announcements?id=${item.id}`"
-            @click.exact.prevent="readerId = item.id"
-            ><strong
-              ><span v-if="item.pinned" class="portal-pin">置顶</span
-              >{{ item.title }}
-              <span class="announcement-read-state" :class="{ unread: !item.viewed }">
-                {{ item.viewed ? "已读" : "未读" }}
-              </span></strong
-            ><span class="portal-meta"
-              ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
-              <span>{{ item.category }}</span
-              ><span>{{ item.publisherName }}</span
-              ><span>{{ item.publisherDepartment }}</span
-              ><time>{{ portalTime(item.publishedAt) }}</time></span
-            ></a
-          >
-          <EmptyState
-            v-if="loaded && !announcements.length"
-            icon="bell"
-            title="暂无公告"
-            hint="这里显示最近发布的 5 条公告，包括已到期公告"
-          />
-        </section>
-        <aside class="portal-home-side">
-          <section class="panel portal-panel shortcut-panel" aria-labelledby="shortcut-title">
-            <div class="portal-heading">
-              <h2 id="shortcut-title">常用网站</h2>
-            </div>
-            <ul v-if="siteShortcuts.length" class="portal-site-grid">
-              <li v-for="site in siteShortcuts" :key="site.id">
-                <a
-                  class="portal-site"
-                  :href="site.url"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="portal-site-icon" aria-hidden="true">
-                    <span
-                      v-if="site.icon"
-                      :class="{ 'portal-site-brand-mark': site.showBrandMark }"
-                    >
-                      <img :src="site.icon" alt="" />
-                    </span>
-                    <Icon v-else name="globe" :size="16" />
-                  </span>
-                  <strong>{{ site.name }}</strong>
-                  <Icon class="shortcut-external" name="external" :size="13" />
-                </a>
-              </li>
-            </ul>
-            <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
-            <section
-              v-if="officeSiteGroups.length"
-              class="office-sites"
-              aria-labelledby="office-sites-title"
+      <section class="panel portal-panel workspace-news">
+        <div class="portal-heading">
+          <h2>通知公告</h2>
+          <a class="text-button" href="#/announcements">查看公告与历史 ↗</a>
+        </div>
+        <a
+          v-for="item in orderedAnnouncements"
+          :key="item.id"
+          class="portal-home-notice"
+          :href="`#/announcements?id=${item.id}`"
+          @click.exact.prevent="readerId = item.id"
+          ><strong
+            ><span v-if="item.pinned" class="portal-pin">置顶</span
+            >{{ item.title }}
+            <span class="announcement-read-state" :class="{ unread: !item.viewed }">
+              {{ item.viewed ? "已读" : "未读" }}
+            </span></strong
+          ><span class="portal-meta"
+            ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+            <span>{{ item.category }}</span
+            ><span>{{ item.publisherName }}</span
+            ><span>{{ item.publisherDepartment }}</span
+            ><time>{{ portalTime(item.publishedAt) }}</time></span
+          ></a
+        >
+        <EmptyState
+          v-if="loaded && !announcements.length"
+          icon="bell"
+          title="暂无公告"
+          hint="这里显示最近发布的 5 条公告，包括已到期公告"
+        />
+      </section>
+      <WorkspaceRoomSchedule />
+      <section class="panel portal-panel shortcut-panel" aria-labelledby="shortcut-title">
+        <div class="portal-heading">
+          <h2 id="shortcut-title">常用网站</h2>
+        </div>
+        <ul v-if="siteShortcuts.length" class="portal-site-grid">
+          <li v-for="site in siteShortcuts" :key="site.id">
+            <a
+              class="portal-site"
+              :href="site.url"
+              target="_blank"
+              rel="noopener noreferrer"
             >
-              <h3 id="office-sites-title">办公工具</h3>
-              <div class="office-site-groups">
-                <details v-for="group in officeSiteGroups" :key="group.category">
-                  <summary>
-                    <Icon :name="group.category === 'ONLINE_TOOL' ? 'grid' : 'download'" :size="16" />
-                    <span>{{ group.name }}</span>
-                    <Icon class="office-site-chevron" name="chevron" :size="13" />
-                  </summary>
-                  <ul>
-                    <li v-for="site in group.sites" :key="site.id">
-                      <a :href="site.url" target="_blank" rel="noopener noreferrer">
-                        <span>{{ site.name }}</span>
-                        <Icon name="external" :size="13" />
-                      </a>
-                    </li>
-                  </ul>
-                </details>
-              </div>
-            </section>
-          </section>
-        </aside>
-      </div>
+              <span class="portal-site-icon" aria-hidden="true">
+                <span
+                  v-if="site.icon"
+                  :class="{ 'portal-site-brand-mark': site.showBrandMark }"
+                >
+                  <img :src="site.icon" alt="" />
+                </span>
+                <Icon v-else name="globe" :size="16" />
+              </span>
+              <strong>{{ site.name }}</strong>
+              <Icon class="shortcut-external" name="external" :size="13" />
+            </a>
+          </li>
+        </ul>
+        <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
+        <section
+          v-if="officeSiteGroups.length"
+          class="office-sites"
+          aria-labelledby="office-sites-title"
+        >
+          <h3 id="office-sites-title">办公工具</h3>
+          <div class="office-site-groups">
+            <details v-for="group in officeSiteGroups" :key="group.category">
+              <summary>
+                <Icon :name="group.category === 'ONLINE_TOOL' ? 'grid' : 'download'" :size="16" />
+                <span>{{ group.name }}</span>
+                <Icon class="office-site-chevron" name="chevron" :size="13" />
+              </summary>
+              <ul>
+                <li v-for="site in group.sites" :key="site.id">
+                  <a :href="site.url" target="_blank" rel="noopener noreferrer">
+                    <span>{{ site.name }}</span>
+                    <Icon name="external" :size="13" />
+                  </a>
+                </li>
+              </ul>
+            </details>
+          </div>
+        </section>
+        </section>
     </div>
     <AnnouncementReader v-if="readerId" :id="readerId" @read="markRead" @close="readerId = ''" />
   </div>
@@ -402,19 +400,19 @@ onActivated(async () => {
 }
 .workspace .portal-home-grid {
   flex: 0 0 auto;
-  align-items: start;
-  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  align-items: stretch;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 16px;
-}
-.workspace-reference {
-  display: grid;
-  gap: 16px;
-  min-width: 0;
 }
 .workspace-tasks {
+  display: grid;
   min-width: 0;
 }
+.workspace .portal-home-grid :deep(.portal-panel) {
+  padding: clamp(15px, 1.4vw, 20px);
+}
 .workspace .portal-home-grid :deep(.portal-heading) {
+  min-height: 44px;
   flex-wrap: wrap;
   gap: 8px 12px;
 }
@@ -448,7 +446,6 @@ onActivated(async () => {
 
 .shortcut-panel {
   container: shortcuts / inline-size;
-  padding: clamp(15px, 1.4vw, 20px);
 }
 .portal-site-grid {
   display: flex;

@@ -43,6 +43,14 @@ public class MeetingController {
         return ok(bookings.options(actor(r)), r);
     }
 
+    /** 按北京时间的日历日期获取首页会议室占用，日期缺失或格式错误由参数绑定拒绝。 */
+    @GetMapping("/meetings/room-schedule")
+    public Map<String, Object> roomSchedule(
+            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate date,
+            HttpServletRequest r) {
+        return ok(bookings.roomSchedule(actor(r), date), r);
+    }
+
     @GetMapping("/meetings/people")
     public Map<String, Object> people(@RequestParam Map<String, String> query, HttpServletRequest r) {
         return ok(bookings.people(actor(r), query), r);

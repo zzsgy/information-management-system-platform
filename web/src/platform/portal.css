@@ -352,11 +352,6 @@
   background: var(--brand-soft);
   font-weight: 600;
 }
-.portal-home-side {
-  display: grid;
-  min-width: 0;
-  gap: 12px;
-}
 .portal-empty {
   padding: 22px 8px;
   text-align: center;

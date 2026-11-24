@@ -6,6 +6,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.time.LocalDate;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
@@ -38,8 +39,10 @@ public class MeetingBookings {
                 SELECT 1 FROM portal.meeting_attendee a
                 WHERE a.meeting_id=m.id AND a.user_id=? AND a.removed_at IS NULL AND NOT a.material_only))
             """;
+    /** 工作台日历和预约冲突提示使用同一个厂区时区。 */
+    private static final ZoneId MEETING_ZONE = ZoneId.of("Asia/Shanghai");
     private static final DateTimeFormatter CONFLICT_TIME = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm")
-            .withZone(ZoneId.of("Asia/Shanghai"));
+            .withZone(MEETING_ZONE);
 
     private final Sql db;
     private final IdentityService identity;
@@ -76,6 +79,36 @@ public class MeetingBookings {
                 "departments", db.rows("SELECT id,name FROM iam.department WHERE status='ACTIVE' ORDER BY sort_order,name,id"),
                 "canCreate", isEmployee(actor.userId()), "canWeekly", actor.actions().contains(WEEKLY),
                 "canUrgent", actor.actions().contains(URGENT), "canManageRooms", actor.systemAdministrator());
+    }
+
+    /** 已登录用户可查看物理会议室的时段，会议标识、主题和人数仍按会议详情的可见性给出。 */
+    public Map<String, Object> roomSchedule(Actor actor, LocalDate date) {
+        var dayStart = Timestamp.from(date.atStartOfDay(MEETING_ZONE).toInstant());
+        var dayEnd = Timestamp.from(date.plusDays(1).atStartOfDay(MEETING_ZONE).toInstant());
+        var rows = db.rows("""
+                SELECT r.name AS room_name, slot.starts_at, slot.ends_at,
+                    CASE WHEN m.actual_ended_at IS NOT NULL THEN 'ENDED'
+                         WHEN m.actual_started_at IS NOT NULL THEN 'IN_PROGRESS'
+                         ELSE 'SCHEDULED' END AS state,
+                    CASE WHEN visibility.allowed THEN m.id END AS meeting_id,
+                    CASE WHEN visibility.allowed THEN m.subject END AS subject,
+                    CASE WHEN visibility.allowed THEN 1 + (
+                        SELECT count(*) FROM portal.meeting_attendee a
+                        WHERE a.meeting_id=m.id AND a.removed_at IS NULL
+                          AND NOT a.material_only AND a.reply<>'DECLINED'
+                    ) END AS participant_count
+                FROM portal.meeting_booking m
+                JOIN portal.meeting_room r ON r.id=m.room_id
+                CROSS JOIN LATERAL (
+                    SELECT LEAST(m.starts_at,m.actual_started_at) AS starts_at,
+                           COALESCE(m.actual_ended_at,m.ends_at) AS ends_at
+                ) slot
+                CROSS JOIN LATERAL (SELECT %s AS allowed) visibility
+                WHERE m.cancelled_at IS NULL AND slot.starts_at<? AND slot.ends_at>?
+                ORDER BY slot.starts_at,r.name,m.id
+                """.formatted(VISIBLE), actor.userId(), generalManager(actor.userId()), actor.userId(), dayEnd, dayStart);
+        return Sql.map("items", rows.stream().map(row -> Sql.view(row,
+                "room_name,starts_at,ends_at,state,meeting_id,subject,participant_count")).toList());
     }
 
     /** 先限制可见范围，再计算分页数量。 */
