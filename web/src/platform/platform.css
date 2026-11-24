@@ -868,7 +868,7 @@ tbody tr:hover {
   min-height: 100vh;
   color: var(--text-secondary);
 }
-/* 登录页的白色透明 LOGO 直接融入深色背景，保留公司原始字形和比例。 */
+/* 登录页与首页共用主题底色；图片主题直接透出页面背景。 */
 .login-layout {
   display: grid;
   grid-template-columns: 1.05fr 1fr;
@@ -876,7 +876,7 @@ tbody tr:hover {
   background: var(--canvas);
 }
 .login-story {
-  color: var(--workspace-nav-text);
+  color: var(--ink);
   position: relative;
   overflow: hidden;
   padding: 48px 60px;
@@ -905,7 +905,7 @@ tbody tr:hover {
   width: 48px;
   height: 3px;
   margin-bottom: 28px;
-  background: var(--workspace-nav-selected-text);
+  background: var(--brand);
 }
 .login-statement h1 {
   font-size: clamp(40px, 3.6vw, 72px);
@@ -917,7 +917,7 @@ tbody tr:hover {
 .login-story > small {
   font-size: 10px;
   letter-spacing: 3px;
-  color: var(--workspace-nav-muted);
+  color: var(--text-secondary);
 }
 .login-story::after {
   content: "";
@@ -962,13 +962,13 @@ tbody tr:hover {
 }
 .login-form-inner label {
   font-weight: 500;
-  color: #63715f;
+  color: var(--ink);
   font-size: 12px;
   margin: 24px 0;
 }
 .login-form-inner input {
   padding: 13px 14px;
-  background: #fcfdfa;
+  background: var(--surface);
 }
 .login-form-inner .primary {
   margin-top: 9px;

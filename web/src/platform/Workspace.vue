@@ -52,7 +52,7 @@ const siteShortcuts = computed(() =>
       };
     }),
 );
-/** 办公工具与快捷入口共用首页返回的启用网站。 */
+/** 常用网站按原类别折叠，和快捷入口共用首页返回的启用网站。 */
 const officeSiteGroups = computed(() =>
   (["ONLINE_TOOL", "SOFTWARE_DOWNLOAD"] as const)
     .map((category) => ({
@@ -214,7 +214,7 @@ onActivated(async () => {
       <WorkspaceRoomSchedule />
       <section class="panel portal-panel shortcut-panel" aria-labelledby="shortcut-title">
         <div class="portal-heading">
-          <h2 id="shortcut-title">常用网站</h2>
+          <h2 id="shortcut-title">快捷入口</h2>
         </div>
         <div class="workspace-panel-body">
           <ul v-if="siteShortcuts.length" class="portal-site-grid">
@@ -232,20 +232,19 @@ onActivated(async () => {
                   >
                     <img :src="site.icon" alt="" />
                   </span>
-                  <Icon v-else name="globe" :size="16" />
+                  <span v-else>{{ Array.from(site.name.trim())[0] }}</span>
                 </span>
                 <strong>{{ site.name }}</strong>
-                <Icon class="shortcut-external" name="external" :size="13" />
               </a>
             </li>
           </ul>
-          <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
+          <EmptyState v-else-if="loaded" icon="external" title="暂无快捷入口" />
           <section
             v-if="officeSiteGroups.length"
             class="office-sites"
             aria-labelledby="office-sites-title"
           >
-            <h3 id="office-sites-title">办公工具</h3>
+            <h3 id="office-sites-title">常用网站</h3>
             <div class="office-site-groups">
               <details v-for="group in officeSiteGroups" :key="group.category">
                 <summary>
@@ -265,7 +264,7 @@ onActivated(async () => {
             </div>
           </section>
         </div>
-        </section>
+      </section>
     </div>
     <AnnouncementReader v-if="readerId" :id="readerId" @read="markRead" @close="readerId = ''" />
   </div>
@@ -532,33 +531,12 @@ onActivated(async () => {
     margin-top: 9px;
     padding-top: 7px;
   }
-  .shortcut-panel :is(.portal-site, .office-sites summary) {
+  .shortcut-panel .office-sites summary {
     min-height: 36px;
     padding-block: 4px;
   }
   .shortcut-panel .office-sites h3 {
     margin-bottom: 5px;
-  }
-}
-@media (min-width: 1000px) and (620px <= height <= 850px) {
-  @container shortcuts (min-width: 30rem) {
-    .shortcut-panel .portal-site-grid > li {
-      flex-basis: calc((100% - 4 * var(--shortcut-gap)) / 5);
-    }
-  }
-  @container shortcuts (30rem <= width <= 42rem) {
-    .shortcut-panel .portal-site {
-      grid-template-columns: auto minmax(0, 1fr);
-      gap: 5px;
-      padding-inline: 6px;
-      font-size: 0.86rem;
-    }
-    .shortcut-panel .portal-site-icon {
-      width: 1.5rem;
-    }
-    .shortcut-external {
-      display: none;
-    }
   }
 }
 @media (min-width: 1000px) and (620px <= height < 720px) {
@@ -625,26 +603,13 @@ onActivated(async () => {
   container: shortcuts / inline-size;
 }
 .portal-site-grid {
-  display: flex;
-  flex-wrap: wrap;
-  --shortcut-gap: 8px;
-  gap: var(--shortcut-gap);
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 4.7rem), 1fr));
+  gap: 10px 6px;
   margin: 0;
   padding: 0;
   list-style: none;
 }
-.portal-site-grid > li {
-  flex: 1 1 min(100%, 9rem);
-  min-width: 0;
-}
-/* 右栏宽度会随视口和侧栏变化，按卡片实际宽度排布。 */
-@container shortcuts (min-width: 30rem) {
-  .portal-site-grid > li { flex-basis: calc((100% - 2 * var(--shortcut-gap)) / 3); }
-}
-@container shortcuts (min-width: 49rem) {
-  .portal-site-grid > li { flex-basis: calc((100% - 4 * var(--shortcut-gap)) / 5); }
-}
-.portal-site,
 .office-sites summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;
@@ -660,12 +625,26 @@ onActivated(async () => {
   overflow-wrap: anywhere;
 }
 .portal-site {
-  height: 100%;
+  display: grid;
+  justify-items: center;
+  align-content: start;
+  gap: 5px;
+  padding: 3px;
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  text-align: center;
 }
 .portal-site strong {
+  font-size: .89rem;
+  line-height: 1.4;
   font-weight: 600;
+  overflow-wrap: anywhere;
 }
-.portal-site:hover,
+.portal-site:is(:hover, :focus-visible) .portal-site-icon {
+  border-color: currentColor;
+  box-shadow: var(--shadow-panel);
+}
+.portal-site:hover { color: var(--brand-hover); }
 .office-sites summary:hover {
   background: var(--surface-muted);
   border-color: var(--brand);
@@ -678,23 +657,29 @@ onActivated(async () => {
 .portal-site-icon {
   display: grid;
   place-items: center;
-  width: 1.75rem;
+  width: clamp(42px, 3.2rem, 56px);
   aspect-ratio: 1;
-  border-radius: 6px;
-  color: var(--brand);
-  background: var(--brand-soft);
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  border-radius: 12px;
+  font-size: 1.42rem;
+  font-weight: 650;
+  color: var(--shortcut-accent, var(--brand));
+  background: color-mix(in srgb, currentColor 13%, var(--surface));
 }
+/* 用主题语义色区分相邻入口；没有图标的网站显示名称首字。 */
+.portal-site-grid li:nth-child(4n + 2) { --shortcut-accent: var(--warning); }
+.portal-site-grid li:nth-child(4n + 3) { --shortcut-accent: var(--success); }
+.portal-site-grid li:nth-child(4n) { --shortcut-accent: var(--danger); }
 .portal-site-icon img {
   display: block;
   max-width: none;
-  height: 1.15rem;
+  height: 1.8rem;
 }
 /* 横版企业标识仅在快捷入口展示左侧图形。 */
 .portal-site-brand-mark {
-  width: 0.92rem;
+  width: 1.44rem;
   overflow: hidden;
 }
-.shortcut-external,
 .office-site-chevron {
   color: var(--text-secondary);
 }
@@ -711,7 +696,7 @@ onActivated(async () => {
 }
 .office-site-groups {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr));
   align-items: start;
   gap: 8px;
 }
@@ -729,8 +714,11 @@ onActivated(async () => {
   transform: rotate(90deg);
 }
 .office-sites ul {
-  margin: 4px 0 0;
-  padding: 4px 0 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin: 6px 0 0;
+  padding: 0;
   list-style: none;
 }
 .office-sites a {
@@ -739,8 +727,11 @@ onActivated(async () => {
   justify-content: space-between;
   gap: 6px;
   min-height: 36px;
-  padding: 4px 8px;
-  border-radius: 6px;
+  height: 100%;
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  background: var(--surface);
   color: var(--ink);
   font-size: 13px;
   overflow-wrap: anywhere;
@@ -750,7 +741,8 @@ onActivated(async () => {
   color: var(--text-secondary);
 }
 .office-sites a:hover {
-  background: var(--surface-muted);
+  border-color: var(--brand);
+  background: var(--brand-soft);
   color: var(--brand-hover);
 }
 </style>

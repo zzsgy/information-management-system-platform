@@ -53,13 +53,13 @@ body { background-color: var(--canvas); color: var(--ink); }
 }
 :root[data-theme="aurora"] :is(input, textarea)::placeholder { color: #91a7c1; }
 :root[data-theme="aurora"] .platform-shell :is(.topbar, .panel, .management-sidebar) { background: var(--surface); }
-:root[data-theme="aurora"] .platform-shell .company-logo { filter: brightness(0) invert(1); }
+:root[data-theme="aurora"] :is(.platform-shell .company-logo, .workspace-sidebar-logo img, .login-story .company-logo) { filter: brightness(0) invert(1); }
 :root[data-theme="aurora"] .platform-shell :is(.portal-account-link, .profile-button, .management-nav-group a) { color: var(--ink); }
 :root[data-theme="aurora"] .platform-shell :is(.management-nav-group h3, .directory-table small) { color: var(--text-secondary); }
 :root[data-theme="aurora"] .platform-shell .management-nav-group a.active { color: var(--brand); }
 :root[data-theme="aurora"] .platform-shell :is([role="dialog"], dialog) :is(.manage-card, .manage-body > form) { background: var(--surface); border-color: var(--line); }
 :root[data-theme="aurora"] .platform-shell :is([role="dialog"], dialog) .form-actions { background: var(--surface-muted); }
-:root[data-theme="aurora"] .platform-shell :is(.application-icon, .portal-site-icon, .empty-state-icon) { color: var(--brand); background: var(--brand-soft); }
+:root[data-theme="aurora"] .platform-shell :is(.application-icon, .empty-state-icon) { color: var(--brand); background: var(--brand-soft); }
 :root[data-theme="aurora"] .platform-shell :is(.portal-meta, .portal-empty, .empty-state-hint, .list-total, .info-note, .field-note) { color: var(--text-secondary); }
 :root[data-theme="aurora"] .platform-shell :is(.portal-list-row, .portal-home-notice) { color: var(--ink); border-color: var(--line); }
 :root[data-theme="aurora"] .platform-shell tbody tr:hover { background: var(--surface-muted); }
@@ -68,6 +68,5 @@ body { background-color: var(--canvas); color: var(--ink); }
 :root[data-theme="aurora"] .platform-shell .drive-notice { color: var(--success); background: var(--success-soft); }
 :root[data-theme="aurora"] .platform-shell .drive-pdf { color: #ffc7a9; background: #4b342f; }
 :root[data-theme="aurora"] .platform-shell :is(.portal-pin, .status-badge.pending) { color: var(--warning); background: var(--warning-soft); }
-:root[data-theme="aurora"] .login-form-panel { background: var(--surface); }
 :root[data-theme="aurora"] .login-form-inner :is(input, select) { color: var(--ink); background: var(--surface-muted); }
 :root[data-theme="aurora"] .login-form-inner .primary { color: var(--brand-contrast); }

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import Icon from "../preview/PlatformIcon.vue";
-import biolinkLogo from "./assets/biolink-logo-white.png";
+import biolinkLogo from "./assets/biolink-logo.png";
 
 defineProps<{
   applications: { code: string; name: string; icon: string }[];
@@ -76,15 +76,16 @@ defineProps<{
   gap: 6px;
   padding: 16px 12px;
   border-radius: 14px;
-  background: var(--workspace-nav-background);
+  border-inline-end: 1px solid var(--line);
+  background: linear-gradient(165deg, var(--brand-soft), var(--surface) 48%);
   box-shadow: var(--shadow);
-  color: var(--workspace-nav-text);
+  color: var(--ink);
 }
 
 .workspace-sidebar-brand {
   padding: 0 4px 14px;
   margin-bottom: 4px;
-  border-bottom: 1px solid var(--workspace-nav-line);
+  border-bottom: 1px solid var(--line);
 }
 
 .workspace-sidebar-logo {
@@ -108,7 +109,7 @@ defineProps<{
   min-height: 45px;
   padding: 7px 9px;
   border-radius: 8px;
-  color: var(--workspace-nav-text);
+  color: var(--ink);
   font-size: 14px;
   font-weight: 600;
   text-decoration: none;
@@ -116,18 +117,19 @@ defineProps<{
 
 .workspace-module-link:hover,
 .workspace-module-link:focus-visible {
-  background: var(--workspace-nav-hover);
-  color: var(--workspace-nav-text);
+  background: var(--surface-muted);
+  color: var(--brand-hover);
 }
 
 .workspace-module-link:focus-visible {
-  outline: 2px solid var(--workspace-nav-focus);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 
 .workspace-module-link.active {
-  color: var(--workspace-nav-selected-text);
-  background: var(--workspace-nav-selected);
+  color: var(--brand-hover);
+  background: var(--brand-soft);
+  box-shadow: inset 3px 0 var(--brand);
 }
 
 .workspace-sidebar .application-icon,
@@ -148,11 +150,11 @@ defineProps<{
 .workspace-subnav {
   margin-inline: 19px 2px;
   padding-left: 10px;
-  border-left: 1px solid var(--workspace-nav-line);
+  border-left: 1px solid var(--line);
 }
 
 .workspace-subnav h2 {
-  color: var(--workspace-nav-muted);
+  color: var(--text-secondary);
   font-size: 11px;
   margin: 8px 6px 4px;
 }
@@ -161,19 +163,19 @@ defineProps<{
   display: block;
   padding: 6px;
   border-radius: 5px;
-  color: var(--workspace-nav-text);
+  color: var(--ink);
   font-size: 12px;
 }
 
 .workspace-subnav a:hover,
 .workspace-subnav a:focus-visible,
 .workspace-subnav a[aria-current="page"] {
-  background: var(--workspace-nav-selected);
-  color: var(--workspace-nav-selected-text);
+  background: var(--brand-soft);
+  color: var(--brand-hover);
 }
 
 .workspace-subnav a:focus-visible {
-  outline: 2px solid var(--workspace-nav-focus);
+  outline: 2px solid var(--brand);
   outline-offset: 2px;
 }
 

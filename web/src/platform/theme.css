@@ -750,9 +750,16 @@ html,
   color: var(--text-secondary);
 }
 
-/* 登录页保持公司白色标识和大标题，表单采用与工作区一致的品牌色。 */
+/* 经典主题以品牌色过渡到页面底色；图片主题沿用首页的整幅背景。 */
 .login-story {
-  background: linear-gradient(145deg, var(--workspace-nav-background) 24%, color-mix(in srgb, var(--workspace-nav-background) 67%, var(--brand)));
+  background: linear-gradient(145deg, var(--brand-soft), var(--surface) 82%);
+}
+@media screen {
+  :root[data-wallpaper="true"] .login-layout { background: transparent; }
+  :root[data-wallpaper="true"] .login-story {
+    background: linear-gradient(105deg, color-mix(in srgb, var(--canvas) 55%, transparent), transparent 75%);
+  }
+  :root[data-wallpaper="true"] .login-story::after { display: none; }
 }
 .login-form-inner input {
   min-height: 46px;
