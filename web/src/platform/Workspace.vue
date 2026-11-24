@@ -182,85 +182,89 @@ onActivated(async () => {
           <h2>通知公告</h2>
           <a class="text-button" href="#/announcements">查看公告与历史 ↗</a>
         </div>
-        <a
-          v-for="item in orderedAnnouncements"
-          :key="item.id"
-          class="portal-home-notice"
-          :href="`#/announcements?id=${item.id}`"
-          @click.exact.prevent="readerId = item.id"
-          ><strong
-            ><span v-if="item.pinned" class="portal-pin">置顶</span
-            >{{ item.title }}
-            <span class="announcement-read-state" :class="{ unread: !item.viewed }">
-              {{ item.viewed ? "已读" : "未读" }}
-            </span></strong
-          ><span class="portal-meta"
-            ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
-            <span>{{ item.category }}</span
-            ><span>{{ item.publisherName }}</span
-            ><span>{{ item.publisherDepartment }}</span
-            ><time>{{ portalTime(item.publishedAt) }}</time></span
-          ></a
-        >
-        <EmptyState
-          v-if="loaded && !announcements.length"
-          icon="bell"
-          title="暂无公告"
-          hint="这里显示最近发布的 5 条公告，包括已到期公告"
-        />
+        <div class="workspace-panel-body">
+          <a
+            v-for="item in orderedAnnouncements"
+            :key="item.id"
+            class="portal-home-notice"
+            :href="`#/announcements?id=${item.id}`"
+            @click.exact.prevent="readerId = item.id"
+            ><strong
+              ><span v-if="item.pinned" class="portal-pin">置顶</span
+              >{{ item.title }}
+              <span class="announcement-read-state" :class="{ unread: !item.viewed }">
+                {{ item.viewed ? "已读" : "未读" }}
+              </span></strong
+            ><span class="portal-meta"
+              ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+              <span>{{ item.category }}</span
+              ><span>{{ item.publisherName }}</span
+              ><span>{{ item.publisherDepartment }}</span
+              ><time>{{ portalTime(item.publishedAt) }}</time></span
+            ></a
+          >
+          <EmptyState
+            v-if="loaded && !announcements.length"
+            icon="bell"
+            title="暂无公告"
+            hint="这里显示最近发布的 5 条公告，包括已到期公告"
+          />
+        </div>
       </section>
       <WorkspaceRoomSchedule />
       <section class="panel portal-panel shortcut-panel" aria-labelledby="shortcut-title">
         <div class="portal-heading">
           <h2 id="shortcut-title">常用网站</h2>
         </div>
-        <ul v-if="siteShortcuts.length" class="portal-site-grid">
-          <li v-for="site in siteShortcuts" :key="site.id">
-            <a
-              class="portal-site"
-              :href="site.url"
-              target="_blank"
-              rel="noopener noreferrer"
-            >
-              <span class="portal-site-icon" aria-hidden="true">
-                <span
-                  v-if="site.icon"
-                  :class="{ 'portal-site-brand-mark': site.showBrandMark }"
-                >
-                  <img :src="site.icon" alt="" />
+        <div class="workspace-panel-body">
+          <ul v-if="siteShortcuts.length" class="portal-site-grid">
+            <li v-for="site in siteShortcuts" :key="site.id">
+              <a
+                class="portal-site"
+                :href="site.url"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <span class="portal-site-icon" aria-hidden="true">
+                  <span
+                    v-if="site.icon"
+                    :class="{ 'portal-site-brand-mark': site.showBrandMark }"
+                  >
+                    <img :src="site.icon" alt="" />
+                  </span>
+                  <Icon v-else name="globe" :size="16" />
                 </span>
-                <Icon v-else name="globe" :size="16" />
-              </span>
-              <strong>{{ site.name }}</strong>
-              <Icon class="shortcut-external" name="external" :size="13" />
-            </a>
-          </li>
-        </ul>
-        <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
-        <section
-          v-if="officeSiteGroups.length"
-          class="office-sites"
-          aria-labelledby="office-sites-title"
-        >
-          <h3 id="office-sites-title">办公工具</h3>
-          <div class="office-site-groups">
-            <details v-for="group in officeSiteGroups" :key="group.category">
-              <summary>
-                <Icon :name="group.category === 'ONLINE_TOOL' ? 'grid' : 'download'" :size="16" />
-                <span>{{ group.name }}</span>
-                <Icon class="office-site-chevron" name="chevron" :size="13" />
-              </summary>
-              <ul>
-                <li v-for="site in group.sites" :key="site.id">
-                  <a :href="site.url" target="_blank" rel="noopener noreferrer">
-                    <span>{{ site.name }}</span>
-                    <Icon name="external" :size="13" />
-                  </a>
-                </li>
-              </ul>
-            </details>
-          </div>
-        </section>
+                <strong>{{ site.name }}</strong>
+                <Icon class="shortcut-external" name="external" :size="13" />
+              </a>
+            </li>
+          </ul>
+          <EmptyState v-else-if="loaded" icon="external" title="暂无常用网站" />
+          <section
+            v-if="officeSiteGroups.length"
+            class="office-sites"
+            aria-labelledby="office-sites-title"
+          >
+            <h3 id="office-sites-title">办公工具</h3>
+            <div class="office-site-groups">
+              <details v-for="group in officeSiteGroups" :key="group.category">
+                <summary>
+                  <Icon :name="group.category === 'ONLINE_TOOL' ? 'grid' : 'download'" :size="16" />
+                  <span>{{ group.name }}</span>
+                  <Icon class="office-site-chevron" name="chevron" :size="13" />
+                </summary>
+                <ul>
+                  <li v-for="site in group.sites" :key="site.id">
+                    <a :href="site.url" target="_blank" rel="noopener noreferrer">
+                      <span>{{ site.name }}</span>
+                      <Icon name="external" :size="13" />
+                    </a>
+                  </li>
+                </ul>
+              </details>
+            </div>
+          </section>
+        </div>
         </section>
     </div>
     <AnnouncementReader v-if="readerId" :id="readerId" @read="markRead" @close="readerId = ''" />
@@ -426,6 +430,179 @@ onActivated(async () => {
 .workspace-news .portal-home-notice:hover strong {
   color: var(--brand-hover);
 }
+
+/* 桌面四块卡片共享剩余空间，标题和常用操作留在卡片边缘。 */
+@media (min-width: 1000px) and (min-height: 620px) {
+  .workspace {
+    display: flex;
+    flex: 1;
+    flex-direction: column;
+    min-block-size: 0;
+  }
+  .workspace .welcome {
+    gap: 12px;
+    margin-bottom: 10px;
+    padding: clamp(8px, 1.5dvh, 18px) clamp(14px, 2vw, 24px);
+  }
+  .calendar-leaf {
+    min-width: 3.55rem;
+  }
+  .calendar-leaf strong {
+    font-size: 1.62rem;
+  }
+  .workspace .welcome h1 {
+    font-size: clamp(1.45rem, 2vw, 2.05rem);
+  }
+  .workspace .portal-applications {
+    margin-bottom: 12px;
+  }
+  .portal-applications .application-card {
+    min-height: 50px;
+    padding: 6px 10px;
+  }
+  .workspace .portal-home-grid {
+    flex: 1;
+    min-block-size: 0;
+    align-content: start;
+    grid-template-rows: repeat(2, minmax(0, auto));
+    gap: clamp(8px, 1.5dvh, 16px);
+  }
+  .workspace-tasks {
+    grid-template-rows: minmax(0, 1fr);
+  }
+  .workspace .portal-home-grid :deep(.portal-panel) {
+    display: flex;
+    flex-direction: column;
+    min-block-size: 0;
+    padding: clamp(9px, 1.25dvh, 16px) clamp(12px, 1.4vw, 20px);
+  }
+  .workspace .portal-home-grid :deep(.portal-heading) {
+    flex: none;
+    margin-bottom: 6px;
+    min-height: 32px;
+  }
+  .workspace .portal-home-grid :deep(.workspace-panel-body) {
+    flex: 1;
+    min-block-size: 0;
+    margin-inline: -3px;
+    padding: 2px 3px;
+    overflow: auto;
+  }
+  .workspace .portal-home-grid :deep(.empty-state-content) {
+    flex-flow: row wrap;
+    gap: 6px 9px;
+    min-height: 0;
+    padding: 8px 5px;
+  }
+  .workspace .portal-home-grid :deep(.empty-state-symbol) {
+    width: 28px;
+    height: 28px;
+    margin: 0;
+    border-radius: 7px;
+  }
+  .workspace .portal-home-grid :deep(.empty-state-symbol .p-icon) {
+    width: 17px;
+    height: 17px;
+  }
+  .workspace-tasks :deep(.portal-filters) {
+    flex: none;
+    margin-bottom: 4px;
+  }
+  .workspace-tasks :deep(.list-footer) {
+    flex: none;
+    margin-top: 2px;
+    padding: 6px 0 0;
+  }
+  .workspace-tasks :deep(.portal-list-row),
+  .workspace-news .portal-home-notice {
+    padding-block: 8px;
+  }
+  .workspace .portal-home-grid :deep(.room-date) {
+    flex: none;
+  }
+  .workspace .portal-home-grid :deep(.room-slots) {
+    margin-top: 4px;
+  }
+  .workspace .portal-home-grid :deep(.room-slots-expanded) {
+    max-height: none;
+    overflow: visible;
+    scrollbar-gutter: auto;
+  }
+  .shortcut-panel .office-sites {
+    margin-top: 9px;
+    padding-top: 7px;
+  }
+  .shortcut-panel :is(.portal-site, .office-sites summary) {
+    min-height: 36px;
+    padding-block: 4px;
+  }
+  .shortcut-panel .office-sites h3 {
+    margin-bottom: 5px;
+  }
+}
+@media (min-width: 1000px) and (620px <= height <= 850px) {
+  @container shortcuts (min-width: 30rem) {
+    .shortcut-panel .portal-site-grid > li {
+      flex-basis: calc((100% - 4 * var(--shortcut-gap)) / 5);
+    }
+  }
+  @container shortcuts (30rem <= width <= 42rem) {
+    .shortcut-panel .portal-site {
+      grid-template-columns: auto minmax(0, 1fr);
+      gap: 5px;
+      padding-inline: 6px;
+      font-size: 0.86rem;
+    }
+    .shortcut-panel .portal-site-icon {
+      width: 1.5rem;
+    }
+    .shortcut-external {
+      display: none;
+    }
+  }
+}
+@media (min-width: 1000px) and (620px <= height < 720px) {
+  .workspace .welcome {
+    padding-block: 6px;
+    margin-bottom: 8px;
+  }
+  .calendar-leaf {
+    min-width: 3.2rem;
+  }
+  .calendar-leaf strong {
+    font-size: 1.35rem;
+  }
+  .workspace .welcome h1 {
+    font-size: 1.55rem;
+  }
+  .workspace .portal-applications {
+    margin-bottom: 8px;
+  }
+  .portal-applications .application-card {
+    min-height: 38px;
+    padding-block: 4px;
+  }
+  .portal-applications .application-icon {
+    width: 1.9rem;
+    height: 1.9rem;
+  }
+  .portal-applications .application-copy h2 {
+    margin: 0;
+  }
+  .portal-applications .application-copy p {
+    display: none;
+  }
+  .workspace .portal-home-grid :deep(.empty-state-content) {
+    padding-block: 4px;
+  }
+  .workspace .portal-home-grid :deep(.room-date) {
+    min-height: 36px;
+  }
+  .workspace .portal-home-grid :deep(.room-date > button) {
+    min-height: 30px;
+  }
+}
+
 /* 侧栏和字号设置均会改变实际可用列宽，断点按工作台内容区判定。 */
 @container workspace (max-width: 54rem) {
   .workspace .portal-home-grid { grid-template-columns: minmax(0, 1fr); }

@@ -158,35 +158,37 @@ onDeactivated(() => {
       </button>
     </div>
 
-    <div v-if="failed" class="room-message">
-      <p role="alert">会议室安排暂时无法加载。</p>
-      <button class="secondary" type="button" @click="loadSchedule">重新加载</button>
-    </div>
-    <p v-else-if="loading && !slots.length" class="room-message muted" role="status">正在加载会议室安排…</p>
-    <EmptyState v-else-if="!slots.length" icon="calendar" title="当天暂无会议室安排" />
-    <ul v-else id="room-schedule-list" class="room-slots" :class="{ 'room-slots-expanded': expanded }">
-      <li
-        v-for="slot in shownSlots"
-        :key="`${slot.roomName}:${slot.startsAt}:${slot.endsAt}`"
-        class="room-slot"
-        :data-state="slot.status"
-      >
-        <div class="room-slot-time">
-          <time :datetime="slot.startsAt">{{ slotTime(slot.startsAt) }}</time>
-          <span>–</span>
-          <time :datetime="slot.endsAt">{{ slotTime(slot.endsAt) }}</time>
-        </div>
-        <div class="room-slot-copy">
-          <a v-if="slot.meetingId" class="room-subject" :href="`#/meetings?id=${slot.meetingId}`">{{ slot.subject }}</a>
-          <strong v-else class="room-subject">已预约</strong>
-          <div class="room-slot-meta">
-            <span><Icon name="home" :size="14" />{{ slot.roomName }}</span>
-            <span v-if="slot.participantCount !== null"><Icon name="people" :size="14" />{{ slot.participantCount }} 人</span>
+    <div class="workspace-panel-body">
+      <div v-if="failed" class="room-message">
+        <p role="alert">会议室安排暂时无法加载。</p>
+        <button class="secondary" type="button" @click="loadSchedule">重新加载</button>
+      </div>
+      <p v-else-if="loading && !slots.length" class="room-message muted" role="status">正在加载会议室安排…</p>
+      <EmptyState v-else-if="!slots.length" icon="calendar" title="当天暂无会议室安排" />
+      <ul v-else id="room-schedule-list" class="room-slots" :class="{ 'room-slots-expanded': expanded }">
+        <li
+          v-for="slot in shownSlots"
+          :key="`${slot.roomName}:${slot.startsAt}:${slot.endsAt}`"
+          class="room-slot"
+          :data-state="slot.status"
+        >
+          <div class="room-slot-time">
+            <time :datetime="slot.startsAt">{{ slotTime(slot.startsAt) }}</time>
+            <span>–</span>
+            <time :datetime="slot.endsAt">{{ slotTime(slot.endsAt) }}</time>
           </div>
-        </div>
-        <span class="room-slot-state">{{ stateLabels[slot.status] }}</span>
-      </li>
-    </ul>
+          <div class="room-slot-copy">
+            <a v-if="slot.meetingId" class="room-subject" :href="`#/meetings?id=${slot.meetingId}`">{{ slot.subject }}</a>
+            <strong v-else class="room-subject">已预约</strong>
+            <div class="room-slot-meta">
+              <span><Icon name="home" :size="14" />{{ slot.roomName }}</span>
+              <span v-if="slot.participantCount !== null"><Icon name="people" :size="14" />{{ slot.participantCount }} 人</span>
+            </div>
+          </div>
+          <span class="room-slot-state">{{ stateLabels[slot.status] }}</span>
+        </li>
+      </ul>
+    </div>
   </section>
 </template>
 
