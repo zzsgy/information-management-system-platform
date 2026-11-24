@@ -1,23 +1,30 @@
 <script setup lang="ts">
-import RichTextView from "./RichTextView.vue";
 import RichTextEditor from "./RichTextEditor.vue";
+import MarkdownImageEditor from "./MarkdownImageEditor.vue";
+import AnnouncementLetter from "./AnnouncementLetter.vue";
+import AnnouncementReader from "./AnnouncementReader.vue";
+import { markdownImageKeys, markdownImageUploads, type MarkdownImageDraft } from "./markdownImages";
+import AnnouncementReadership from "./AnnouncementReadership.vue";
 import ListFilters from "./ListFilters.vue";
 import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
-import { inject, onMounted, onUnmounted, reactive, ref } from "vue";
+import { computed, inject, onMounted, reactive, ref } from "vue";
 import { api, query, COLLECTION, mutate, type Page } from "./api";
-import { type Announcement, portalParams, portalTime } from "./portal";
+import { hasReadership, type Announcement, portalParams, portalTime } from "./portal";
 /** 管理与员工详情复用同一信纸呈现，读取接口仍按权限分开。 */
 const props = defineProps<{ manage?: boolean }>();
 const rows = ref<Announcement[]>([]),
   selected = ref<Announcement | null>(null),
   total = ref(0),
   page = ref(1),
-  view = ref<"CURRENT" | "EXPIRED" | "READ">("CURRENT"),
+  view = ref<"CURRENT" | "EXPIRED" | "READ" | "CREATED">("CURRENT"),
   busy = ref(false),
   error = ref(""),
   editing = ref(false);
 const departments = ref<{ id: string; name: string }[]>([]);
+/** 管理员打开统计时保留原列表页或公告详情。 */
+const readershipTarget = ref<Announcement | null>(null);
+const readerId = ref("");
 const askPassword =
   inject<(title: string) => Promise<string | null>>("askPassword")!;
 /** 本地时间控件提交时显式转换为ISO时刻，后端不猜测时区。 */
@@ -34,7 +41,11 @@ const form = reactive({
 });
 const prefix = () =>
   props.manage ? "/admin/portal/announcements" : "/portal/announcements";
-let refreshTimer: ReturnType<typeof setInterval> | undefined;
+/** 历史正文沿用原编辑方式，以保留原有的样式和字面标点。 */
+const markdown = computed(() => !selected.value || selected.value.contentFormat === "MARKDOWN");
+const images = ref<MarkdownImageDraft[]>([]);
+const preparing = ref(false);
+const imageBase = computed(() => selected.value ? `/api/v1${prefix()}/${selected.value.id}/images` : undefined);
 function localTime(value: string) {
   const d = new Date(value);
   return new Date(d.getTime() - d.getTimezoneOffset() * 60000)
@@ -56,32 +67,34 @@ async function load() {
     busy.value = false;
   }
 }
-/** 主动打开时记录首次查看，定时重验只读当前权限。 */
-async function open(id: string, activity = true) {
+async function open(id: string) {
   error.value = "";
+  if (!props.manage) {
+    readerId.value = id;
+    return;
+  }
   try {
-    const markRead = !props.manage && activity;
-    selected.value = await api<Announcement>(
-      `${prefix()}/${id}${markRead ? "/read" : ""}`,
-      markRead ? { method: "POST" } : {},
-      activity,
-    );
+    selected.value = await api<Announcement>(`${prefix()}/${id}`);
   } catch (e) {
     selected.value = null;
     error.value = (e as Error).message;
   }
 }
-/** 历史公告默认不限日期，避免较早发布的公告被最近一周筛掉。 */
+function closeReader() {
+  readerId.value = "";
+  if (portalParams().has("id")) location.replace("#/announcements");
+}
+function markRead(id: string) {
+  const row = rows.value.find((item) => item.id === id);
+  if (row) row.viewed = true;
+}
+/** 只有当前公告默认查最近一周，便于从其他页签找回较早公告与草稿。 */
 function switchView(next: typeof view.value) {
   if (view.value === next) return;
   listFilters.value = next === "CURRENT" ? recentWeekFilters("published") : {};
   view.value = next;
   page.value = 1;
   void load();
-}
-function refresh() {
-  if (selected.value && !props.manage && !editing.value)
-    void open(selected.value.id, false);
 }
 async function edit(item?: Announcement) {
   error.value = "";
@@ -90,6 +103,7 @@ async function edit(item?: Announcement) {
       ? await api<Announcement>(`${prefix()}/${item.id}`)
       : null;
     const current = selected.value;
+    images.value = [];
     Object.assign(form, {
       title: current?.title || "",
       category: current?.category || "通知公告",
@@ -113,6 +127,11 @@ async function edit(item?: Announcement) {
 }
 /** 取消密码验证保留编辑内容；提交失败保留输入和原版本供刷新核对。 */
 async function save() {
+  if (busy.value || preparing.value) return;
+  if (!form.body.trim()) {
+    error.value = "请填写公告正文。";
+    return;
+  }
   busy.value = true;
   error.value = "";
   try {
@@ -126,6 +145,14 @@ async function save() {
         : null,
       departmentIds: form.scope === "COMPANY" ? [] : form.departmentIds,
     };
+    if (markdown.value) {
+      const references = markdownImageKeys(form.body, true);
+      Object.assign(body, {
+        contentFormat: "MARKDOWN",
+        imageKeys: (selected.value?.imageKeys ?? []).filter((id) => references.has(id)),
+        images: markdownImageUploads(form.body, images.value, true),
+      });
+    }
     selected.value = await mutate<Announcement>(
       `${prefix()}${selected.value ? "/" + selected.value.id : ""}`,
       selected.value ? "PUT" : "POST",
@@ -145,15 +172,9 @@ async function save() {
   }
 }
 onMounted(async () => {
-  await load();
   const id = portalParams().get("id");
-  if (id) await open(id);
-  refreshTimer = setInterval(refresh, 30000);
-  window.addEventListener("focus", refresh);
-});
-onUnmounted(() => {
-  clearInterval(refreshTimer);
-  window.removeEventListener("focus", refresh);
+  if (id) void open(id);
+  await load();
 });
 /** 当前列表已提交的筛选条件。 */
 const listFilters = ref(recentWeekFilters("published"));
@@ -170,6 +191,7 @@ const listFilters = ref(recentWeekFilters("published"));
       ><button
         v-if="selected || editing"
         class="secondary"
+        :disabled="editing && (busy || preparing)"
         @click="
           selected = null;
           editing = false;
@@ -198,7 +220,12 @@ const listFilters = ref(recentWeekFilters("published"));
           </select></label
         >
       </div>
-      <RichTextEditor v-model="form.body" label="正文" :rows="10" :limit="10000" required placeholder="请输入公告正文" />
+      <MarkdownImageEditor v-if="markdown"
+        v-model="form.body" v-model:images="images" v-model:preparing="preparing"
+        label="正文" :rows="10" :limit="10000" placeholder="使用 Markdown 编写公告正文"
+        :disabled="busy" :image-base="imageBase" :image-keys="selected?.imageKeys" numbered
+      />
+      <RichTextEditor v-else v-model="form.body" label="正文" :rows="10" :limit="10000" required placeholder="请输入公告正文" />
       <div class="portal-form-grid">
         <label
           >展示开始<input
@@ -229,44 +256,25 @@ const listFilters = ref(recentWeekFilters("published"));
         >
       </fieldset>
       <div class="portal-actions">
-        <button type="button" class="secondary" @click="editing = false">
+        <button type="button" class="secondary" :disabled="busy || preparing" @click="editing = false">
           取消</button
-        ><button class="primary" :disabled="busy">保存公告</button>
+        ><button class="primary" :disabled="busy || preparing">保存公告</button>
       </div>
     </form>
-    <template v-else-if="selected">
-      <div class="portal-meta">
-        <span>{{ selected.category }}</span
-        ><span>发布人：{{ selected.publisherName || "尚未发布" }}</span
-        ><span>部门：{{ selected.publisherDepartment || "—" }}</span
-        ><time>{{ portalTime(selected.publishedAt) }}</time
-        ><button v-if="manage" class="text-button" @click="edit(selected)">
-          编辑公告
-        </button>
-      </div>
-      <article class="portal-letterhead">
-        <div class="portal-letter-content">
-          <p class="portal-letter-label">{{ selected.category }}</p>
-          <h1>{{ selected.title }}</h1>
-          <RichTextView class="portal-letter-body" :value="selected.body" />
-          <div class="portal-letter-signature">
-            <p>{{ selected.publisherDepartment }}</p>
-            <time>{{
-              selected.publishedAt
-                ? portalTime(selected.publishedAt).slice(0, 10)
-                : ""
-            }}</time>
-          </div>
-        </div>
-      </article>
-    </template>
+    <AnnouncementLetter v-else-if="selected" :item="selected" manage>
+      <button v-if="hasReadership(selected)" class="text-button" @click="readershipTarget = selected">
+        阅读统计
+      </button>
+      <button class="text-button" @click="edit(selected)">编辑公告</button>
+    </AnnouncementLetter>
     <section v-else class="panel portal-panel">
       <div v-if="!manage" class="portal-tabs" aria-label="公告范围">
         <button
           v-for="(label, code) in {
             CURRENT: '当前公告',
             EXPIRED: '历史公告',
-            READ: '已查看',
+            READ: '已读公告',
+            CREATED: '我创建的',
           }"
           :key="code"
           type="button"
@@ -335,18 +343,23 @@ const listFilters = ref(recentWeekFilters("published"));
             ><span v-if="item.pinned" class="portal-pin">置顶</span
             >{{ item.title }}</strong
           ><span class="portal-meta"
-            ><span>{{ item.category }}</span
+            ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+            <span v-if="!manage && view !== 'CREATED'" class="announcement-read-state" :class="{ unread: !item.viewed }">
+              {{ item.viewed ? "已读" : "未读" }}
+            </span><span>{{ item.category }}</span
             ><span>{{ item.publisherName || "尚未发布" }}</span
             ><span>{{ item.publisherDepartment || "—" }}</span
             ><time>{{ portalTime(item.publishedAt) }}</time
             ><span v-if="!manage && view === 'EXPIRED'">已到期</span>
-            <span v-if="manage">{{
+            <span v-if="manage || view === 'CREATED'">{{
               { DRAFT: "草稿", PUBLISHED: "已发布", WITHDRAWN: "已撤下" }[
                 item.state
               ]
             }}</span></span
           ></button
-        ><button v-if="manage" class="text-button" @click="edit(item)">
+        ><button v-if="manage && hasReadership(item)" class="text-button" @click="readershipTarget = item">
+          阅读统计
+        </button><button v-if="manage" class="text-button" @click="edit(item)">
           编辑
         </button>
       </article>
@@ -357,10 +370,10 @@ const listFilters = ref(recentWeekFilters("published"));
           Object.values(listFilters).some(Boolean)
             ? '没有符合筛选条件的公告'
             : view === 'READ'
-              ? '暂无已查看的公告'
+              ? '暂无已读公告'
               : view === 'EXPIRED'
                 ? '暂无历史公告'
-                : '暂无公告'
+                : view === 'CREATED' ? '暂无我创建的公告' : '暂无公告'
         "
       />
       <footer class="list-footer">
@@ -397,6 +410,8 @@ const listFilters = ref(recentWeekFilters("published"));
         </div>
       </footer>
     </section>
+    <AnnouncementReadership v-if="readershipTarget" :announcement="readershipTarget" manage @close="readershipTarget = null" />
+    <AnnouncementReader v-if="readerId" :id="readerId" @read="markRead" @close="closeReader" />
   </section>
 </template>
 

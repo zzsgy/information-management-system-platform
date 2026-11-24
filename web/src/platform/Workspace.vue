@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import EmptyState from "./EmptyState.vue";
-import { computed, onActivated, ref } from "vue";
+import { computed, defineAsyncComponent, onActivated, onDeactivated, ref } from "vue";
 import Icon from "../preview/PlatformIcon.vue";
 import { api, profile } from "./api";
 import {
@@ -12,6 +12,7 @@ import {
 import PortalTasks from "./PortalTasks.vue";
 import biolinkLogo from "./assets/biolink-logo.png";
 import dingtalkIcon from "./assets/dingtalk-site-icon.png";
+const AnnouncementReader = defineAsyncComponent(() => import("./AnnouncementReader.vue"));
 const props = defineProps<{
   applications: { code: string; name: string; icon: string }[];
   layout: "cards" | "sidebar";
@@ -23,6 +24,15 @@ const announcements = ref<Announcement[]>([]),
   loaded = ref(false),
   error = ref("");
 let refreshing = false;
+const readerId = ref("");
+const orderedAnnouncements = computed(() =>
+  [...announcements.value].sort((a, b) => Number(!!a.viewed) - Number(!!b.viewed)),
+);
+function markRead(id: string) {
+  const row = announcements.value.find((item) => item.id === id);
+  if (row) row.viewed = true;
+}
+onDeactivated(() => { readerId.value = ""; });
 /** 按已配置的网站域名匹配内置图标，其他网站保留名称首字。 */
 const siteShortcuts = computed(() =>
   sites.value
@@ -84,10 +94,7 @@ onActivated(async () => {
       announcements: Announcement[];
       sites: Site[];
     }>("/portal/home");
-    // 服务端先按发布时间取最近五条，未查看优先展示且组内保持原顺序。
-    announcements.value = [...data.announcements].sort(
-      (a, b) => Number(!!a.viewed) - Number(!!b.viewed),
-    );
+    announcements.value = data.announcements;
     sites.value = data.sites;
     loaded.value = true;
   } catch (e) {
@@ -170,16 +177,20 @@ onActivated(async () => {
           <a class="text-button" href="#/announcements">查看公告与历史 ↗</a>
         </div>
         <a
-          v-for="item in announcements"
+          v-for="item in orderedAnnouncements"
           :key="item.id"
           class="portal-home-notice"
           :href="`#/announcements?id=${item.id}`"
+          @click.exact.prevent="readerId = item.id"
           ><strong
             ><span v-if="item.pinned" class="portal-pin">置顶</span
             >{{ item.title }}
-            <span v-if="!item.viewed" class="status-badge">未查看</span></strong
+            <span class="announcement-read-state" :class="{ unread: !item.viewed }">
+              {{ item.viewed ? "已读" : "未读" }}
+            </span></strong
           ><span class="portal-meta"
-            ><span>{{ item.category }}</span
+            ><span class="announcement-owner" :class="{ mine: item.isCreator }">{{ item.isCreator ? "我创建的" : "他人创建的" }}</span>
+            <span>{{ item.category }}</span
             ><span>{{ item.publisherName }}</span
             ><span>{{ item.publisherDepartment }}</span
             ><time>{{ portalTime(item.publishedAt) }}</time></span
@@ -244,6 +255,7 @@ onActivated(async () => {
         </section>
       </aside>
     </div>
+    <AnnouncementReader v-if="readerId" :id="readerId" @read="markRead" @close="readerId = ''" />
   </div>
 </template>
 

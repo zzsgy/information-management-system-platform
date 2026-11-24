@@ -24,12 +24,37 @@ public class PortalController {
     @GetMapping("/portal/announcements") public Map<String,Object> announcements(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(content.announcements(actor(r),query,false),r);}
     /** 查询正文并重验当前可见范围，越权返回404。 */
     @GetMapping("/portal/announcements/{id}") public Map<String,Object> announcement(@PathVariable String id,HttpServletRequest r){return ok(content.announcement(actor(r),Inputs.uuid(id),false),r);}
-    /** 登录员工主动打开本人可见公告，首次查看留痕，越权返回404。 */
-    @PostMapping("/portal/announcements/{id}/read") public Map<String,Object> readAnnouncement(@PathVariable String id,HttpServletRequest r){return ok(content.readAnnouncement(actor(r),Inputs.uuid(id)),r);}
+    /** 兼容旧页面打开正文时的请求；打开和关闭弹窗都不产生确认记录。 */
+    @PostMapping("/portal/announcements/{id}/read") public Map<String,Object> readAnnouncement(@PathVariable String id,HttpServletRequest r){return ok(content.announcement(actor(r),Inputs.uuid(id),false),r);}
+    /** 当前受众明确确认阅读，重复点击保留首次确认时间，越权返回404。 */
+    @PostMapping("/portal/announcements/{id}/confirm-read")
+    public Map<String,Object> confirmAnnouncementRead(@PathVariable String id,HttpServletRequest r){
+        return ok(content.confirmAnnouncementRead(actor(r),Inputs.uuid(id)),r);
+    }
+    /** 发起人查看本人历史公告的已读和未读名单，其他员工访问返回404。 */
+    @GetMapping("/portal/announcements/{id}/readership")
+    public Map<String,Object> creatorReadership(@PathVariable String id,@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(content.announcementReadership(actor(r),Inputs.uuid(id),query,false),r);
+    }
     /** 全部内容仅公告维护人员可见。 */
     @GetMapping("/admin/portal/announcements") public Map<String,Object> managedAnnouncements(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(content.announcements(actor(r),query,true),r);}
     /** 管理详情包含正文和部门选择，不授予其他管理权限。 */
     @GetMapping("/admin/portal/announcements/{id}") public Map<String,Object> managedAnnouncement(@PathVariable String id,HttpServletRequest r){return ok(content.announcement(actor(r),Inputs.uuid(id),true),r);}
+    /** 员工按当前公告范围读取正文图片。 */
+    @GetMapping("/portal/announcements/{id}/images/{key}")
+    public ResponseEntity<byte[]> announcementImage(@PathVariable String id,@PathVariable String key,HttpServletRequest r){
+        return imageResponse(content.announcementImage(actor(r),Inputs.uuid(id),Inputs.uuid(key),false));
+    }
+    /** 公告维护人员可在发布前预览已保存的附件。 */
+    @GetMapping("/admin/portal/announcements/{id}/images/{key}")
+    public ResponseEntity<byte[]> managedAnnouncementImage(@PathVariable String id,@PathVariable String key,HttpServletRequest r){
+        return imageResponse(content.announcementImage(actor(r),Inputs.uuid(id),Inputs.uuid(key),true));
+    }
+    /** 公告维护人员查看范围内的阅读人数和分页名单；未开放的公告返回404，无维护权返回403。 */
+    @GetMapping("/admin/portal/announcements/{id}/readership")
+    public Map<String,Object> announcementReadership(@PathVariable String id,@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(content.announcementReadership(actor(r),Inputs.uuid(id),query,true),r);
+    }
     /** 公告范围选择使用最小部门投影。 */
     @GetMapping("/admin/portal/departments") public Map<String,Object> departments(HttpServletRequest r){return ok(content.departments(actor(r)),r);}
     /** 创建只接收声明字段，稳定操作号避免重复发布。 */
@@ -62,7 +87,9 @@ public class PortalController {
     /** 截图仅反馈人或反馈办理人员可见，返回经过校验的图片格式。 */
     @GetMapping("/portal/feedback/{id}/images/{message}/{image}")
     public ResponseEntity<byte[]> feedbackImage(@PathVariable String id,@PathVariable String message,@PathVariable String image,HttpServletRequest r){
-        var result=feedbackImages.read(actor(r),Inputs.uuid(id),Inputs.uuid(message),Inputs.uuid(image));
+        return imageResponse(feedbackImages.read(actor(r),Inputs.uuid(id),Inputs.uuid(message),Inputs.uuid(image)));
+    }
+    private static ResponseEntity<byte[]> imageResponse(InlineImages.Image result){
         return ResponseEntity.ok().contentType(MediaType.parseMediaType(result.mediaType()))
                 .cacheControl(CacheControl.noStore()).header("X-Content-Type-Options","nosniff").body(result.bytes());
     }

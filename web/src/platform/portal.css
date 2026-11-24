@@ -332,6 +332,26 @@
   margin-right: 8px;
   vertical-align: 1px;
 }
+.announcement-read-state,
+.announcement-owner {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-muted);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+}
+.announcement-read-state.unread {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.announcement-owner.mine {
+  color: var(--brand);
+  background: var(--brand-soft);
+  font-weight: 600;
+}
 .portal-home-side {
   display: grid;
   min-width: 0;
@@ -544,7 +564,7 @@
   text-align: center;
   font-size: 14px;
 }
-.portal-letter-content h1 {
+.portal-letter-content > h1 {
   text-align: center;
   font-size: 28px;
   line-height: 1.6;
@@ -553,7 +573,6 @@
   margin: 25px 0 38px;
 }
 .portal-letter-body {
-  white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 2.15;
   font-size: 16px;

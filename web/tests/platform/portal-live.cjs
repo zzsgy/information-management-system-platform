@@ -224,8 +224,10 @@ async function temporary() {
     await admin
       .getByLabel("正文", { exact: true })
       .fill(
-        "各位同事：\n\n员工工作台已开放公告阅读、待办查看和意见反馈。请在试用过程中记录建议，帮助我们持续改进。\n\n<script>window.portalInjected=true</script>\n以上标记用于验证纯文本显示。\n\n特此通知。",
+        "## 试用安排\n\n各位同事：\n\n员工工作台已开放**公告阅读**、待办查看和意见反馈。请在试用过程中记录建议，帮助我们持续改进。\n\n<script>window.portalInjected=true</script>\n以上标记用于验证纯文本显示。\n\n特此通知。",
       );
+    await admin.getByRole("button", { name: "预览", exact: true }).click();
+    await expect(admin.getByRole("heading", { name: "试用安排", level: 2 })).toBeVisible();
     await admin.getByLabel(/^状态/).selectOption("PUBLISHED");
     await admin.getByLabel("置顶展示", { exact: true }).check();
     await admin.getByRole("button", { name: "保存公告", exact: true }).click();
@@ -243,6 +245,7 @@ async function temporary() {
       .locator(".portal-home-notice")
       .filter({ hasText: title });
     await expect(row).toContainText(config.IMS_PLATFORM_ADMIN_NAME);
+    await expect(row).toContainText("他人创建的");
     await expect(row).toContainText("公司");
     await expect(row.locator("time")).toHaveText(
       /\d{4}\/\d{2}\/\d{2}.*\d{2}:\d{2}:\d{2}/,
@@ -274,8 +277,30 @@ async function temporary() {
     await expect(employee.locator(".portal-letter-body")).toContainText(
       "<script>",
     );
+    await expect(employee.locator(".portal-letter-body h2")).toHaveText("试用安排");
+    await expect(employee.locator(".portal-letter-body strong")).toHaveText("公告阅读");
     await screenshot(employee, "announcement-letterhead");
-    passed("公告真实发布、完整元数据、信纸详情、纯文本安全与三档桌面布局");
+    const reader = employee.getByRole("dialog", { name: "公告详情" });
+    await reader.getByRole("button", { name: "关闭公告详情" }).click();
+    await expect(row).toContainText("未读");
+    await goto(employee, "announcements");
+    const listed = employee.locator(".portal-notice-row").filter({ hasText: title });
+    await listed.getByRole("button").click();
+    await reader.getByRole("button", { name: "我已阅读" }).click();
+    await expect(reader).toHaveCount(0);
+    await expect(listed).toContainText("已读");
+    await goto(admin, "announcements");
+    await admin.getByRole("button", { name: "我创建的", exact: true }).click();
+    await admin.locator(".portal-notice-row").filter({ hasText: title }).getByRole("button").click();
+    await admin.getByRole("button", { name: "阅读统计", exact: true }).click();
+    const readership = admin.getByRole("dialog", { name: "阅读统计" });
+    await readership.getByRole("button", { name: /^已读 / }).click();
+    await expect(readership.getByRole("row").filter({ hasText: no })).toBeVisible();
+    await readership.getByRole("button", { name: /^未读 / }).click();
+    await expect(readership.getByRole("row").filter({ hasText: no })).toHaveCount(0);
+    await readership.getByRole("button", { name: "关闭阅读统计" }).click();
+    await admin.getByRole("button", { name: "关闭公告详情" }).click();
+    passed("公告 Markdown 预览与发布、信纸详情、主动确认已读和发起人阅读名单");
     await goto(employee, "feedback");
     await employee
       .getByRole("button", { name: "提交反馈", exact: true })

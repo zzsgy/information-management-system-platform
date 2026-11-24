@@ -32,6 +32,7 @@ class PortalIntegrationTest {
     @Autowired Sql db;@Autowired IdentityService identity;@Autowired PortalContent content;@Autowired PortalWork work;@Autowired Commands commands;@Autowired WorkflowEngine workflow;@Autowired PlatformTransactionManager manager;
     /** 每例独立员工与部门，测试不覆盖已有记录。 */
     private Actor admin,employee,other,editor;private UUID department,otherDepartment;private final Map<UUID,String> passwords=new HashMap<>();
+    private final Map<UUID,String> sessionTokens=new HashMap<>();
     @BeforeEach void setup(){admin=login(System.getenv("IMS_PLATFORM_ADMIN_NO"),System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"));passwords.put(admin.userId(),System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"));department=department();otherDepartment=department();employee=employee(department,null);other=employee(otherDepartment,null);editor=employee(department,"CONTENT_EDITOR");}
     @Autowired EmployeeTodos todos;
     @Autowired TodoReminders reminders;
@@ -179,7 +180,12 @@ class PortalIntegrationTest {
     private UUID department(){UUID id=UUID.randomUUID();db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",id,"PORTAL-"+id,"隔离验收部门");return id;}
     private Actor employee(UUID dept,String role){UUID id=UUID.randomUUID();String no="PORTAL-"+id,password=Crypto.token();passwords.put(id,password);db.update("INSERT INTO iam.user_account(id,employee_no,name,department_id,company_email,password_hash,password_setup_required) VALUES(?,?,?,?,?,?,false)",id,no,"首页验收员工",dept,no+"@biolink.com",Crypto.password(password));if(role!=null)assign(id,"PLATFORM",role,null);return login(no,password);}
     private UUID assign(UUID user,String module,String role,UUID dept){UUID id=UUID.randomUUID();db.update("INSERT INTO iam.user_role(id,user_id,role_id,department_id,valid_from,assigned_by,module,role_code) SELECT ?,?,id,?,CURRENT_TIMESTAMP,?,?,? FROM iam.role WHERE module=? AND code=?",id,user,dept,admin.userId(),module,role,module,role);return id;}
-    private Actor login(String no,String password){return identity.authenticate(identity.login(Sql.map("employeeNo",no,"password",password),UUID.randomUUID(),"portal-test-"+UUID.randomUUID()).get("token").toString());}
+    private Actor login(String no,String password){
+        String token=identity.login(Sql.map("employeeNo",no,"password",password),UUID.randomUUID(),"portal-test-"+UUID.randomUUID()).get("token").toString();
+        var actor=identity.authenticate(token);
+        sessionTokens.put(actor.userId(),token);
+        return actor;
+    }
     private Actor refresh(Actor actor){return identity.background(actor.sessionId());}
     /** 使用真实再验证凭据及Commands幂等记录，避免绕过正式写入口。 */
     private Commands.Context context(Actor actor,String type,UUID id,String action,Integer version){var proof=identity.reauthenticate(actor,Sql.map("password",passwords.get(actor.userId()),"purpose","MANAGE","objectIds",List.of(id.toString()),"scopeItems",List.of(Sql.map("objectType",type,"objectId",id.toString(),"actions",List.of(action)))),UUID.randomUUID());return new Commands.Context(actor,UUID.randomUUID(),UUID.randomUUID(),"TEST "+action+" "+id,proof.get("verificationToken").toString(),version);}
@@ -207,12 +213,51 @@ class PortalIntegrationTest {
         var excluded=announcementBody();
         excluded.put("departmentIds",List.of(otherDepartment.toString()));
         create(excluded);
-        content.readAnnouncement(employee,expected.getFirst());
+        content.confirmAnnouncementRead(employee,expected.getFirst());
         var rows=content.recentAnnouncements(employee);
         assertEquals(expected,rows.stream().map(row->row.get("id")).toList());
         assertEquals(true,rows.getFirst().get("viewed"));
         assertEquals(false,rows.get(1).get("viewed"));
         assertFalse(rows.getFirst().containsKey("body"));
+    }
+
+    /** 统计与员工列表共用首次确认记录，人员范围在筛选、分页和计数前生效。 */
+    @Test void announcementReadershipTracksFirstConfirmationWithinCurrentAudience() {
+        var body=announcementBody();
+        UUID id=(UUID)create(body).get("id");
+        var employeeList=Map.of("keyword",body.get("title").toString());
+        assertEquals(false,items(content.announcements(employee,employeeList,false)).getFirst().get("viewed"));
+        content.announcement(editor,id,true);
+        var initial=content.announcementReadership(editor,id,Map.of("pageSize","1"),true);
+        assertEquals(0L,initial.get("readCount"));
+        assertEquals(2L,initial.get("unreadCount"));
+        assertEquals(2L,initial.get("total"));
+        assertEquals(1,items(initial).size());
+        status(403,()->content.announcementReadership(employee,id,Map.of(),true));
+
+        content.confirmAnnouncementRead(employee,id);
+        var readFilter=Map.of("status","READ");
+        var read=content.announcementReadership(editor,id,readFilter,true);
+        assertEquals(1L,read.get("total"));
+        assertEquals(1L,read.get("readCount"));
+        assertEquals(1L,read.get("unreadCount"));
+        var reader=items(read).getFirst();
+        assertEquals(employee.user().get("employeeNo"),reader.get("employeeNo"));
+        assertEquals("首页验收员工",reader.get("name"));
+        assertEquals("隔离验收部门",reader.get("departmentName"));
+        assertNotNull(reader.get("readAt"));
+        content.confirmAnnouncementRead(employee,id);
+        assertEquals(reader,items(content.announcementReadership(editor,id,readFilter,true)).getFirst());
+        assertEquals(true,items(content.announcements(employee,employeeList,false)).getFirst().get("viewed"));
+        assertEquals(false,items(content.announcements(editor,employeeList,false)).getFirst().get("viewed"));
+        var unread=content.announcementReadership(editor,id,Map.of("status","UNREAD"),true);
+        assertEquals(1L,unread.get("total"));
+        assertEquals(editor.user().get("employeeNo"),items(unread).getFirst().get("employeeNo"));
+        assertNull(items(unread).getFirst().get("readAt"));
+
+        db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());
+        assertEquals(0L,content.announcementReadership(editor,id,readFilter,true).get("total"));
+        assertEquals(1L,content.announcementReadership(editor,id,Map.of(),true).get("total"));
     }
 
     @Test void readHistoryRetainsExpiredNoticeWithinCurrentAudience() {
@@ -222,16 +267,16 @@ class PortalIntegrationTest {
         var history=Map.of("view","READ","pageSize","1");
         content.announcement(employee,id,false);
         assertEquals(0L,content.announcements(employee,history,false).get("total"));
-        status(404,()->content.readAnnouncement(other,id));
-        assertEquals(body.get("body"),content.readAnnouncement(employee,id).get("body"));
-        content.readAnnouncement(employee,id);
+        status(404,()->content.confirmAnnouncementRead(other,id));
+        assertEquals(true,content.confirmAnnouncementRead(employee,id).get("viewed"));
+        content.confirmAnnouncementRead(employee,id);
 
         db.update("UPDATE portal.announcement SET valid_until=CURRENT_TIMESTAMP-interval '1 second' WHERE id=?",id);
-        // 有发布范围但从未查看过的员工也可以从历史列表首次打开。
+        // 有发布范围但从未查看过的员工也可以从历史列表首次确认。
         var expired=Map.of("view","EXPIRED","keyword",body.get("title").toString());
         assertEquals(id,items(content.announcements(editor,expired,false)).getFirst().get("id"));
         assertEquals(0L,content.announcements(other,expired,false).get("total"));
-        status(404,()->content.readAnnouncement(other,id));
+        status(404,()->content.confirmAnnouncementRead(other,id));
         assertEquals(0L,content.announcements(employee,Map.of("keyword",body.get("title").toString()),false).get("total"));
         var read=content.announcements(employee,history,false);
         assertEquals(1L,read.get("total"));
@@ -239,8 +284,9 @@ class PortalIntegrationTest {
         assertFalse(items(read).getFirst().containsKey("body"));
         assertEquals(body.get("body"),content.announcement(employee,id,false).get("body"));
         assertEquals(0L,content.announcements(editor,history,false).get("total"));
-        assertEquals(body.get("body"),content.readAnnouncement(editor,id).get("body"));
+        assertEquals(true,content.confirmAnnouncementRead(editor,id).get("viewed"));
         assertEquals(id,items(content.announcements(editor,history,false)).getFirst().get("id"));
+        assertEquals(2L,content.announcementReadership(editor,id,Map.of(),true).get("readCount"));
 
         db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());
         assertEquals(0L,content.announcements(employee,history,false).get("total"));
@@ -251,6 +297,61 @@ class PortalIntegrationTest {
         assertEquals(0L,content.announcements(employee,expired,false).get("total"));
         assertEquals(0L,content.announcements(employee,history,false).get("total"));
         status(404,()->content.announcement(employee,id,false));
+        assertEquals(2L,content.announcementReadership(editor,id,Map.of(),true).get("readCount"));
+    }
+    /** 代为发布和撤回不会转移归属；卸任发起人仍能核对本人公告的确认名单。 */
+    @Test void creatorCanTrackDelegatedPublicationOutsideAudienceAfterLosingRole(){
+        var body=announcementBody();
+        body.put("departmentIds",List.of(otherDepartment.toString()));
+        body.put("state","DRAFT");
+        UUID id=(UUID)create(body).get("id");
+        var mine=Map.of("view","CREATED","keyword",body.get("title").toString());
+        assertEquals(true,items(content.announcements(editor,mine,false)).getFirst().get("isCreator"));
+        assertEquals(0L,content.announcements(other,mine,false).get("total"));
+        assertEquals(false,content.announcement(editor,id,false).get("canConfirmRead"));
+        status(404,()->content.announcementReadership(editor,id,Map.of(),false));
+
+        db.update("UPDATE iam.user_role SET valid_until=CURRENT_TIMESTAMP WHERE user_id=? AND role_code='CONTENT_EDITOR'",editor.userId());
+        Actor creator=login(editor.user().get("employeeNo").toString(),passwords.get(editor.userId()));
+        status(403,()->content.announcement(creator,id,true));
+        body.put("state","PUBLISHED");
+        var published=save(context(admin,"PORTAL_ANNOUNCEMENT",id,"SAVE_ANNOUNCEMENT",1),id,body);
+        assertEquals(admin.user().get("name"),published.get("publisherName"));
+        assertEquals(false,published.get("isCreator"));
+        assertEquals(true,content.announcement(creator,id,false).get("isCreator"));
+        assertEquals(false,content.announcement(other,id,false).get("isCreator"));
+        status(404,()->content.confirmAnnouncementRead(creator,id));
+        status(404,()->content.announcementReadership(other,id,Map.of(),false));
+        assertEquals(1L,content.announcementReadership(creator,id,Map.of(),false).get("unreadCount"));
+        content.confirmAnnouncementRead(other,id);
+        body.put("state","WITHDRAWN");
+        save(context(admin,"PORTAL_ANNOUNCEMENT",id,"SAVE_ANNOUNCEMENT",2),id,body);
+        assertEquals(id,items(content.announcements(creator,mine,false)).getFirst().get("id"));
+        assertEquals("WITHDRAWN",content.announcement(creator,id,false).get("state"));
+        assertEquals(1L,content.announcementReadership(creator,id,Map.of(),false).get("readCount"));
+        status(404,()->content.announcement(other,id,false));
+    }
+
+    /** 旧客户端打开正文、员工预览和明确确认经过真实 HTTP 路由验证。 */
+    @Test void onlyExplicitReadConfirmationMarksEmployeeAsRead() throws Exception {
+        UUID id=(UUID)create(announcementBody()).get("id");
+        var client=HttpClient.newHttpClient();
+        String base="http://127.0.0.1:"+port+"/api/v1/portal/announcements/"+id;
+        String token=portalSession(employee);
+        var reader=identity.authenticate(token);
+        for(String suffix:List.of("","/read","/confirm-read","/confirm-read")){
+            var request=HttpRequest.newBuilder(URI.create(base+suffix)).header("Cookie","IMS_SESSION="+token);
+            if(suffix.isEmpty())request.GET();
+            else request.header("X-CSRF-Token",reader.csrfToken()).POST(HttpRequest.BodyPublishers.noBody());
+            var response=client.send(request.build(),HttpResponse.BodyHandlers.ofString());
+            assertEquals(200,response.statusCode());
+            boolean confirmed=suffix.equals("/confirm-read");
+            assertEquals(confirmed,Crypto.JSON.readTree(response.body()).path("data").path("viewed").asBoolean());
+            var detail=content.announcement(employee,id,false);
+            assertEquals(confirmed,detail.get("viewed"));
+            assertEquals(!confirmed,detail.get("canConfirmRead"));
+            assertEquals(confirmed?1L:0L,content.announcementReadership(editor,id,Map.of(),false).get("readCount"));
+        }
     }
     @Test void listFiltersApplyBeforePaginationAndPreserveDepartmentVisibility() {
         var body=announcementBody();
@@ -274,7 +375,22 @@ class PortalIntegrationTest {
         filters.put("publishedFrom",LocalDate.parse(today).plusDays(1).toString());
         status(400,()->content.announcements(employee,filters,false));
     }
-    @Test void companyAnnouncementVisibleAcrossDepartments(){var body=announcementBody();body.put("scope","COMPANY");body.put("departmentIds",List.of());UUID id=(UUID)create(body).get("id");assertEquals(id,content.announcement(other,id,false).get("id"));}
+    @Test void companyAnnouncementCountsActiveEmployeesAcrossDepartments() {
+        var body=announcementBody();
+        body.put("scope","COMPANY");
+        body.put("departmentIds",List.of());
+        UUID id=(UUID)create(body).get("id");
+        content.confirmAnnouncementRead(employee,id);
+        content.confirmAnnouncementRead(other,id);
+        content.confirmAnnouncementRead(admin,id);
+        var filter=Map.of("status","READ");
+        var read=content.announcementReadership(editor,id,filter,true);
+        assertEquals(2L,read.get("total"));
+        assertEquals(Set.of(employee.user().get("employeeNo"),other.user().get("employeeNo")),
+                Set.copyOf(items(read).stream().map(row->row.get("employeeNo")).toList()));
+        db.update("UPDATE iam.user_account SET status='DISABLED' WHERE id=?",other.userId());
+        assertEquals(1L,content.announcementReadership(editor,id,filter,true).get("total"));
+    }
     /** 草稿、未到生效时间和撤下公告不能从任何员工页签或详情打开。 */
     @Test void unpublishedAnnouncementsAreHiddenFromEmployeeHistory() {
         for(String scenario:List.of("DRAFT","SCHEDULED","WITHDRAWN")){
@@ -287,6 +403,7 @@ class PortalIntegrationTest {
                 assertEquals(0L,content.announcements(employee,Map.of("view",view,"keyword",body.get("title").toString()),false).get("total"));
             status(404,()->content.announcement(employee,id,false));
             assertEquals(id,content.announcement(editor,id,true).get("id"));
+            status(404,()->content.announcementReadership(editor,id,Map.of(),true));
         }
     }
     @Test void departmentChangeImmediatelyRemovesFormerScope(){UUID id=(UUID)create(announcementBody()).get("id");db.update("UPDATE iam.user_account SET department_id=? WHERE id=?",otherDepartment,employee.userId());status(404,()->content.announcement(employee,id,false));}
@@ -374,23 +491,75 @@ class PortalIntegrationTest {
 
         String original = "/portal/feedback/" + id + "/images/" + id + "/" + key;
         String response = "/portal/feedback/" + id + "/images/" + reply.get("id") + "/" + key;
-        var employeeImage = getFeedbackImage(employee, original);
+        var employeeImage = getImage(employee, original);
         assertEquals(200,employeeImage.statusCode());
         assertEquals("image/png",employeeImage.headers().firstValue("Content-Type").orElseThrow());
         assertEquals("no-store",employeeImage.headers().firstValue("Cache-Control").orElseThrow());
         assertEquals(2,ImageIO.read(new java.io.ByteArrayInputStream(employeeImage.body())).getWidth());
-        assertEquals(200,getFeedbackImage(admin,original).statusCode());
-        assertEquals(200,getFeedbackImage(employee,response).statusCode());
-        assertEquals(404,getFeedbackImage(other,original).statusCode());
-        assertEquals(404,getFeedbackImage(editor,response).statusCode());
+        assertEquals(200,getImage(admin,original).statusCode());
+        assertEquals(200,getImage(employee,response).statusCode());
+        assertEquals(404,getImage(other,original).statusCode());
+        assertEquals(404,getImage(editor,response).statusCode());
     }
 
-    /** 图片 GET 使用真实会话，覆盖办结答复的员工读取权限。 */
-    private HttpResponse<byte[]> getFeedbackImage(Actor actor,String path) throws Exception {
-        var token = identity.login(Sql.map("employeeNo",actor.user().get("employeeNo"),"password",passwords.get(actor.userId())),
-                UUID.randomUUID(),"feedback-image-test-"+UUID.randomUUID()).get("token");
+    @Test void markdownAnnouncementKeepsSourceAndScopesImagesAcrossEdits() throws Exception {
+        UUID key=UUID.randomUUID();
+        var png=new ByteArrayOutputStream();
+        ImageIO.write(new BufferedImage(3,2,BufferedImage.TYPE_INT_RGB),"png",png);
+        var body=announcementBody();
+        String source="    第一段缩进\n\n## 标题\n\n![示例](inline-image/"+key+")  \n";
+        body.put("body",source);
+        body.put("state","DRAFT");
+        body.put("contentFormat","MARKDOWN");
+        body.put("images",List.of(Sql.map("id",key.toString(),"data",Base64.getEncoder().encodeToString(png.toByteArray()))));
+        var saved=create(body);
+        UUID id=(UUID)saved.get("id");
+        String employeeImage="/portal/announcements/"+id+"/images/"+key;
+        String editorImage="/admin"+employeeImage;
+        assertEquals("MARKDOWN",saved.get("contentFormat"));
+        assertEquals(source,saved.get("body"));
+        assertEquals(List.of(key),saved.get("imageKeys"));
+        assertEquals(200,getImage(editor,editorImage).statusCode());
+        assertEquals(404,getImage(employee,employeeImage).statusCode());
+        assertEquals(403,getImage(employee,editorImage).statusCode());
+
+        body.remove("images");
+        body.put("state","PUBLISHED");
+        body.put("imageKeys",List.of(key.toString()));
+        save(context(editor,"PORTAL_ANNOUNCEMENT",id,"SAVE_ANNOUNCEMENT",1),id,body);
+        assertEquals(source,content.announcement(employee,id,false).get("body"));
+        var image=getImage(employee,employeeImage);
+        assertEquals("image/png",image.headers().firstValue("Content-Type").orElseThrow());
+        assertEquals(3,ImageIO.read(new java.io.ByteArrayInputStream(image.body())).getWidth());
+        assertEquals(404,getImage(other,employeeImage).statusCode());
+
+        body.put("imageKeys",List.of(UUID.randomUUID().toString()));
+        status(400,()->save(context(editor,"PORTAL_ANNOUNCEMENT",id,"SAVE_ANNOUNCEMENT",2),id,body));
+        assertEquals(List.of(key),content.announcement(employee,id,false).get("imageKeys"));
+        body.put("imageKeys",List.of());
+        body.put("body","删除示例图片。");
+        save(context(editor,"PORTAL_ANNOUNCEMENT",id,"SAVE_ANNOUNCEMENT",2),id,body);
+        assertEquals(404,getImage(employee,employeeImage).statusCode());
+        assertEquals(404,getImage(editor,editorImage).statusCode());
+        assertEquals(key.toString(),db.required("SELECT snapshot->'imageKeys'->>0 AS key FROM portal.announcement_revision WHERE announcement_id=? AND version=2",id).get("key"));
+    }
+
+    @Test void earlierAnnouncementClientsPreserveLegacyPlainAndRichText() {
+        var body=announcementBody();
+        for(String legacy:List.of("旧公告第一行。\n*第二行*","<p><strong>旧版富文本</strong></p>")){
+            body.put("body",legacy);
+            var saved=create(body);
+            var visible=content.announcement(employee,(UUID)saved.get("id"),false);
+            assertEquals("LEGACY",visible.get("contentFormat"));
+            assertEquals(legacy,visible.get("body"));
+            assertEquals(List.of(),visible.get("imageKeys"));
+        }
+    }
+
+    /** 图片 GET 使用真实会话，核对页面及管理入口各自的可见范围。 */
+    private HttpResponse<byte[]> getImage(Actor actor,String path) throws Exception {
         var request = HttpRequest.newBuilder(URI.create("http://127.0.0.1:"+port+"/api/v1"+path))
-                .header("Cookie","IMS_SESSION="+token).GET().build();
+                .header("Cookie","IMS_SESSION="+sessionTokens.get(actor.userId())).GET().build();
         return HttpClient.newHttpClient().send(request,HttpResponse.BodyHandlers.ofByteArray());
     }
 

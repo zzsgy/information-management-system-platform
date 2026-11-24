@@ -12,10 +12,21 @@ export interface Announcement {
   publisherDepartment: string | null;
   publishedAt: string | null;
   rowVersion: number;
-  /** 工作台公告中当前账号是否打开过正文。 */
+  /** 按首次创建者识别，代为发布或编辑不改变归属。 */
+  isCreator: boolean;
+  /** 阅读状态沿用历史记录，新记录由员工在详情弹窗中确认。 */
   viewed?: boolean;
+  /** 接口仅对当前受众中尚未确认的员工返回 true。 */
+  canConfirmRead?: boolean;
   body?: string;
+  /** 详情保留历史正文格式，Markdown 图片按公告的可见范围读取。 */
+  contentFormat?: "LEGACY" | "MARKDOWN";
+  imageKeys?: string[];
   departmentIds?: string[];
+}
+/** 已对员工开放的公告可以追溯阅读情况，包括到期或撤下的公告。 */
+export function hasReadership(item: Announcement) {
+  return !!item.publishedAt && item.state !== "DRAFT" && Date.parse(item.validFrom) <= Date.now();
 }
 /** 管理中心和工作台共用网站分组名称。 */
 export const siteCategories = {
