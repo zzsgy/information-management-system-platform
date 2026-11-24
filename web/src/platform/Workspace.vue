@@ -33,7 +33,7 @@ function markRead(id: string) {
   if (row) row.viewed = true;
 }
 onDeactivated(() => { readerId.value = ""; });
-/** 按已配置的网站域名匹配内置图标，其他网站保留名称首字。 */
+/** 按已配置的网站域名匹配内置标识。 */
 const siteShortcuts = computed(() =>
   sites.value
     .filter((site) => site.category === "QUICK_LINK")
@@ -210,9 +210,9 @@ onActivated(async () => {
           />
         </section>
         <aside class="portal-home-side">
-          <section class="panel portal-panel">
+          <section class="panel portal-panel shortcut-panel" aria-labelledby="shortcut-title">
             <div class="portal-heading">
-              <h2>常用网站</h2>
+              <h2 id="shortcut-title">常用网站</h2>
             </div>
             <ul v-if="siteShortcuts.length" class="portal-site-grid">
               <li v-for="site in siteShortcuts" :key="site.id">
@@ -229,9 +229,10 @@ onActivated(async () => {
                     >
                       <img :src="site.icon" alt="" />
                     </span>
-                    <span v-else>{{ site.name.slice(0, 1) }}</span>
+                    <Icon v-else name="globe" :size="16" />
                   </span>
                   <strong>{{ site.name }}</strong>
+                  <Icon class="shortcut-external" name="external" :size="13" />
                 </a>
               </li>
             </ul>
@@ -242,20 +243,23 @@ onActivated(async () => {
               aria-labelledby="office-sites-title"
             >
               <h3 id="office-sites-title">办公工具</h3>
-              <details v-for="group in officeSiteGroups" :key="group.category">
-                <summary>
-                  <span>{{ group.name }}</span>
-                  <Icon name="chevron" :size="16" />
-                </summary>
-                <ul>
-                  <li v-for="site in group.sites" :key="site.id">
-                    <a :href="site.url" target="_blank" rel="noopener noreferrer">
-                      <span>{{ site.name }}</span>
-                      <Icon name="external" :size="13" />
-                    </a>
-                  </li>
-                </ul>
-              </details>
+              <div class="office-site-groups">
+                <details v-for="group in officeSiteGroups" :key="group.category">
+                  <summary>
+                    <Icon :name="group.category === 'ONLINE_TOOL' ? 'grid' : 'download'" :size="16" />
+                    <span>{{ group.name }}</span>
+                    <Icon class="office-site-chevron" name="chevron" :size="13" />
+                  </summary>
+                  <ul>
+                    <li v-for="site in group.sites" :key="site.id">
+                      <a :href="site.url" target="_blank" rel="noopener noreferrer">
+                        <span>{{ site.name }}</span>
+                        <Icon name="external" :size="13" />
+                      </a>
+                    </li>
+                  </ul>
+                </details>
+              </div>
             </section>
           </section>
         </aside>
@@ -442,41 +446,117 @@ onActivated(async () => {
   .portal-applications .application-trailing { display: none; }
 }
 
+.shortcut-panel {
+  container: shortcuts / inline-size;
+  padding: clamp(15px, 1.4vw, 20px);
+}
+.portal-site-grid {
+  display: flex;
+  flex-wrap: wrap;
+  --shortcut-gap: 8px;
+  gap: var(--shortcut-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.portal-site-grid > li {
+  flex: 1 1 min(100%, 9rem);
+  min-width: 0;
+}
+/* 右栏宽度会随视口和侧栏变化，按卡片实际宽度排布。 */
+@container shortcuts (min-width: 30rem) {
+  .portal-site-grid > li { flex-basis: calc((100% - 2 * var(--shortcut-gap)) / 3); }
+}
+@container shortcuts (min-width: 49rem) {
+  .portal-site-grid > li { flex-basis: calc((100% - 4 * var(--shortcut-gap)) / 5); }
+}
+.portal-site,
+.office-sites summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  min-height: max(44px, 2.75rem);
+  padding: 6px 9px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-control);
+  color: var(--ink);
+  font-size: 0.92rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.portal-site {
+  height: 100%;
+}
+.portal-site strong {
+  font-weight: 600;
+}
+.portal-site:hover,
+.office-sites summary:hover {
+  background: var(--surface-muted);
+  border-color: var(--brand);
+  color: var(--brand);
+}
+.shortcut-panel :is(a, summary):focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 2px;
+}
+.portal-site-icon {
+  display: grid;
+  place-items: center;
+  width: 1.75rem;
+  aspect-ratio: 1;
+  border-radius: 6px;
+  color: var(--brand);
+  background: var(--brand-soft);
+}
+.portal-site-icon img {
+  display: block;
+  max-width: none;
+  height: 1.15rem;
+}
+/* 横版企业标识仅在快捷入口展示左侧图形。 */
+.portal-site-brand-mark {
+  width: 0.92rem;
+  overflow: hidden;
+}
+.shortcut-external,
+.office-site-chevron {
+  color: var(--text-secondary);
+}
 .office-sites {
-  margin-top: 16px;
-  padding-top: 14px;
+  margin-top: 14px;
+  padding-top: 12px;
   border-top: 1px solid var(--line);
 }
 .office-sites h3 {
-  margin: 0 0 10px;
-  font-size: 14px;
+  margin: 0 0 8px;
+  color: var(--text-secondary);
+  font-size: 0.86rem;
+  font-weight: 600;
 }
-.office-sites details + details {
-  margin-top: 8px;
+.office-site-groups {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr));
+  align-items: start;
+  gap: 8px;
 }
 .office-sites summary {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  border-radius: 6px;
   background: var(--surface-muted);
   cursor: pointer;
-  font-size: 13px;
+}
+.office-sites summary > .p-icon:first-child {
+  color: var(--brand);
 }
 .office-sites summary::-webkit-details-marker {
   display: none;
 }
-.office-sites details[open] summary .p-icon {
+.office-sites details[open] .office-site-chevron {
   transform: rotate(90deg);
 }
 .office-sites ul {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(min(100%, 122px), 1fr));
-  gap: 2px 8px;
-  margin: 8px 0 0;
-  padding: 0;
+  margin: 4px 0 0;
+  padding: 4px 0 0;
   list-style: none;
 }
 .office-sites a {
