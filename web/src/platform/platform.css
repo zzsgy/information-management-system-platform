@@ -876,7 +876,9 @@ tbody tr:hover {
   background: var(--canvas);
 }
 .login-story {
-  color: var(--ink);
+  /* 固定使用原版深青色渐变，确保白色品牌标识在各主题下清晰。 */
+  background: radial-gradient(ellipse at 10% 90%, #145b65 0, #113e48 64%);
+  color: #f3f6ef;
   position: relative;
   overflow: hidden;
   padding: 48px 60px;
@@ -905,7 +907,7 @@ tbody tr:hover {
   width: 48px;
   height: 3px;
   margin-bottom: 28px;
-  background: var(--brand);
+  background: #7cc4b7;
 }
 .login-statement h1 {
   font-size: clamp(40px, 3.6vw, 72px);
@@ -914,10 +916,21 @@ tbody tr:hover {
   font-weight: 600;
   white-space: nowrap;
 }
+.login-tagline {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .2em 1.25em;
+  margin: clamp(8px, 1vw, 18px) 0 0;
+  color: #d1e8e5;
+  font-size: clamp(15px, 1.22vw, 23px);
+  line-height: 1.6;
+  letter-spacing: .09em;
+}
+.login-tagline span { white-space: nowrap; }
 .login-story > small {
   font-size: 10px;
   letter-spacing: 3px;
-  color: var(--text-secondary);
+  color: #bfd9d5;
 }
 .login-story::after {
   content: "";

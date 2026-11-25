@@ -53,7 +53,7 @@ body { background-color: var(--canvas); color: var(--ink); }
 }
 :root[data-theme="aurora"] :is(input, textarea)::placeholder { color: #91a7c1; }
 :root[data-theme="aurora"] .platform-shell :is(.topbar, .panel, .management-sidebar) { background: var(--surface); }
-:root[data-theme="aurora"] :is(.platform-shell .company-logo, .workspace-sidebar-logo img, .login-story .company-logo) { filter: brightness(0) invert(1); }
+:root[data-theme="aurora"] :is(.platform-shell .company-logo, .workspace-sidebar-logo img) { filter: brightness(0) invert(1); }
 :root[data-theme="aurora"] .platform-shell :is(.portal-account-link, .profile-button, .management-nav-group a) { color: var(--ink); }
 :root[data-theme="aurora"] .platform-shell :is(.management-nav-group h3, .directory-table small) { color: var(--text-secondary); }
 :root[data-theme="aurora"] .platform-shell .management-nav-group a.active { color: var(--brand); }

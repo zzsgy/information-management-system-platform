@@ -16,6 +16,8 @@ import {
 import Icon from "../preview/PlatformIcon.vue";
 /** 公司提供的原始透明 LOGO 随平台打包，登录前也可同源加载。 */
 import biolinkLogo from "./assets/biolink-logo.png";
+/** 登录页固定深色品牌区使用公司提供的白色标识。 */
+import biolinkLogoWhite from "./assets/biolink-logo-white.png";
 import {
   api,
   can,
@@ -553,13 +555,14 @@ onUnmounted(() => {
       <a class="brand" href="#/home"
         ><img
           class="company-logo"
-          :src="biolinkLogo"
+          :src="biolinkLogoWhite"
           alt="BIO-LINK 百林科"
           width="1229"
           height="375"
       /></a>
       <div class="login-statement">
         <h1>信息管理系统</h1>
+        <p class="login-tagline"><span>赋能生物技术</span> <span>通达无限可能</span></p>
       </div>
       <small>企业工作平台</small>
     </section>

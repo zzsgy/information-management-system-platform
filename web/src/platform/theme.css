@@ -750,16 +750,9 @@ html,
   color: var(--text-secondary);
 }
 
-/* 经典主题以品牌色过渡到页面底色；图片主题沿用首页的整幅背景。 */
-.login-story {
-  background: linear-gradient(145deg, var(--brand-soft), var(--surface) 82%);
-}
+/* 图片主题透过登录表单外围显示，左侧由品牌区自身绘制底色。 */
 @media screen {
   :root[data-wallpaper="true"] .login-layout { background: transparent; }
-  :root[data-wallpaper="true"] .login-story {
-    background: linear-gradient(105deg, color-mix(in srgb, var(--canvas) 55%, transparent), transparent 75%);
-  }
-  :root[data-wallpaper="true"] .login-story::after { display: none; }
 }
 .login-form-inner input {
   min-height: 46px;
