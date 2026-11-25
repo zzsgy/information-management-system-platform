@@ -8,8 +8,8 @@ import java.util.*;
 /** 账号自助与技术消息Service API；匿名接口只接收工号、流程号和凭据，不接受邮箱或操作者。 */
 @RestController @RequestMapping("/api/v1")
 public class AccountController {
-    private final AccountRecovery recovery;private final AccountMessages messages;private final Commands commands;private final Sql db;
-    public AccountController(AccountRecovery recovery,AccountMessages messages,Commands commands,Sql db){this.recovery=recovery;this.messages=messages;this.commands=commands;this.db=db;}
+    private final AccountRecovery recovery;private final AccountMessages messages;private final Commands commands;private final DirectoryService directory;private final Sql db;
+    public AccountController(AccountRecovery recovery,AccountMessages messages,Commands commands,DirectoryService directory,Sql db){this.recovery=recovery;this.messages=messages;this.commands=commands;this.directory=directory;this.db=db;}
     /** 发码与重发统一返回已受理，不泄露账号状态或完整邮箱。 */
     @PostMapping("/auth/password-recovery") public Map<String,Object> request(@RequestBody Map<String,Object> body,HttpServletRequest r){return ok(recovery.request(body,r.getRemoteAddr(),ApiController.requestId(r)),r);}
     /** 验证成功仅设置密码，不建立匿名浏览器登录；员工必须重新登录。 */
@@ -27,8 +27,17 @@ public class AccountController {
             },()->recovery.resetPending(ctx,filters),recovery::pendingResetReceipt),r);
     }
 
-    /** 本人中心返回真实部门和当前角色，基础身份仍由IT维护。 */
-    @GetMapping("/auth/profile") public Map<String,Object> profile(HttpServletRequest r){Actor actor=actor(r);var result=new LinkedHashMap<>(actor.profile());result.put("departmentName",db.required("SELECT name FROM iam.department WHERE id=?",actor.user().get("departmentId")).get("name"));return ok(result,r);}
+    /** 本人资料只读接口，基础身份和当前角色沿用现有投影。 */
+    @GetMapping("/auth/profile")
+    public Map<String,Object> profile(HttpServletRequest r) {
+        return ok(directory.ownProfile(actor(r)),r);
+    }
+
+    /** 登录员工可修改或清空本人手机号；其它字段和失效会话均拒绝。 */
+    @PatchMapping("/auth/profile")
+    public Map<String,Object> updateMobile(@RequestBody Map<String,Object> body,HttpServletRequest r) {
+        return ok(directory.updateOwnMobile(actor(r),body,ApiController.requestId(r)),r);
+    }
     /** IT查看受限技术状态，禁止读取凭据明文或邮箱服务秘密。 */
     @GetMapping("/admin/account-messages") public Map<String,Object> queue(@RequestParam Map<String,String> query,HttpServletRequest r){return ok(messages.queue(actor(r),query),r);}
     /** 明确核对原因后重试，稳定操作号避免重复领取；口令到期后不得重新发送。 */

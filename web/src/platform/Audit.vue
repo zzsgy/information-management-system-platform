@@ -71,6 +71,7 @@ const names: Record<string, string> = {
   ROLE_PERMISSIONS: "调整角色权限",
   REAUTH: "本人身份验证",
   PASSWORD_CHANGE: "修改密码",
+  UPDATE_OWN_MOBILE: "修改本人手机号",
   REVOKE_SESSION: "结束登录",
   PERMISSION_DENIED: "无权操作",
   CSRF_INVALID: "请求验证失败",

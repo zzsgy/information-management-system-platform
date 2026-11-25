@@ -149,6 +149,7 @@ final class AuditOperationLabels {
     private static final Map<String,String> ACTIONS = Map.ofEntries(
         Map.entry("POST /auth/logout", "退出登录"),
         Map.entry("POST /auth/reauthentications", "验证本人身份"),
+        Map.entry("PATCH /auth/profile", "修改本人手机号"),
         Map.entry("POST /auth/password-recovery", "申请密码找回"),
         Map.entry("POST /auth/password-recovery/complete", "通过验证码重置密码"),
         Map.entry("POST /admin/users", "新增员工账号"),

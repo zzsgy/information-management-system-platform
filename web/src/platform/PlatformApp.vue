@@ -2,6 +2,7 @@
 import { trackInteractions } from "./interaction";
 
 import PasswordRecovery from "./PasswordRecovery.vue";
+import AccountProfileDialog from "./AccountProfileDialog.vue";
 import MessageService from "./MessageService.vue";
 import {
   computed,
@@ -97,8 +98,7 @@ const initialImportType = computed(
   () => new URLSearchParams(route.value.split("?")[1]).get("type") ?? undefined,
 );
 /** 登录、首次设密与页面恢复状态分别管理。 */
-const recoveryMode = ref(false),
-  departmentName = ref("");
+const recoveryMode = ref(false);
 const loading = ref(true),
   busy = ref(false),
   error = ref(""),
@@ -113,11 +113,8 @@ const verificationDialog = ref<HTMLDialogElement | null>(null),
   verifyTitle = ref("");
 const verifyOptions = ref<PasswordPromptOptions>({});
 let verifyResolve: ((value: string | null) => void) | null = null;
-/** 本人改密对话框独立于管理再验证，不复用口令值。 */
-const accountDialog = ref<HTMLDialogElement | null>(null),
-  currentPassword = ref(""),
-  newPassword = ref(""),
-  accountError = ref("");
+/** 个人信息弹窗集中处理本人资料、手机号和改密。 */
+const accountDialog = ref<InstanceType<typeof AccountProfileDialog> | null>(null);
 /** 平台 IT 任职独立于公盘及档案模块角色。 */
 const systemAdministrator = computed(
   () =>
@@ -473,41 +470,6 @@ async function signOut() {
     inform((failure as Error).message);
   }
 }
-/** 打开时读取当前本人部门，显示信息不依赖管理员组织列表权限。 */
-async function openAccount() {
-  accountError.value = "";
-  departmentName.value = "";
-  accountDialog.value?.showModal();
-  try {
-    const data = await api<{ departmentName: string }>("/auth/profile");
-    departmentName.value = data.departmentName;
-  } catch (failure) {
-    accountError.value = (failure as Error).message;
-  }
-}
-/** 本人修改密码后重新登录，口令不会存入浏览器存储。 */
-async function changePassword() {
-  busy.value = true;
-  accountError.value = "";
-  try {
-    await api("/auth/password", {
-      method: "PUT",
-      body: JSON.stringify({
-        currentPassword: currentPassword.value,
-        newPassword: newPassword.value,
-      }),
-    });
-    accountDialog.value?.close();
-    setProfile(null);
-    inform("密码已修改，请重新登录");
-  } catch (failure) {
-    accountError.value = (failure as Error).message;
-  } finally {
-    busy.value = false;
-    currentPassword.value = "";
-    newPassword.value = "";
-  }
-}
 /** 路由变更只影响呈现，不修改会话或权限。 */
 function onHash() {
   route.value = location.hash.slice(2) || "home";
@@ -728,7 +690,7 @@ onUnmounted(() => {
           >意见反馈</a>
         </div>
         <div class="account-session">
-          <button class="profile-button" :aria-label="'个人账号：' + profile.user.name" @click="openAccount()">
+          <button class="profile-button" :aria-label="'个人信息 · ' + profile.user.name" aria-haspopup="dialog" @click="accountDialog?.open()">
             <span class="avatar" aria-hidden="true">{{ profile.user.name.slice(-1) }}</span>
             <span>{{ profile.user.name }}</span>
           </button>
@@ -968,71 +930,5 @@ onUnmounted(() => {
       </footer>
     </form>
   </dialog>
-  <dialog
-    ref="accountDialog"
-    aria-labelledby="account-dialog-title"
-    class="form-dialog flow-dialog flow-dialog-compact"
-    @close="
-      currentPassword = '';
-      newPassword = '';
-    "
-  >
-    <form class="flow-dialog-shell" @submit.prevent="changePassword">
-      <header class="flow-dialog-header">
-        <span class="flow-dialog-icon"><Icon name="user" :size="22" /></span>
-        <h2 id="account-dialog-title">个人账号</h2>
-        <button
-          type="button"
-          class="icon-button"
-          aria-label="关闭个人账号"
-          @click="accountDialog?.close()"
-        >
-          ×
-        </button>
-      </header>
-      <div class="flow-dialog-body">
-        <section class="flow-dialog-overview">
-          <h3>账号信息</h3>
-          <p class="muted">
-            {{ profile?.user.name }} · {{ profile?.user.employeeNo }}
-          </p>
-          <p class="account-email">{{ profile?.user.companyEmail }}</p>
-          <p class="muted">所属部门：{{ departmentName || "—" }}</p>
-          <p class="muted">
-            当前角色：{{
-              profile?.roles.map((role) => role.name).join("、") ||
-              "未分配业务角色"
-            }}
-          </p>
-        </section>
-        <section class="flow-dialog-section">
-          <h3>修改密码</h3>
-          <label class="flow-inline-field"
-            >当前密码<input
-              v-model="currentPassword"
-              type="password"
-              autocomplete="current-password"
-              required /></label
-          ><label class="flow-inline-field"
-            >新密码<input
-              v-model="newPassword"
-              type="password"
-              autocomplete="new-password"
-              minlength="8"
-              pattern="(?=.*[A-Za-z])(?=.*[0-9]).{8,}"
-              title="至少8位，同时包含英文字母和数字"
-              required
-          /></label>
-        </section>
-        <p v-if="accountError" class="form-error" role="alert">
-          {{ accountError }}
-        </p>
-      </div>
-      <footer class="flow-dialog-footer">
-        <button type="button" class="secondary" @click="accountDialog?.close()">
-          取消</button
-        ><button class="primary" :disabled="busy">修改密码</button>
-      </footer>
-    </form>
-  </dialog>
+  <AccountProfileDialog v-if="profile && !profile.user.passwordSetupRequired" ref="accountDialog" />
 </template>

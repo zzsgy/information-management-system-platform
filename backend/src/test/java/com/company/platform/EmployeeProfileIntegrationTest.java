@@ -45,6 +45,57 @@ class EmployeeProfileIntegrationTest {
     private Commands.Context context(Actor operator,String password,UUID target,int version){var proof=identity.reauthenticate(operator,Sql.map("password",password,"purpose","MANAGE","objectIds",List.of(target),"scopeItems",List.of(Sql.map("objectType","USER","objectId",target,"actions",List.of("UPDATE_USER")))),UUID.randomUUID());return new Commands.Context(operator,UUID.randomUUID(),UUID.randomUUID(),"PATCH profile "+target,(String)proof.get("verificationToken"),version);}
     private Commands.Context context(int version){return context(admin,System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"),employee,version);}
     private Map<String,Object> save(Commands.Context ctx,UUID target,Map<String,Object> body){return commands.run(ctx,body,"USER",target,"UPDATE_USER",()->ctx.actor().require("PLATFORM.USERS_MANAGE"),()->directory.updateUser(ctx,target,body),directory::user);}
+    /** 员工只能读取自己的名片并保存自己的手机号，管理字段和过期会话均拒绝。 */
+    @Test void employeesReadTheirProfileAndEditOnlyTheirMobile() {
+        UUID supervisor=person();
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?","合成主管",supervisor);
+        db.update("""
+                UPDATE iam.user_account SET organization_name=?,job_title=?,supervisor_id=?,mobile_phone=? WHERE id=?
+                ""","合成公司","档案专员",supervisor,"+86 13800000000",employee);
+        Actor self=login(employee.toString(),PASSWORD);
+        var request=new org.springframework.mock.web.MockHttpServletRequest("GET","/api/v1/auth/profile");
+        request.setAttribute(HttpBoundary.ACTOR,self);
+        UUID requestId=UUID.randomUUID();
+        request.setAttribute(HttpBoundary.REQUEST,requestId);
+        var data=(Map<?,?>)accounts.profile(request).get("data");
+        assertEquals(employee,((Map<?,?>)data.get("user")).get("id"));
+        assertEquals("合成公司",data.get("organizationName"));
+        assertEquals("档案专员",data.get("jobTitle"));
+        assertEquals("合成主管",data.get("supervisorName"));
+        assertEquals("+86 13800000000",data.get("mobilePhone"));
+        assertEquals(db.required("SELECT name FROM iam.department WHERE id=?",self.user().get("departmentId")).get("name"),data.get("departmentName"));
+        assertFalse(((Map<?,?>)data.get("user")).containsKey("passwordHash"));
+
+        request.setMethod("PATCH");
+        assertEquals(400,assertThrows(ApiFault.class,()->accounts.updateMobile(Sql.map("mobilePhone","not-a-number"),request)).status);
+        assertEquals(400,assertThrows(ApiFault.class,()->accounts.updateMobile(Sql.map("mobilePhone","13900000000","userId",supervisor),request)).status);
+        assertEquals(400,assertThrows(ApiFault.class,()->accounts.updateMobile(Map.of(),request)).status);
+        String changed="+86-13900000000";
+        accounts.updateMobile(Sql.map("mobilePhone",changed),request);
+        accounts.updateMobile(Sql.map("mobilePhone",changed),request);
+        var saved=db.required("SELECT mobile_phone,job_title,supervisor_id,row_version FROM iam.user_account WHERE id=?",employee);
+        assertEquals(changed,saved.get("mobile_phone"));
+        assertEquals("档案专员",saved.get("job_title"));
+        assertEquals(supervisor,saved.get("supervisor_id"));
+        assertEquals(2,saved.get("row_version"));
+        assertNull(db.required("SELECT mobile_phone FROM iam.user_account WHERE id=?",supervisor).get("mobile_phone"));
+        assertEquals(1L,db.count("""
+                SELECT count(*) FROM ops.audit_event WHERE request_id=? AND action='UPDATE_OWN_MOBILE'
+                  AND actor_id=? AND resource_id=?
+                """,requestId,employee,employee));
+        assertEquals(self.sessionId(),identity.background(self.sessionId()).sessionId());
+
+        accounts.updateMobile(Sql.map("mobilePhone",null),request);
+        assertNull(((Map<?,?>)accounts.profile(request).get("data")).get("mobilePhone"));
+        login(employee.toString(),PASSWORD);
+        assertEquals(401,assertThrows(ApiFault.class,()->accounts.updateMobile(Sql.map("mobilePhone",changed),request)).status);
+        var initial=createWithEmployeePassword();
+        String no=initial.get("employeeNo").toString();
+        request.setAttribute(HttpBoundary.ACTOR,login(no,no));
+        assertEquals(403,assertThrows(ApiFault.class,()->accounts.profile(request)).status);
+        assertEquals(403,assertThrows(ApiFault.class,()->accounts.updateMobile(Sql.map("mobilePhone",changed),request)).status);
+    }
+
     /** 新增与编辑共用名片资料，保留账号邮箱规则及历史兼容。 */
     @Test void directoryDetailsRoundTripAndCanBeCleared(){
         UUID target=ApiController.COLLECTION;

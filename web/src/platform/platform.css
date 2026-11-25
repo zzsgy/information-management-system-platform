@@ -841,11 +841,6 @@ tbody tr:hover {
   min-height: 0;
   accent-color: var(--green);
 }
-.account-email {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 8px;
-}
 .toast {
   position: fixed;
   left: 50%;

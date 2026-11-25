@@ -1,6 +1,7 @@
 package com.company.platform;
 
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import java.time.Instant;
 import java.util.*;
 
@@ -31,6 +32,39 @@ public class DirectoryService {
         this.delivery = delivery;
         this.audit = audit;
         this.continuity = continuity;
+    }
+
+    /** 个人资料固定按当前账号读取，直属主管只显示姓名。 */
+    public Map<String,Object> ownProfile(Actor actor) {
+        if (actor.setupRequired()) throw ApiFault.denied();
+        var details=db.required("""
+                SELECT u.organization_name,u.job_title,u.mobile_phone,d.name AS department_name,
+                       supervisor.name AS supervisor_name
+                FROM iam.user_account u
+                JOIN iam.department d ON d.id=u.department_id
+                LEFT JOIN iam.user_account supervisor ON supervisor.id=u.supervisor_id
+                WHERE u.id=?
+                """,actor.userId());
+        var result=new LinkedHashMap<>(actor.profile());
+        result.putAll(Sql.view(details,"organization_name,job_title,mobile_phone,department_name,supervisor_name"));
+        return result;
+    }
+
+    /** 本人只能改手机号，传 null 清空；行版本同步递增以保护正在编辑的管理表单。 */
+    @Transactional
+    public Map<String,Object> updateOwnMobile(Actor actor,Map<String,Object> body,UUID request) {
+        Inputs.only(body,"mobilePhone");
+        if (actor.setupRequired()) throw ApiFault.denied();
+        if (!body.containsKey("mobilePhone")) throw ApiFault.invalid("请提供手机号");
+        String mobile=body.get("mobilePhone")==null?null:Inputs.text(body,"mobilePhone",32);
+        if (mobile!=null) validateEmployeeMobile(mobile);
+        identity.lockActor(actor);
+        int updated=db.update("""
+                UPDATE iam.user_account SET mobile_phone=?,row_version=row_version+1,updated_at=CURRENT_TIMESTAMP
+                WHERE id=? AND mobile_phone IS DISTINCT FROM ?
+                """,mobile,actor.userId(),mobile);
+        if (updated>0) audit.event(actor.userId(),"PLATFORM","USER",actor.userId(),"UPDATE_OWN_MOBILE","SUCCEEDED",request);
+        return Sql.map("mobilePhone",mobile);
     }
 
     /** 员工列表只允许 IT 完整视图；模块管理员仅获取对应授权用途的最小选择对象。 */

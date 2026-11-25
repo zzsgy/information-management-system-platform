@@ -121,10 +121,10 @@ async function verify(p) {
     ).toBeVisible();
     const self = await get(admin, "/auth/me");
     await admin.locator(".profile-button").click();
-    await expect(
-      admin.getByText("所属部门：公司", { exact: true }),
-    ).toBeVisible();
-    await admin.getByRole("button", { name: "关闭个人账号" }).click();
+    const card = admin.getByRole("dialog", { name: "个人信息" });
+    await expect(card.getByText("公司", { exact: true })).toBeVisible();
+    await expect(card.getByText(self.user.companyEmail, { exact: true })).toBeVisible();
+    await card.getByRole("button", { name: "关闭个人信息" }).click();
     passed("个人中心显示真实部门、邮箱和角色");
     const user = await management(
       admin,
