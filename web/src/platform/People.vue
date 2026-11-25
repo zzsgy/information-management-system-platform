@@ -477,6 +477,7 @@ onMounted(async () => {
           <option value="">全部状态</option>
           <option value="ACTIVE">正常</option>
           <option value="DISABLED">已停用</option>
+          <option value="DEPARTED">已离职</option>
         </select></label
       ><label v-if="tab === 'users'" class="list-filter-field"
         >所属部门
@@ -527,9 +528,11 @@ onMounted(async () => {
             <td>
               <span
                 class="status-badge"
-                :class="{ inactive: user.status === 'DISABLED', pending: user.status === 'ACTIVE' && user.passwordSetupRequired }"
+                :class="{ inactive: user.status !== 'ACTIVE', pending: user.status === 'ACTIVE' && user.passwordSetupRequired }"
                 >{{
-                  user.status === "DISABLED"
+                  user.status === "DEPARTED"
+                    ? "已离职"
+                    : user.status === "DISABLED"
                     ? "已停用"
                     : user.passwordSetupRequired
                       ? "待设密"
@@ -550,9 +553,9 @@ onMounted(async () => {
               >
                 重置密码
               </button>
-              <button class="text-button" @click="openForm(user)">编辑</button
+              <button v-if="user.status !== 'DEPARTED'" class="text-button" @click="openForm(user)">编辑</button
               ><button
-                v-if="user.id !== profile?.user.id"
+                v-if="user.id !== profile?.user.id && user.status !== 'DEPARTED'"
                 class="text-button"
                 :class="{ danger: user.status === 'ACTIVE' }"
                 @click="

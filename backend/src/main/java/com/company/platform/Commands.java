@@ -42,7 +42,7 @@ public class Commands {
         Map<String,Object> result=mutation.get();
         UUID objectId=Inputs.uuid(result.containsKey("id")?result.get("id"):result.getOrDefault("objectId",target));
         // 补录及人员变更的回执指向新证据/交接记录，审计对象仍是实际被操作的节点、部门或员工。
-        UUID auditObject=Set.of("EVIDENCE_RECORD","REJECT_EVIDENCE","HANDOVER_ARCHIVIST","CHANGE_DEPARTMENT").contains(action)?target:objectId;
+        UUID auditObject=Set.of("EVIDENCE_RECORD","REJECT_EVIDENCE","HANDOVER_ARCHIVIST","CHANGE_DEPARTMENT","EMPLOYEE_DEPARTURE").contains(action)?target:objectId;
         // 角色变更由领域服务按实际模块分别留痕，避免档案配置记录落入平台日志可见范围。
         String module=Set.of("DRIVE_COLLECTION","FOLDER","DRIVE_GRANT","DRIVE_DELEGATION").contains(type)?"DRIVE":"PLATFORM";
         if(!Set.of("ASSIGN_ROLES","ROLE_PERMISSIONS").contains(action)) audit.event(ctx.actor().userId(),module,type,auditObject,action,"SUCCEEDED",ctx.request());

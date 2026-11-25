@@ -59,6 +59,7 @@ function search() {
 /** 凭据核验和人员交接独立按需加载，入口权限分别判断。 */
 const EvidenceDesk = defineAsyncComponent(() => import("./EvidenceDesk.vue"));
 const Personnel = defineAsyncComponent(() => import("./Personnel.vue"));
+const EmployeeDeparture = defineAsyncComponent(() => import("./EmployeeDeparture.vue"));
 /** 批量台账与扫描作业按权限独立加载，仅电脑端工作区。 */
 const Imports = defineAsyncComponent(() => import("./Imports.vue"));
 const Scanning = defineAsyncComponent(() => import("./Scanning.vue"));
@@ -186,6 +187,11 @@ const tabs = computed(() =>
       visible: can("PLATFORM.USERS_MANAGE") || can("ARCHIVE.CONFIG_MANAGE"),
     },
     {
+      code: "employee-departure",
+      name: "员工离职",
+      visible: systemAdministrator.value && can("PLATFORM.USERS_MANAGE"),
+    },
+    {
       code: "workflow",
       name: "流程中心",
       visible: can("ARCHIVE.ACCESS") || can("PLATFORM.DEPARTMENTS_MANAGE"),
@@ -246,7 +252,7 @@ const managementTabs = computed(() =>
 /** 管理功能固定分组，只保留本人有权使用的页面，空分组不占导航空间。 */
 const managementGroups = computed(() =>
   [
-    { name: "组织与配置", codes: ["people", "roles", "settings", "personnel"] },
+    { name: "组织与配置", codes: ["people", "roles", "settings", "personnel", "employee-departure"] },
     {
       name: "业务管理",
       codes: [
@@ -892,7 +898,9 @@ onUnmounted(() => {
           :key="route"
         /><Operations v-else-if="allowedRoute === 'operations'" /><EvidenceDesk
           v-else-if="allowedRoute === 'evidence'"
-        /><Personnel v-else-if="allowedRoute === 'personnel'" /><Settings
+        /><Personnel v-else-if="allowedRoute === 'personnel'" /><EmployeeDeparture
+          v-else-if="allowedRoute === 'employee-departure'"
+        /><Settings
           v-else-if="allowedRoute === 'settings'"
         /><OperationsConsole
           v-else-if="allowedRoute === 'operations-console'"

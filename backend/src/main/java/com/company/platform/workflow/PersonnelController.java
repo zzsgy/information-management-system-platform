@@ -10,7 +10,8 @@ import java.util.*;
 public class PersonnelController {
     /** 业务协调器保证任职、事项与审计同事务提交。 */
     private final PersonnelContinuity continuity;
-    public PersonnelController(PersonnelContinuity continuity){this.continuity=continuity;}
+    private final EmployeeDeparture departures;
+    public PersonnelController(PersonnelContinuity continuity,EmployeeDeparture departures){this.continuity=continuity;this.departures=departures;}
     /** 人员管理可选目标部门，不返回组织管理字段或关系配置。 */
     @GetMapping("/personnel-department-options") public Map<String,Object> departments(HttpServletRequest r){return ok(continuity.departmentOptions(actor(r)),r);}
     /** 最小候选资料；接任人需要在本部门有效任职资格，不能继承原人的个人授权。 */
@@ -25,6 +26,31 @@ public class PersonnelController {
     @GetMapping("/users/{id}/department-change-preview") public Map<String,Object> transferPreview(@PathVariable String id,HttpServletRequest r){return ok(continuity.transferPreview(actor(r),Inputs.uuid(id)),r);}
     /** 再验证绑定 USER / CHANGE_DEPARTMENT，并要求用户版本；旧个人授权和会话原子失效。 */
     @PostMapping("/users/{id}/department-changes") public Map<String,Object> transfer(@PathVariable String id,@RequestBody Map<String,Object> body,HttpServletRequest r){return ok(continuity.transfer(context(r),Inputs.uuid(id),body),r);}
+    /** 具名员工离职候选，按姓名或工号查询，并支持已临时停用的员工。 */
+    @GetMapping("/employee-departures/candidates")
+    public Map<String,Object> departureCandidates(@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(departures.candidates(actor(r),query),r);
+    }
+    /** 核对撤权影响，提交时绑定该员工和账号版本。 */
+    @GetMapping("/users/{id}/departure-preview")
+    public Map<String,Object> departurePreview(@PathVariable UUID id,HttpServletRequest r){
+        return ok(departures.preview(actor(r),id),r);
+    }
+    /** 以本人再验证凭据提交员工离职，成功后返回独立归档编号。 */
+    @PostMapping("/users/{id}/departure")
+    public Map<String,Object> depart(@PathVariable UUID id,@RequestBody Map<String,Object> body,HttpServletRequest r){
+        return ok(departures.depart(context(r),id,body),r);
+    }
+    /** 仅平台 IT 人员管理员可查询已生效的离职主档。 */
+    @GetMapping("/employee-departures")
+    public Map<String,Object> departureHistory(@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(departures.history(actor(r),query),r);
+    }
+    /** 分页读取指定员工独立保存的历史快照。 */
+    @GetMapping("/employee-departures/{id}/records")
+    public Map<String,Object> departureRecords(@PathVariable UUID id,@RequestParam Map<String,String> query,HttpServletRequest r){
+        return ok(departures.records(actor(r),id,query),r);
+    }
     /** 身份只来自 HTTPS 会话边界。 */
     private Actor actor(HttpServletRequest r){if(r.getAttribute(HttpBoundary.ACTOR) instanceof Actor a)return a;throw ApiFault.session();}
     /** 幂等操作号与预期版本阻止重复交接和覆盖他人的最新配置。 */

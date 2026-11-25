@@ -26,6 +26,11 @@ final class AuditOperationLabels {
         Map.entry("/admin/organization-duties", "组织审批职责"),
         Map.entry("/admin/organization-duties/candidates", "审批职责候选人"),
         Map.entry("/admin/personnel-department-options", "人员交接部门选项"),
+        Map.entry("/admin/employee-departures/candidates", "离职员工候选"),
+        Map.entry("/admin/users/{id}/departure-preview", "员工离职影响"),
+        Map.entry("/admin/users/{id}/departure", "员工离职办理"),
+        Map.entry("/admin/employee-departures", "离职档案列表"),
+        Map.entry("/admin/employee-departures/{id}/records", "离职历史记录"),
         Map.entry("/admin/archive/archivist-handover-options", "档案员交接人员"),
         Map.entry("/admin/workflow/assignment-events", "审批改派记录"),
         Map.entry("/admin/audit-events", "操作记录"),
@@ -194,6 +199,7 @@ final class AuditOperationLabels {
         Map.entry("CREATE_CATALOG_CHANGE", "发起档案目录更正"),
         Map.entry("SUBMIT_CATALOG_CHANGE", "送审档案更正事项"),
         Map.entry("DECIDE_STEP", "提交审批决定"),
+        Map.entry("EMPLOYEE_DEPARTURE", "办理员工离职"),
         Map.entry("DELIVER_PHYSICAL", "登记纸质档案交付"),
         Map.entry("REVIEW_PHYSICAL_RETURN", "复核纸质档案实收")
     );

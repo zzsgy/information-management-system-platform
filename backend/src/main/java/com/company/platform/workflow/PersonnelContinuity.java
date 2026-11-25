@@ -90,6 +90,7 @@ public class PersonnelContinuity {
     /** 同一事务处理部门、旧授权、在审申请和交接记录；身份代次由调用者在所有资料保存后推进。 */
     private UUID moveDepartment(Commands.Context ctx,Map<String,Object> person,UUID target,String approval,String note,boolean retainCompanyRoles) {
         UUID user=(UUID)person.get("id");
+        if("DEPARTED".equals(person.get("status")))throw ApiFault.conflict("该员工已离职，不能办理转岗");
         if(target.equals(person.get("department_id")))throw ApiFault.invalid("新部门与当前部门相同");db.required("SELECT id FROM iam.department WHERE id=? AND status='ACTIVE'",target);
             var blockers=blockers(user);if(!blockers.isEmpty())throw ApiFault.conflict(String.join("；",blockers));
             // 先锁盒再锁流程，与纸质交付和决定保持同序，原实物借出不撤销。

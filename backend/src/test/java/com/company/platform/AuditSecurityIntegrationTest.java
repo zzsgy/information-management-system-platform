@@ -1,5 +1,6 @@
 package com.company.platform;
 
+import com.company.platform.workflow.EmployeeDeparture;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -20,6 +21,7 @@ class AuditSecurityIntegrationTest {
     /** 在连接前限制专用端口与随机开发库名，不复用旧预览或正式库。 */
     @DynamicPropertySource static void guard(DynamicPropertyRegistry registry){String url=System.getenv("IMS_PLATFORM_DB_URL");if(url==null||!url.matches("jdbc:postgresql://127\\.0\\.0\\.1:(55464|55476)/ims_platform_dev_[0-9]+"))throw new IllegalStateException("仅允许审计专项隔离库");}
     @Autowired com.company.platform.operations.AccountMessages messages;@Autowired Sql db;@Autowired Audit audit;@Autowired AuditSecurity security;@Autowired IdentityService identity;@Autowired Commands commands;@Autowired PlatformTransactionManager manager;
+    @Autowired EmployeeDeparture departures;
     private Actor admin,employee,clerk,other;private UUID department,otherDepartment;private final Map<UUID,String> passwords=new HashMap<>();
     @BeforeEach void setup(){admin=login(System.getenv("IMS_PLATFORM_ADMIN_NO"),System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"));passwords.put(admin.userId(),System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"));department=department();otherDepartment=department();employee=employee(department);clerk=employee(department);other=employee(otherDepartment);assign(clerk.userId(),"ARCHIVE","DEPARTMENT_ARCHIVIST",department);clerk=identity.background(clerk.sessionId());}
     private UUID department(){UUID id=UUID.randomUUID();db.update("INSERT INTO iam.department(id,code,name) VALUES(?,?,?)",id,"A"+id.toString().substring(0,7).toUpperCase(Locale.ROOT),"审计隔离部门");return id;}
@@ -177,6 +179,33 @@ class AuditSecurityIntegrationTest {
         return usage;
     });}
     @Test void acceptedPrintCountsOnceAndApprovedFixedBatchIsExempt(){UUID single=exportFixture("PRINT",false),batch=exportFixture("PRINT",true);for(UUID id:List.of(single,batch))for(int i=0;i<2;i++)audit.event(employee.userId(),"ARCHIVE","USAGE",id,"PRINT_REQUESTED","SUCCEEDED",UUID.randomUUID());assertEquals(1,db.count("SELECT count(DISTINCT file_id) FROM ops.security_signal WHERE user_id=? AND kind='BULK_PRINT'",employee.userId()));assertEquals(0,db.count("SELECT count(*) FROM ops.security_signal WHERE user_id=? AND file_id IN(SELECT record_id FROM archive.export_item WHERE usage_id=?)",employee.userId(),batch));}
+    /** 档案批准链与公盘直接授权仍保留原记录，离职之后均被撤销并可查独立快照。 */
+    @Test void departureRevokesDriveAndArchiveGrantsWithoutRewritingResources() {
+        UUID usage = exportFixture("DOWNLOAD",false), folder = folder(department);
+        UUID archiveGrant = (UUID)db.required("SELECT grant_id FROM archive.export_item WHERE usage_id=?",usage).get("grant_id");
+        UUID delegation = UUID.randomUUID(), driveGrant = UUID.randomUUID();
+        db.update("""
+                INSERT INTO drive.delegation(id,department_id,folder_id,role_id,allowed_actions,created_by)
+                SELECT ?,?,?,id,'{UPLOAD}',? FROM iam.role WHERE module='DRIVE' AND code='DEPARTMENT_MANAGER'
+                """,delegation,department,folder,admin.userId());
+        db.update("""
+                INSERT INTO drive.resource_grant(id,subject_id,resource_type,resource_id,action,effect,delegation_id,granted_by)
+                VALUES(?,?,'FOLDER',?,'UPLOAD','ALLOW',?,?)
+                """,driveGrant,employee.userId(),folder,delegation,admin.userId());
+        UUID archive = (UUID)departures.depart(context(admin,"USER",employee.userId(),"EMPLOYEE_DEPARTURE",1),
+                employee.userId(),Map.of("reason","隔离撤权核对")).get("id");
+        assertEquals("REVOKED",db.required("SELECT state FROM archive.access_grant WHERE id=?",archiveGrant).get("state"));
+        assertEquals("REVOKED",db.required("SELECT state FROM drive.resource_grant WHERE id=?",driveGrant).get("state"));
+        assertEquals("ACTIVE",db.required("SELECT state FROM drive.folder WHERE id=?",folder).get("state"));
+        assertEquals("ACTIVE",db.required("SELECT state FROM drive.delegation WHERE id=?",delegation).get("state"));
+        assertEquals(2,db.count("""
+                SELECT count(*) FROM iam.employee_departure_record
+                WHERE departure_id=? AND source_id IN (?,?) AND snapshot->>'state'='ACTIVE'
+                """,archive,archiveGrant,driveGrant));
+        assertEquals(1,db.count("SELECT count(*) FROM archive.export_item WHERE usage_id=? AND grant_id=?",usage,archiveGrant));
+        assertThrows(org.springframework.dao.DataAccessException.class,()->db.update(
+                "DELETE FROM iam.employee_departure_record WHERE departure_id=?",archive));
+    }
     @Test void downloadAuthorizationDoesNotCountUntilOutputCompletes(){UUID id=exportFixture("DOWNLOAD",false);audit.event(employee.userId(),"ARCHIVE","USAGE",id,"DOWNLOAD_REQUESTED","SUCCEEDED",UUID.randomUUID());audit.event(employee.userId(),"ARCHIVE","USAGE",id,"EXPORT_DELIVERY_AUTHORIZED","SUCCEEDED",UUID.randomUUID());assertEquals(0,db.count("SELECT count(*) FROM ops.security_signal WHERE user_id=?",employee.userId()));audit.event(employee.userId(),"ARCHIVE","USAGE",id,"EXPORT_DELIVERED","SUCCEEDED",UUID.randomUUID());assertEquals(1,db.count("SELECT count(*) FROM ops.security_signal WHERE user_id=?",employee.userId()));}
     @Test void physicalItemScopeFollowsOwningBox(){UUID box=box(department,employee.userId()),physical=UUID.randomUUID();db.update("INSERT INTO archive.physical_item(id,box_id,object_type,barcode,location) VALUES(?,?,'BOX',?,'隔离位置')",physical,box,physical.toString());audit.event(admin.userId(),"ARCHIVE","PHYSICAL_ITEM",physical,"PHYSICAL_TEST","SUCCEEDED",UUID.randomUUID());var f=filters("ARCHIVE");f.put("resourceId",physical.toString());status(403,()->security.query(clerk,f,UUID.randomUUID()));assertEquals(1L,security.query(admin,f,UUID.randomUUID()).get("total"));}
 }

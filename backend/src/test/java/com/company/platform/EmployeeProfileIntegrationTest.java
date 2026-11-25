@@ -2,6 +2,7 @@ package com.company.platform;
 
 import com.company.platform.intake.ImportService;
 import com.company.platform.intake.ImportWorkbook;
+import com.company.platform.workflow.EmployeeDeparture;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -24,6 +25,8 @@ class EmployeeProfileIntegrationTest {
     @Autowired Commands commands;
     @Autowired AccountRecovery recovery;
     @Autowired ImportService imports;
+    @Autowired EmployeeDeparture departures;
+    @Autowired Audit audit;
     private Actor admin;
     private UUID employee;
     private static final String PASSWORD="isolated-profile-password";
@@ -120,6 +123,50 @@ class EmployeeProfileIntegrationTest {
     private Commands.Context credentialContext(String type,UUID id,String action,Integer version){
         var proof=identity.reauthenticate(admin,Sql.map("password",System.getenv("IMS_PLATFORM_ADMIN_PASSWORD"),"purpose","MANAGE","objectIds",List.of(id),"scopeItems",List.of(Sql.map("objectType",type,"objectId",id,"actions",List.of(action)))),UUID.randomUUID());
         return new Commands.Context(admin,UUID.randomUUID(),UUID.randomUUID(),"TEST "+action+" "+id,(String)proof.get("verificationToken"),version);
+    }
+    /** 办理离职后旧会话作废，源业务记录不改写，独立归档可按来源查询。 */
+    @Test void departureRevokesAccessAndPreservesIndependentHistory(){
+        role(employee,"PLATFORM","MEMBER",null);
+        role(employee,"ARCHIVE","STAFF",null);
+        Actor before=login(employee.toString(),PASSWORD);
+        UUID rolePermission=UUID.randomUUID(), todo=UUID.randomUUID(), request=UUID.randomUUID();
+        db.update("""
+                INSERT INTO iam.permission_assignment(id,user_id,permission_id,scope_type,effect,valid_from,granted_by)
+                SELECT ?,?,id,'COMPANY','DENY',CURRENT_TIMESTAMP,? FROM iam.permission WHERE code='ARCHIVE.ACCESS'
+                """,rolePermission,employee,admin.userId());
+        db.update("INSERT INTO portal.todo_desktop(user_id,token_hash,auth_version) VALUES(?,?,?)",
+                employee,Crypto.hash("departure-test-"+employee),before.authVersion());
+        db.update("""
+                INSERT INTO portal.employee_todo(id,creator_id,assignee_id,title,operation_id,request_digest)
+                VALUES(?,?,?,'隔离未办待办',?,?)
+                """,todo,admin.userId(),employee,UUID.randomUUID(),Crypto.hash(todo.toString()));
+        audit.event(employee,"PLATFORM","USER",employee,"DEPARTURE_FIXTURE","SUCCEEDED",request);
+        var body=Sql.map("reason","离职隔离验收");
+        var bad=credentialContext("USER",employee,"EMPLOYEE_DEPARTURE",99);
+        assertEquals(409,assertThrows(ApiFault.class,()->departures.depart(bad,employee,body)).status);
+        assertEquals(0,db.count("SELECT count(*) FROM iam.employee_departure WHERE user_id=?",employee));
+        assertNotNull(identity.background(before.sessionId()));
+
+        var ctx=credentialContext("USER",employee,"EMPLOYEE_DEPARTURE",1);
+        var archived=departures.depart(ctx,employee,body);
+        UUID id=(UUID)archived.get("id");
+        assertEquals(id,departures.depart(ctx,employee,body).get("id"));
+        assertEquals(1,db.count("SELECT count(*) FROM iam.employee_departure WHERE user_id=?",employee));
+        assertEquals("DEPARTED",directory.user(employee).get("status"));
+        assertEquals(0,db.count("SELECT count(*) FROM iam.user_role WHERE user_id=? AND state='ACTIVE'",employee));
+        assertEquals("REVOKED",db.required("SELECT state FROM iam.permission_assignment WHERE id=?",rolePermission).get("state"));
+        assertEquals(0,db.count("SELECT count(*) FROM portal.todo_desktop WHERE user_id=?",employee));
+        assertThrows(ApiFault.class,()->identity.background(before.sessionId()));
+        assertThrows(CredentialFault.class,()->login(employee.toString(),PASSWORD));
+        assertEquals(409,assertThrows(ApiFault.class,()->directory.status(context(2),employee,Sql.map("status","ACTIVE","reason","误启用"))).status);
+        assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE request_id=? AND actor_id=?",request,employee));
+        assertEquals(1,db.count("SELECT count(*) FROM iam.employee_departure_record WHERE departure_id=? AND record_type='AUDIT' AND snapshot->>'requestId'=?",id,request.toString()));
+        assertEquals(1,db.count("SELECT count(*) FROM iam.employee_departure_record WHERE departure_id=? AND record_type='TODO' AND source_id=? AND snapshot->>'state'='OPEN'",id,todo));
+        assertEquals("OPEN",db.required("SELECT state FROM portal.employee_todo WHERE id=?",todo).get("state"));
+        assertEquals(1,((List<?>) departures.records(admin,id,Map.of("recordType","TODO")).get("items")).size());
+        assertTrue(departures.history(admin,Map.of("keyword",employee.toString())).get("items").toString().contains(id.toString()));
+        Actor outsider=login(person().toString(),PASSWORD);
+        assertEquals(403,assertThrows(ApiFault.class,()->departures.records(outsider,id,Map.of())).status);
     }
     private Map<String,Object> createWithEmployeePassword(){
         var body=Sql.map("employeeNo","PWD"+UUID.randomUUID(),"name","隔离密码员工","departmentId",admin.user().get("departmentId"),"companyEmail",UUID.randomUUID()+"@biolink.com",

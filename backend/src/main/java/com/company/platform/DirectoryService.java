@@ -50,7 +50,7 @@ public class DirectoryService {
         }
         if (query.containsKey("status")) {
             where.append(" AND status=?");
-            args.add(Inputs.choice(query.get("status"), "ACTIVE", "DISABLED"));
+            args.add(Inputs.choice(query.get("status"), "ACTIVE", "DISABLED", "DEPARTED"));
         }
         if (full) where.append(new ListConditions(query,args).contains("email","company_email").sql());
         if (!full)
@@ -217,6 +217,7 @@ public class DirectoryService {
             throw ApiFault.denied();
         var row = db.required("SELECT * FROM iam.user_account WHERE id=? FOR UPDATE", id);
         Commands.version(ctx, row);
+        requireEditableEmployee(row);
         String name = body.containsKey("name") ? Inputs.text(body, "name", 128) : (String) row.get("name");
         String email = body.containsKey("companyEmail") ? Inputs.email(body) : (String) row.get("company_email");
         String employee = body.containsKey("employeeNo") ? Inputs.text(body, "employeeNo", 64) : (String) row.get("employee_no");
@@ -292,6 +293,7 @@ public class DirectoryService {
         String state = Inputs.choice(body.get("status"), "ACTIVE", "DISABLED");
         var row = db.required("SELECT * FROM iam.user_account WHERE id=? FOR UPDATE", id);
         Commands.version(ctx, row);
+        requireEditableEmployee(row);
         if (state.equals("DISABLED"))
             db.update(
                     "UPDATE iam.user_role SET state='ENDED',valid_until=CURRENT_TIMESTAMP WHERE user_id=? AND state='ACTIVE'",
@@ -302,6 +304,11 @@ public class DirectoryService {
                 state, id);
         identity.invalidate(id, "ACCOUNT_" + state, ctx.operation());
         return Commands.result(ctx, id, ((Number) row.get("row_version")).intValue() + 1);
+    }
+
+    /** 离职与临时停用分离，普通名片编辑及账号启用不得改写已离职的主体。 */
+    private void requireEditableEmployee(Map<String,Object> row) {
+        if ("DEPARTED".equals(row.get("status"))) throw ApiFault.conflict("该员工已离职，请查询离职档案");
     }
 
     /** 创建部门，不能创建隐含业务角色或内容权限。 */

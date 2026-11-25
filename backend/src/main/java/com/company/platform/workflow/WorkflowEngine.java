@@ -76,10 +76,17 @@ public class WorkflowEngine {
     }
     /** 员工转岗时终止其旧部门的在审事项，保留决定历史；归还等实物责任不属于此入口。 */
     public void cancelForDepartmentChange(UUID person,UUID operator) {
+        cancelPersonnelApplications(person,operator,"申请人转岗，旧部门申请终止");
+    }
+    /** 员工离职后不能再从本人尚在审批的申请取得新授权。 */
+    public void cancelForDeparture(UUID person,UUID operator) {
+        cancelPersonnelApplications(person,operator,"申请人离职，未办申请终止");
+    }
+    private void cancelPersonnelApplications(UUID person,UUID operator,String reason) {
         for(var instance:db.rows("SELECT * FROM workflow.instance WHERE applicant_id=? AND state='PENDING' AND (business_type IN ('BORROW','ACCESS_POLICY') OR (business_type='CATALOG_CHANGE' AND EXISTS(SELECT 1 FROM archive.catalog_change c WHERE c.id=business_id AND COALESCE(c.managed_by,c.created_by)=applicant_id))) ORDER BY id FOR UPDATE",person)) {
             db.update("UPDATE workflow.instance SET state='WITHDRAWN',current_step_id=NULL,row_version=row_version+1 WHERE id=?",instance.get("id"));
             business((String)instance.get("business_type")).finish(db.required("SELECT * FROM workflow.instance WHERE id=?",instance.get("id")),false,operator);
-            db.update("UPDATE workflow.evidence_submission SET state='CANCELLED',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,review_note='申请人转岗，旧部门申请终止',row_version=row_version+1 WHERE state='PENDING' AND step_id IN (SELECT id FROM workflow.step WHERE instance_id=?)",operator,instance.get("id"));
+            db.update("UPDATE workflow.evidence_submission SET state='CANCELLED',reviewed_by=?,reviewed_at=CURRENT_TIMESTAMP,review_note=?,row_version=row_version+1 WHERE state='PENDING' AND step_id IN (SELECT id FROM workflow.step WHERE instance_id=?)",operator,reason,instance.get("id"));
         }
     }
     /** 原决定按本人或原申请人范围重读；不把幂等回执当成公开业务查询。 */

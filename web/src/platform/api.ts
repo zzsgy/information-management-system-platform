@@ -8,7 +8,7 @@ export interface User {
   /** 员工姓名。 */ name: string;
   /** 单一所属部门。 */ departmentId: string;
   /** 公司邮箱。 */ companyEmail: string;
-  /** 当前启停状态。 */ status: "ACTIVE" | "DISABLED";
+  /** 当前账号状态；离职由专用入口办理。 */ status: "ACTIVE" | "DISABLED" | "DEPARTED";
   /** 首次设密限制。 */ passwordSetupRequired: boolean;
   /** 并发修改版本。 */ rowVersion: number;
 }
