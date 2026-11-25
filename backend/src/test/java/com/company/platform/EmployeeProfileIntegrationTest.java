@@ -36,6 +36,10 @@ class EmployeeProfileIntegrationTest {
     @AfterEach void endFixtureRoles(){db.update("UPDATE iam.user_role SET state='ENDED',valid_until=CURRENT_TIMESTAMP WHERE user_id=? AND state='ACTIVE'",employee);}
     private UUID person(){UUID id=UUID.randomUUID();db.update("INSERT INTO iam.user_account(id,employee_no,name,department_id,company_email,password_hash,password_setup_required) VALUES(?,?,?,?,?,?,false)",id,id.toString(),"隔离编辑员工",admin.user().get("departmentId"),id+"@biolink.com",Crypto.password(PASSWORD));return id;}
     private Actor login(String number,String password){return identity.authenticate((String)identity.login(Sql.map("employeeNo",number,"password",password),UUID.randomUUID(),"profile-"+UUID.randomUUID()).get("token"));}
+    /** 网页登录名同时支持工号和中文全名，旧客户端继续用工号字段。 */
+    private Actor loginName(String name,String password){
+        return identity.authenticate((String)identity.login(Sql.map("loginName",name,"password",password),UUID.randomUUID(),"profile-"+UUID.randomUUID()).get("token"));
+    }
     private UUID department(){return (UUID)db.required("SELECT id FROM iam.department WHERE code='AD'").get("id");}
     private void role(UUID person,String module,String code,UUID department){db.update("INSERT INTO iam.user_role(id,user_id,role_id,department_id,valid_from,assigned_by,module,role_code) SELECT ?,?,id,?,CURRENT_TIMESTAMP,?,module,code FROM iam.role WHERE module=? AND code=?",UUID.randomUUID(),person,department,admin.userId(),module,code);}
     private Commands.Context context(Actor operator,String password,UUID target,int version){var proof=identity.reauthenticate(operator,Sql.map("password",password,"purpose","MANAGE","objectIds",List.of(target),"scopeItems",List.of(Sql.map("objectType","USER","objectId",target,"actions",List.of("UPDATE_USER")))),UUID.randomUUID());return new Commands.Context(operator,UUID.randomUUID(),UUID.randomUUID(),"PATCH profile "+target,(String)proof.get("verificationToken"),version);}
@@ -179,16 +183,50 @@ class EmployeeProfileIntegrationTest {
     }
     private Map<String,Object> resetCredential(Commands.Context ctx,UUID target){var body=Sql.map("reason","隔离初始密码验收");return commands.run(ctx,body,"USER",target,"RESET_PASSWORD",()->admin.require("PLATFORM.USERS_MANAGE"),()->recovery.reset(ctx,target,body),key->Sql.map("objectId",key));}
     @Test void employeeNumberLoginRequiresRealPasswordChange(){
-        var result=createWithEmployeePassword();UUID user=Inputs.uuid(result.get("id"));String no=result.get("employeeNo").toString();Actor initial=login(no,no);
+        var result=createWithEmployeePassword();UUID user=Inputs.uuid(result.get("id"));String no=result.get("employeeNo").toString();
+        String fullName="黎牧舟";
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?",fullName,user);
+        assertThrows(CredentialFault.class,()->loginName(fullName,no));
+        Actor initial=loginName(no,no);
         assertTrue(initial.setupRequired());assertTrue(initial.roles().isEmpty());assertThrows(ApiFault.class,()->initial.require("PLATFORM.USERS_MANAGE"));
         for(String weak:List.of("12345678","abcdefgh","Abc1234",no))assertThrows(ApiFault.class,()->identity.password(initial,Sql.map("temporaryPassword",no,"newPassword",weak),true,UUID.randomUUID()));
         identity.password(initial,Sql.map("temporaryPassword",no,"newPassword","Welcome8"),true,UUID.randomUUID());
         assertThrows(ApiFault.class,()->identity.background(initial.sessionId()));assertThrows(CredentialFault.class,()->login(no,no));
         Actor active=login(no,"Welcome8");
         assertFalse(active.setupRequired());
+        assertEquals(user,loginName(fullName,"Welcome8").userId());
         assertEquals(List.of("ARCHIVE.STAFF","DRIVE.STAFF","PLATFORM.MEMBER"),
                 active.roles().stream().map(role->role.get("module")+"."+role.get("code")).toList());
         assertEquals(0,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD' AND consumed_at IS NULL",user));
+    }
+
+    /** 完整中文名与工号进入同一账号，简称、非在用人员和重名均不能通过姓名登录。 */
+    @Test void normalEmployeeLoginAcceptsOnlyAnUnambiguousFullChineseName() {
+        String fullName="程子墨";
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?",fullName,employee);
+        Actor byName=loginName("  "+fullName+"  ",PASSWORD);
+        assertEquals(employee,byName.userId());
+        assertEquals(employee,loginName(employee.toString(),PASSWORD).userId());
+        assertThrows(ApiFault.class,()->identity.background(byName.sessionId()));
+        assertThrows(CredentialFault.class,()->loginName("程子",PASSWORD));
+        assertThrows(CredentialFault.class,()->login(fullName,PASSWORD));
+        UUID duplicate=person();
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?",fullName,duplicate);
+        assertThrows(CredentialFault.class,()->loginName(fullName,PASSWORD));
+        assertEquals(employee,login(employee.toString(),PASSWORD).userId());
+        assertEquals(duplicate,loginName(duplicate.toString(),PASSWORD).userId());
+        db.update("UPDATE iam.user_account SET status='DISABLED' WHERE id IN (?,?)",employee,duplicate);
+        assertThrows(CredentialFault.class,()->loginName(fullName,PASSWORD));
+    }
+
+    /** 切换工号或中文名不会重置同一个账号的错误次数。 */
+    @Test void chineseNameAndEmployeeNumberShareLoginLockout() {
+        String fullName="陆景清";
+        db.update("UPDATE iam.user_account SET name=? WHERE id=?",fullName,employee);
+        for(int i=0;i<4;i++) assertEquals(401,assertThrows(CredentialFault.class,()->loginName(fullName,"incorrect")).status);
+        assertEquals(401,assertThrows(CredentialFault.class,()->login(employee.toString(),"incorrect")).status);
+        assertEquals(429,assertThrows(CredentialFault.class,()->loginName(fullName,PASSWORD)).status);
+        assertEquals(429,assertThrows(CredentialFault.class,()->login(employee.toString(),PASSWORD)).status);
     }
 
     @Test void employeeWorkbookAssignsAllDefaultRoles() {

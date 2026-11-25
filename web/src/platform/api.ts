@@ -192,14 +192,14 @@ export function setProfile(value: Profile | null) {
   if (!value) operations.clear();
 }
 /** 登录响应先建立受限资料，首次设密完成前不渲染业务页面。 */
-export async function login(employeeNo: string, password: string) {
+export async function login(loginName: string, password: string) {
   const result = await api<{
     user: User;
     csrfToken: string;
     passwordSetupRequired: boolean;
   }>("/auth/login", {
     method: "POST",
-    body: JSON.stringify({ employeeNo, password }),
+    body: JSON.stringify({ loginName, password }),
   });
   setProfile({
     user: result.user,

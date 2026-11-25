@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 const config = JSON.parse(readFileSync(process.env.IMS_PLATFORM_TEST_CONFIG!, "utf8"));
 test("IT在网页维护服务授权，保存持久化且运行环境失败不伪装通过", async ({ page }) => {
   await page.goto("/");
-  await page.getByLabel("公司工号", { exact: true }).fill(config.IMS_PLATFORM_ADMIN_NO);
+  await page.getByLabel("工号或姓名", { exact: true }).fill(config.IMS_PLATFORM_ADMIN_NO);
   await page.getByLabel("登录密码", { exact: true }).fill(config.IMS_PLATFORM_ADMIN_PASSWORD);
   await page.getByRole("button", { name: "登录工作台" }).click();
   await page.getByRole("link", { name: "进入运维与保护配置服务", exact: true }).click();
@@ -39,7 +39,7 @@ test("IT在网页维护服务授权，保存持久化且运行环境失败不伪
 /** 分组表单沿真实保存、再验证、刷新读取链路，安装包不含当前环境凭据。 */
 test("IT部署参数可保存并刷新，安装包包含可用脚本", async ({page})=>{
  await page.goto("/");
- await page.getByLabel("公司工号", {exact:true}).fill(config.IMS_PLATFORM_ADMIN_NO);
+ await page.getByLabel("工号或姓名", {exact:true}).fill(config.IMS_PLATFORM_ADMIN_NO);
  await page.getByLabel("登录密码", {exact:true}).fill(config.IMS_PLATFORM_ADMIN_PASSWORD);
  await page.getByRole("button",{name:"登录工作台"}).click();
  await page.getByRole("link",{name:"进入运维与保护配置服务",exact:true}).click();

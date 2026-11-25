@@ -79,7 +79,7 @@ async function login(employee) {
     }),
   );
   await page.goto(base);
-  await page.getByLabel("公司工号").fill(employee);
+  await page.getByLabel("工号或姓名").fill(employee);
   await page.getByLabel("登录密码", { exact: true }).fill(fixture.password);
   await page.getByRole("button", { name: "登录工作台", exact: true }).click();
   await page.getByRole("link", { name: "企业公盘", exact: true }).click();

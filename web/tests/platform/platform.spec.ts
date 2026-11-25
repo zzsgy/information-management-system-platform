@@ -14,7 +14,7 @@ mkdirSync(screenshots, { recursive: true });
 async function signIn(page: Page) {
   await page.goto("/");
   await page
-    .getByLabel("公司工号", { exact: true })
+    .getByLabel("工号或姓名", { exact: true })
     .fill(config.IMS_PLATFORM_ADMIN_NO);
   await page
     .getByLabel("登录密码", { exact: true })

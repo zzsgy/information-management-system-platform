@@ -101,7 +101,7 @@ const loading = ref(true),
   busy = ref(false),
   error = ref(""),
   notice = ref("");
-const employeeNo = ref(""),
+const loginName = ref(""),
   password = ref(""),
   nextPassword = ref(""),
   confirmPassword = ref("");
@@ -424,7 +424,7 @@ async function signIn() {
   busy.value = true;
   error.value = "";
   try {
-    await login(employeeNo.value, password.value);
+    await login(loginName.value, password.value);
     if (!profile.value?.user.passwordSetupRequired) password.value = "";
     location.hash = "/home";
   } catch (failure) {
@@ -580,7 +580,7 @@ onUnmounted(() => {
               ? "初始密码与工号一致。新密码至少8位，同时包含英文字母和数字，且须与工号不同。"
               : recoveryMode
                 ? "通过绑定的公司邮箱验证身份并设置新密码。"
-                : "使用公司工号登录，进入你的工作空间。"
+                : "正常账号可用工号或中文全名登录。首次设密请使用工号。"
           }}
         </p>
         <PasswordRecovery
@@ -593,11 +593,11 @@ onUnmounted(() => {
         />
         <form v-else-if="!profile" @submit.prevent="signIn">
           <label
-            >公司工号<input
-              v-model="employeeNo"
+            >工号或姓名<input
+              v-model="loginName"
               autocomplete="username"
-              maxlength="64"
-              placeholder="请输入工号"
+              maxlength="128"
+              placeholder="请输入工号或中文全名"
               required /></label
           ><label
             >登录密码<input

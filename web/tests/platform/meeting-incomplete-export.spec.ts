@@ -5,7 +5,7 @@ import {fileURLToPath} from "node:url";
 /** 账号与受邀人来自专用隔离配置；业务创建仍经过真实权限、CSRF和预约校验。 */
 const config=JSON.parse(readFileSync(process.env.IMS_PLATFORM_TEST_CONFIG!,"utf8"));
 test("本人当前会议和跨会议未完成情况均能下载Excel",async({page,browser,baseURL})=>{
- await page.goto("/");await page.getByLabel("公司工号",{exact:true}).fill(config.IMS_PLATFORM_ADMIN_NO);await page.getByLabel("登录密码",{exact:true}).fill(config.IMS_PLATFORM_ADMIN_PASSWORD);await page.getByRole("button",{name:"登录工作台"}).click();
+ await page.goto("/");await page.getByLabel("工号或姓名",{exact:true}).fill(config.IMS_PLATFORM_ADMIN_NO);await page.getByLabel("登录密码",{exact:true}).fill(config.IMS_PLATFORM_ADMIN_PASSWORD);await page.getByRole("button",{name:"登录工作台"}).click();
  await expect(page.getByRole("heading",{name:/好，/})).toBeVisible();
  const me=await (await page.request.get("/api/v1/auth/me")).json();const csrf=me.data.csrfToken;
  const existing=await (await page.request.get("/api/v1/meetings?pageSize=100")).json();

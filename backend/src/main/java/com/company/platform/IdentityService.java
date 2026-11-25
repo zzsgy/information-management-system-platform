@@ -4,6 +4,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.*;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /** 身份服务：单会话、授权代次、首次设密、锁定及一次性再验证均由数据库协调。 */
 @Service
@@ -12,6 +13,8 @@ public class IdentityService {
     public static final String USER_FIELDS="id,employee_no,name,department_id,company_email,status,password_setup_required,row_version";
     /** 对外角色投影；任职历史只在对应管理服务内使用。 */
     public static final String ROLE_FIELDS="id,module,code,name,status,permission_version,row_version";
+    /** 中文全名可带间隔号；按账号资料完整匹配。 */
+    private static final Pattern CHINESE_NAME=Pattern.compile("\\p{IsHan}+(?:[·・ ]+\\p{IsHan}+)*");
     /** 查询、审计和独立保护边界。 */
     private final Sql db;
     private final Audit audit;
@@ -25,28 +28,44 @@ public class IdentityService {
     /** 登录失败的计数和审计必须提交；账号密码不通过异常消息返回。 */
     @Transactional(noRollbackFor=CredentialFault.class)
     public Map<String,Object> login(Map<String,Object> body, UUID request, String source) {
-        Inputs.only(body,"employeeNo","password");
-        String employeeNo=Inputs.text(body,"employeeNo",64), password=Inputs.password(body,"password");
+        Inputs.only(body,"employeeNo","loginName","password");
+        boolean flexible=body.containsKey("loginName");
+        if (flexible && body.containsKey("employeeNo")) throw ApiFault.invalid("请填写一个登录名");
+        String identifier=flexible?Inputs.text(body,"loginName",128):Inputs.text(body,"employeeNo",64);
+        String password=Inputs.password(body,"password");
         // 来源计数和账号计数共用数据库，跨进程启动不重置保护。
         checkThrottle("source:"+source,100);
-        var user=db.one("SELECT * FROM iam.user_account WHERE employee_no=? FOR UPDATE",employeeNo);
-        checkThrottle("account:"+employeeNo,5);
+        var user=db.one("SELECT * FROM iam.user_account WHERE employee_no=? FOR UPDATE",identifier);
+        if (user==null && flexible && CHINESE_NAME.matcher(identifier).matches()) user=byChineseName(identifier);
+        // 工号与姓名登录同一个账号时必须共用失败计数，避免切换登录名绕过锁定。
+        String accountKey="account:"+(user==null?identifier:user.get("employee_no"));
+        checkThrottle(accountKey,5);
         boolean valid=Crypto.matches(password,user==null?dummyHash:user.get("password_hash"));
         if (user==null || !valid || !user.get("status").equals("ACTIVE")) {
-            failThrottle("account:"+employeeNo,5); failThrottle("source:"+source,100);
+            failThrottle(accountKey,5); failThrottle("source:"+source,100);
             audit.event(user==null?null:(UUID)user.get("id"),"PLATFORM","SESSION",null,"LOGIN","DENIED",request);
-            throw new CredentialFault(401,"INVALID_CREDENTIALS","工号或密码不正确，或账号暂不可用");
+            throw new CredentialFault(401,"INVALID_CREDENTIALS","工号、姓名或密码不正确，或账号暂不可用");
         }
         checkCatalogFence();
         UUID userId=(UUID)user.get("id"); ledger.check(userId,((Number)user.get("auth_version")).intValue());
         if (Boolean.TRUE.equals(user.get("password_setup_required")) && temporaryChallenge(userId,password)==null) throw new CredentialFault(401,"INVALID_CREDENTIALS","初始密码已失效，请联系管理员重置");
-        db.update("DELETE FROM ops.auth_throttle WHERE bucket=?",ledger.bucket("account:"+employeeNo));
+        db.update("DELETE FROM ops.auth_throttle WHERE bucket=?",ledger.bucket(accountKey));
         db.update("UPDATE iam.session SET revoked_at=CURRENT_TIMESTAMP WHERE user_id=? AND revoked_at IS NULL",userId);
         db.update("UPDATE iam.user_account SET session_version=session_version+1 WHERE id=?",userId);
         String token=Crypto.token(); UUID session=UUID.randomUUID();
         db.update("INSERT INTO iam.session(id,user_id,token_hash,session_version,auth_version,last_activity_at,expires_at,client_summary) SELECT ?,id,?,session_version,auth_version,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP+interval '12 hours','{}'::jsonb FROM iam.user_account WHERE id=?",session,Crypto.hash(token),userId);
         audit.event(userId,"PLATFORM","SESSION",session,"LOGIN","SUCCEEDED",request);
         return Sql.map("token",token,"user",Sql.view(user,USER_FIELDS),"passwordSetupRequired",user.get("password_setup_required"),"csrfToken",csrf(token),"sessionExpiresAt",Instant.now().plusSeconds(43200).toString());
+    }
+
+    /** 只匹配在用且已设密的唯一全名；重名时只能凭各自工号登录。 */
+    private Map<String,Object> byChineseName(String name) {
+        var users=db.rows("""
+                SELECT * FROM iam.user_account
+                WHERE name=? AND status='ACTIVE' AND NOT password_setup_required
+                ORDER BY id LIMIT 2 FOR UPDATE
+                """,name);
+        return users.size()==1?users.getFirst():null;
     }
 
     /** 全局目录安全水位仅作恢复防回退核验；正常请求为单行读取，禁止旧备份复活撤下内容。 */

@@ -178,7 +178,7 @@ async function noOverflow() {
     });
     await page.goto(base + "/platform.html");
     await page
-      .getByLabel("公司工号", { exact: true })
+      .getByLabel("工号或姓名", { exact: true })
       .fill(config.IMS_PLATFORM_ADMIN_NO);
     await page
       .getByLabel("登录密码", { exact: true })

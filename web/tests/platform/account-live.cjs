@@ -37,7 +37,7 @@ async function page() {
   return p;
 }
 async function login(p, account, password) {
-  await p.getByLabel("公司工号", { exact: true }).fill(account);
+  await p.getByLabel("工号或姓名", { exact: true }).fill(account);
   await p.getByLabel("登录密码", { exact: true }).fill(password);
   await p.getByRole("button", { name: "登录工作台" }).click();
 }
