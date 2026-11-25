@@ -11,6 +11,8 @@ import java.util.*;
 public class EmployeeDeparture {
     /** 主档对外白名单，保留离职当时的工号、姓名和部门。 */
     private static final String FIELDS = "id,user_id,employee_no,employee_name,department_id,department_name,previous_status,operator_id,request_id,reason,departed_at";
+    /** 首次实物取件或旧版直接交付后，实收确认前均属于未归还。 */
+    private static final String OUTSTANDING_PAPER = "l.state='IN_USE' AND (l.pickup_at IS NOT NULL OR l.actual_delivery_at IS NOT NULL)";
     private final Sql db;
     private final IdentityService identity;
     private final Commands commands;
@@ -72,12 +74,31 @@ public class EmployeeDeparture {
                     WHERE w.applicant_id=? AND w.state='PENDING' ORDER BY p.box_id
                     """,user)) db.required("SELECT id FROM archive.box WHERE id=? FOR UPDATE",box.get("box_id"));
             workflow.cancelForDeparture(user, ctx.actor().userId());
+            notifyPaperApprovers(departure, user);
             revoke(user, ctx.actor().userId());
             var result = archived(departure);
             // 最后推进独立身份账本；旧备份或旧编辑会话不能恢复原授权。
             identity.invalidate(user, "EMPLOYEE_DEPARTURE", ctx.operation());
             return result;
         }, this::archived);
+    }
+
+    /** 从原借阅和已批准续借的决定取真实审批人，凭据录入人与审批人分开。 */
+    private void notifyPaperApprovers(UUID departure, UUID user) {
+        db.update("""
+                INSERT INTO archive.departure_loan_followup(departure_id,loan_id,assignee_id)
+                SELECT DISTINCT ?::uuid,l.id,d.original_approver_id
+                FROM archive.physical_loan l
+                CROSS JOIN LATERAL (
+                    SELECT l.request_id
+                    UNION SELECT s.request_id FROM archive.paper_loan_scope s WHERE s.loan_id=l.id
+                ) related
+                JOIN archive.borrow_request q ON q.id=related.request_id AND q.state='APPROVED'
+                JOIN workflow.step s ON s.instance_id=q.workflow_instance_id
+                JOIN workflow.decision d ON d.step_id=s.id AND d.result='APPROVE'
+                JOIN iam.user_account a ON a.id=d.original_approver_id AND a.status='ACTIVE'
+                WHERE l.borrower_id=? AND a.id<>l.borrower_id AND
+                """ + OUTSTANDING_PAPER, departure,user);
     }
 
     /** 撤销通过账号持有的授权和短期凭据；原申请、操作人与实际借阅责任均留在源表。 */
@@ -139,6 +160,7 @@ public class EmployeeDeparture {
         var row = db.required("SELECT * FROM iam.employee_departure WHERE id=?",id);
         var result = Sql.view(row,FIELDS);
         result.put("impact",Crypto.JSON.readValue(row.get("impact").toString(),Map.class));
+        result.put("paperFollowupCount",db.count("SELECT count(*) FROM archive.departure_loan_followup WHERE departure_id=?",id));
         result.put("recordCounts",db.rows("""
                 SELECT record_type,count(*) AS count FROM iam.employee_departure_record
                 WHERE departure_id=? GROUP BY record_type ORDER BY record_type
@@ -160,7 +182,7 @@ public class EmployeeDeparture {
                         SELECT count(*) FROM workflow.step s JOIN workflow.instance w ON w.id=s.instance_id
                         WHERE s.assignee_id=? AND s.state IN ('PENDING','WAITING') AND w.state='PENDING'
                         """,user),
-                "outstandingLoans", db.count("SELECT count(*) FROM archive.physical_loan WHERE borrower_id=? AND state='IN_USE'",user),
+                "outstandingLoans", db.count("SELECT count(*) FROM archive.physical_loan l WHERE l.borrower_id=? AND " + OUTSTANDING_PAPER,user),
                 "openTodos", db.count("SELECT count(*) FROM portal.employee_todo WHERE assignee_id=? AND state IN ('OPEN','SUBMITTED')",user));
     }
 

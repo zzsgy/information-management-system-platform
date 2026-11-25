@@ -17,6 +17,8 @@ interface ArchiveSummary {
 }
 interface Archive extends ArchiveSummary {
   impact: Record<string, number>;
+  /** 同一笔借阅的每位审批人对应一条跟进记录。 */
+  paperFollowupCount: number;
   recordCounts: { recordType: string; count: number }[];
 }
 interface ArchiveItem {
@@ -51,7 +53,7 @@ const pendingHandover = computed(() => preview.value &&
 const impactLabels: Record<string, string> = {
   roles: "角色任职", personalPermissions: "个人权限", archiveGrants: "档案授权",
   driveGrants: "公盘授权", duties: "部门及公司职责", pendingApprovals: "待接手的审批节点",
-  outstandingLoans: "未归还的实物", openTodos: "未办结的个人待办",
+  outstandingLoans: "未归还的纸质档案", openTodos: "未办结的个人待办",
 };
 const recordLabels: Record<string, string> = {
   AUDIT: "操作记录", INTERACTION: "界面操作", ROLE: "角色任职", PERSONAL_PERMISSION: "个人权限",
@@ -270,7 +272,7 @@ onMounted(() => void loadList());
           <dl class="impact-grid">
             <div v-for="(label, key) in impactLabels" :key="key"><dt>{{ label }}</dt><dd>{{ preview.impact[key] ?? 0 }}</dd></div>
           </dl>
-          <p v-if="pendingHandover" class="departure-note">待接手审批、未办待办和未归还实物继续保留，请按原业务流程安排后续处理。</p>
+          <p v-if="pendingHandover" class="departure-note">请安排接手待办和审批。已取件且未归还的纸质档案将在确认离职时通知原审批人员跟进。</p>
           <label for="departure-reason">离职事由</label>
           <textarea id="departure-reason" v-model="reason" :disabled="busy" maxlength="1000" rows="3" required />
           <label class="departure-check">
@@ -282,6 +284,7 @@ onMounted(() => void loadList());
         <div v-else-if="receipt" class="departure-result" role="status">
           <h3>{{ receipt.employeeName }} 已办理离职</h3>
           <p class="muted">{{ dateTime(receipt.departedAt) }} · {{ receipt.employeeNo }}</p>
+          <p v-if="receipt.impact.outstandingLoans" class="muted">未归还纸质档案 {{ receipt.impact.outstandingLoans }} 笔，已生成归还跟进待办 {{ receipt.paperFollowupCount }} 条。</p>
           <button class="secondary" type="button" :disabled="busy" @click="viewReceipt">查看离职档案</button>
         </div>
         <EmptyState v-else icon="people" title="请选择要办理离职的员工" />
@@ -292,6 +295,7 @@ onMounted(() => void loadList());
           <h3>{{ receipt.employeeName }} · {{ receipt.employeeNo }}</h3>
           <p class="muted">{{ receipt.departmentName }} · {{ dateTime(receipt.departedAt) }}</p>
           <p class="departure-reason">{{ receipt.reason }}</p>
+          <p v-if="receipt.impact.outstandingLoans" class="muted">离职时生成归还跟进待办 {{ receipt.paperFollowupCount }} 条。</p>
           <dl class="impact-grid">
             <div v-for="(label, key) in impactLabels" :key="key"><dt>{{ label }}</dt><dd>{{ receipt.impact[key] ?? 0 }}</dd></div>
           </dl>

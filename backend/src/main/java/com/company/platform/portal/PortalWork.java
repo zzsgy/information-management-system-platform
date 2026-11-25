@@ -106,6 +106,27 @@ public class PortalWork {
                 ?"#/meetings":"#/meetings?id="+meeting.get("meeting_id");
             return Sql.map("entry",entry,"content",meeting.get("content"));
         }
+        var followup=db.one("""
+                WITH opened AS (
+                    UPDATE archive.departure_loan_followup SET read_at=COALESCE(read_at,CURRENT_TIMESTAMP)
+                    WHERE id=? AND assignee_id=? RETURNING departure_id,loan_id
+                )
+                SELECT d.employee_name,d.employee_no,dept.name AS archive_department,l.id AS loan_id,
+                       l.due_at,l.state,l.returned_at,b.department_id
+                FROM opened o JOIN iam.employee_departure d ON d.id=o.departure_id
+                JOIN archive.physical_loan l ON l.id=o.loan_id
+                JOIN archive.box b ON b.id=l.box_id JOIN iam.department dept ON dept.id=b.department_id
+                """,id,actor.userId());
+        if(followup!=null){
+            // 原件详情仍由档案模块授权，其他原审批人也可查看本人跟进所需的最小信息。
+            boolean canOpen=actor.actions().contains("ARCHIVE.ACCESS")&&(
+                (actor.actions().contains("ARCHIVE.PHYSICAL_MANAGE")&&
+                    (authority.role(actor,"DEPARTMENT_ARCHIVIST",(UUID)followup.get("department_id"))||
+                     authority.role(actor,"SUPER_ADMIN",null)))||
+                (actor.actions().contains("ARCHIVE.PHYSICAL_REVIEW")&&authority.role(actor,"SUPER_ADMIN",null)));
+            return Sql.map("entry",canOpen?"#/workflow?tab=physical&loan="+followup.get("loan_id"):null,
+                "paperFollowup",Sql.view(followup,"employee_name,employee_no,archive_department,loan_id,due_at,state,returned_at"));
+        }
         notifications.read(actor,id);
         var row=db.required("SELECT source_kind,source_id FROM ops.business_notification WHERE id=? AND user_id=?",id,actor.userId());
         String type=row.get("source_kind").toString();UUID source=(UUID)row.get("source_id");String entry=switch(type){
@@ -239,6 +260,7 @@ public class PortalWork {
                 """;
         // 每人每场会议复用受邀关系 ID，阶段变化时只更新这一条待办的状态。
         args.addAll(List.of(actor.userId(),actor.userId(),actor.userId(),actor.userId()));
+        args.add(actor.userId()); // 离职归还跟进只显示给各自的收件人。
         return employeeTasks + """
                 UNION ALL
                 SELECT a.id,'会议待办 · '||m.subject,
@@ -312,6 +334,12 @@ public class PortalWork {
                 WHERE m.organizer_id=? AND m.cancelled_at IS NULL AND m.closed_at IS NULL
                     AND m.actual_ended_at IS NOT NULL AND (m.minutes_published_at IS NULL OR NOT EXISTS(
                         SELECT 1 FROM portal.meeting_item i WHERE i.meeting_id=m.id AND i.removed_at IS NULL AND i.state<>'CONFIRMED'))
+                UNION ALL
+                SELECT f.id,'离职纸质档案归还跟进 · '||d.employee_name,
+                    CASE WHEN l.state='RETURNED' THEN 'COMPLETED' ELSE 'HANDLING' END,
+                    l.due_at,''::text,'DEPARTURE_LOAN',l.state,f.created_at,l.returned_at
+                FROM archive.departure_loan_followup f JOIN archive.physical_loan l ON l.id=f.loan_id
+                JOIN iam.employee_departure d ON d.id=f.departure_id WHERE f.assignee_id=?
                 """;
     }
     /** 反馈答复不依赖档案入口；档案来源在权限撤销后从联合收件箱实时消失。 */
@@ -321,8 +349,13 @@ public class PortalWork {
                  UNION ALL SELECT id,'MEETING',COALESCE(item_id,meeting_id),kind,
                  CASE WHEN read_at IS NULL THEN 'UNREAD' ELSE 'READ' END,created_at,content
                  FROM portal.meeting_message WHERE user_id=?
+                 UNION ALL SELECT f.id,'DEPARTURE_LOAN',f.id,'DEPARTURE_LOAN_FOLLOWUP',
+                 CASE WHEN f.read_at IS NULL THEN 'UNREAD' ELSE 'READ' END,f.created_at,
+                 '离职纸质档案归还跟进 · '||d.employee_name
+                 FROM archive.departure_loan_followup f JOIN iam.employee_departure d ON d.id=f.departure_id
+                 WHERE f.assignee_id=?
                 """;
-        args.add(actor.userId());
+        args.addAll(List.of(actor.userId(),actor.userId()));
         if(actor.actions().contains("ARCHIVE.ACCESS")){sql+=" UNION ALL SELECT n.id,n.source_kind,n.source_id,n.kind,n.state,n.created_at,NULL::text FROM ops.business_notification n WHERE n.user_id=? AND n.state<>'CANCELLED' AND ops.notification_current(n.id,?)";args.add(actor.userId());args.add(actor.userId());}return sql;
     }
     /** 本服务各列表共享有界分页；调用方已校验查询字段及排序白名单。 */

@@ -27,6 +27,7 @@ class PhysicalLoanIntegrationTest {
     @Autowired LegacyWorkCalendarFixture calendar;@Autowired UploadService uploads;@Autowired UploadAssembly assembly;@Autowired FileInspectionService inspection;
     @Autowired OrganizationDuties organization;
     @Autowired com.company.platform.portal.PortalWork portalWork;
+    @Autowired EmployeeDeparture departures;
     /** 真实到期状态和站内通知工作器，测试不会替换授权判定。 */
     @Autowired BorrowLifecycleService lifecycle;
     /** 改派必须同时满足真实任职与当前模块权限，不只检查角色名称。 */
@@ -510,6 +511,69 @@ class PhysicalLoanIntegrationTest {
         assertEquals(0L,loans.list(archivistA,filters).get("total"));
         if(System.getenv("IMS_PHYSICAL_DETAIL_UI_FIXTURE")!=null){Path target=Path.of(System.getenv("IMS_PHYSICAL_DETAIL_UI_FIXTURE"));Files.writeString(target,Crypto.json(Sql.map("loanId",loan.toString(),"employeeNo","AR-"+supervisor.userId(),"password",password,"barcode",fact.get("barcode"))));PrivateFiles.restrict(target);}
     }
+    /** 离职检查沿用实物交接事实，审批人收到同一笔续借合并后的跟进。 */
+    @Test @Order(100) void departureNotifiesPaperApproversAndReturnCompletesFollowup() {
+        person("departureBorrower",a,"STAFF");
+        // 这名员工离职后不能参加其余用例的登录刷新。
+        UUID employee=people.remove("departureBorrower");
+        applicant=login("AR-"+employee,password);
+        UUID box=paperBox(b,"PAPER");
+        UUID original=physical(paperRecord(box,1));
+        UUID reserved=physical(paperRecord(box,2));
+        UUID batch=submitCurrentPaper(List.of(original,reserved),3),request=request(batch);
+        approveBatch(batch);
+        UUID loan=(UUID)db.required("SELECT id FROM archive.physical_loan WHERE request_id=? AND physical_item_id=?",request,original).get("id");
+
+        var handoff=deliveryBody(original);
+        assertEquals("WAITING_OTHER_HANDLER",loans.deliver(context(archivistB,"BORROW_REQUEST",request,"DELIVER_PHYSICAL",null),request,handoff).get("state"));
+        assertEquals(1L,((Map<?,?>)departures.preview(admin,employee).get("impact")).get("outstandingLoans"));
+        assertEquals("DELIVERED",loans.deliver(context(supervisor,"BORROW_REQUEST",request,"DELIVER_PHYSICAL",null),request,handoff).get("state"));
+        var renewal=paper.renew(plain(applicant,"RENEW_PHYSICAL"),loan,Sql.map(
+            "period",Sql.map("mode","NATURAL_DAYS","amount",8),"purpose","合成续借","reason","合成离职验收"));
+        approveBatch((UUID)renewal.get("id"));
+        UUID returned=returnRequest(loan,1);
+        UUID returnFlow=(UUID)db.required("SELECT workflow_instance_id FROM archive.physical_return WHERE id=?",returned).get("workflow_instance_id");
+
+        var ctx=context(admin,"USER",employee,"EMPLOYEE_DEPARTURE",1);
+        var body=Sql.map("reason","合成员工离职验收");
+        var departure=departures.depart(ctx,employee,body);
+        assertEquals(departure.get("id"),departures.depart(ctx,employee,body).get("id"));
+        assertEquals("DEPARTED",db.required("SELECT status FROM iam.user_account WHERE id=?",employee).get("status"));
+        Set<UUID> expected=Set.of(people.get("managerA"),people.get("managerB"),archivistA.userId(),archivistB.userId(),supervisor.userId());
+        assertEquals(expected.size(),((Number)departure.get("paperFollowupCount")).intValue());
+        var notices=db.rows("SELECT id,loan_id,assignee_id FROM archive.departure_loan_followup WHERE departure_id=?",departure.get("id"));
+        assertEquals(expected,new HashSet<>(notices.stream().map(row->row.get("assignee_id")).toList()));
+        assertTrue(notices.stream().allMatch(row->loan.equals(row.get("loan_id"))));
+        for(var notice:notices){
+            Actor approver=actors.get(notice.get("assignee_id"));
+            assertTrue(((List<?>)portalWork.tasks(approver,Map.of("category","HANDLING")).get("items")).stream()
+                .map(item->(Map<?,?>)item).anyMatch(item->notice.get("id").equals(item.get("id"))&&"DEPARTURE_LOAN".equals(item.get("source"))));
+            assertTrue(((List<?>)portalWork.inbox(approver,Map.of("unreadOnly","true","pageSize","100")).get("items")).stream()
+                .map(item->(Map<?,?>)item).anyMatch(item->notice.get("id").equals(item.get("id"))&&"DEPARTURE_LOAN_FOLLOWUP".equals(item.get("kind"))));
+        }
+        Actor manager=actors.get(people.get("managerA"));
+        UUID notice=(UUID)notices.stream().filter(row->manager.userId().equals(row.get("assignee_id"))).findFirst().orElseThrow().get("id");
+        Actor outsider=actors.get(people.get("outsider"));
+        assertEquals(404,assertThrows(ApiFault.class,()->portalWork.readMessage(outsider,notice)).status);
+        var opened=portalWork.readMessage(manager,notice);
+        assertNull(opened.get("entry"));
+        var followup=(Map<?,?>)opened.get("paperFollowup");
+        assertEquals(loan,followup.get("loanId"));
+        assertEquals("合成部门B",followup.get("archiveDepartment"));
+        assertFalse(followup.containsKey("label"));
+        assertNotNull(db.required("SELECT read_at FROM archive.departure_loan_followup WHERE id=?",notice).get("read_at"));
+
+        approve(returnFlow);
+        var receipt=reviewBody(returned,"CONFIRM",1);
+        loans.review(context(archivistB,"PHYSICAL_LOAN",loan,"REVIEW_PHYSICAL_RETURN",version(loan)),loan,receipt);
+        loans.review(context(supervisor,"PHYSICAL_LOAN",loan,"REVIEW_PHYSICAL_RETURN",version(loan)),loan,receipt);
+        assertFalse(((List<?>)portalWork.tasks(manager,Map.of("category","HANDLING")).get("items")).stream()
+            .map(item->(Map<?,?>)item).anyMatch(item->notice.equals(item.get("id"))));
+        assertTrue(((List<?>)portalWork.tasks(manager,Map.of("category","COMPLETED")).get("items")).stream()
+            .map(item->(Map<?,?>)item).anyMatch(item->notice.equals(item.get("id"))&&"RETURNED".equals(item.get("state"))));
+        assertEquals("RETURNED",((Map<?,?>)portalWork.readMessage(manager,notice).get("paperFollowup")).get("state"));
+    }
+
     /** 桌面验收专用待交付账号和对象写入受限文件。 */
     @Test @Order(99) void desktopFixture() throws Exception {
         UUID box=paperBox(b,"PAPER"),record=paperRecord(box,1);paperRecord(box,2);UUID item=physical(record),batch=submitPaper(List.of(item),3);approveBatch(batch);var fixture=Sql.map("boxId",box.toString(),"recordId",record.toString(),"physicalItemId",item.toString(),"batchId",batch.toString(),"requestId",request(batch).toString(),"password",password,"people",people.entrySet().stream().map(entry->Sql.map("key",entry.getKey(),"id",entry.getValue().toString(),"employeeNo","AR-"+entry.getValue())).toList());Path target=Path.of(System.getenv("IMS_DRIVE_TEST_ROOT")).resolve("physical-fixture.private.json");Files.writeString(target,Crypto.json(fixture));PrivateFiles.restrict(target);

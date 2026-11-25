@@ -4,7 +4,7 @@ import { recentWeekFilters } from "./listDates";
 import EmptyState from "./EmptyState.vue";
 import EmployeeTodoDialog from "./EmployeeTodoDialog.vue";
 import TodoDesktopSettings from "./TodoDesktopSettings.vue";
-import { computed, onActivated, onDeactivated, onMounted, ref } from "vue";
+import { computed, nextTick, onActivated, onDeactivated, onMounted, ref } from "vue";
 import { api, query, type Page } from "./api";
 import { portalTime, messageNames } from "./portal";
 /** 紧凑模式用于首页；完整模式提供全部分页，避免把首页预览数量当总数。 */
@@ -28,6 +28,16 @@ interface Item {
   completedAt: string | null;
   source: string;
 }
+/** 仅返回给这笔归还跟进的收件人，完整借阅详情另行授权。 */
+interface PaperFollowup {
+  employeeName: string;
+  employeeNo: string;
+  archiveDepartment: string;
+  loanId: string;
+  dueAt: string;
+  state: "IN_USE" | "RETURNED";
+  returnedAt: string | null;
+}
 const items = ref<Item[]>([]),
   total = ref(0),
   page = ref(1),
@@ -46,6 +56,9 @@ const pageCount = computed(() =>
 );
 const editor = ref<{ id?: string; assign?: boolean }>();
 const canAssign = ref(false);
+const paperDialog = ref<HTMLDialogElement | null>(null);
+const paperDetail = ref<PaperFollowup>();
+const paperEntry = ref<string | null>(null);
 /** 关闭邀请保留在历史，状态仍反映本人实际回复。 */
 const meetingTaskStates: Record<string, string> = {
   MEETING_REPLY_PENDING: "待回复参会",
@@ -87,12 +100,18 @@ async function load(keepRows = false) {
 }
 async function open(item: Item) {
   try {
-    if (props.inbox) {
-      const result = await api<{ entry: string }>(
+    if (props.inbox || item.source === "DEPARTURE_LOAN") {
+      const result = await api<{ entry: string | null; paperFollowup?: PaperFollowup }>(
         `/portal/inbox/${item.id}/read`,
         { method: "POST" },
       );
-      location.hash = result.entry;
+      if (result.paperFollowup) {
+        paperDetail.value = result.paperFollowup;
+        paperEntry.value = result.entry;
+        if (props.inbox) item.state = "READ";
+        await nextTick();
+        paperDialog.value?.showModal();
+      } else if (result.entry) location.hash = result.entry;
     } else if (item.source === "PERSONAL" || item.source === "ASSIGNED") {
       editor.value = { id: item.id };
     } else location.hash = item.entry;
@@ -291,6 +310,11 @@ function switchFilter(value: string) {
             {{ meetingTaskStates[item.state] || (item.category === "COMPLETED" ? "已处理" : "待办理") }}
             <template v-if="item.dueAt"> · 截止 {{ portalTime(item.dueAt) }}</template>
           </small>
+          <small v-else-if="!inbox && item.source === 'DEPARTURE_LOAN'">
+            {{ item.state === "RETURNED" ? "已确认归还" : "待跟进归还" }}
+            <template v-if="item.state === 'RETURNED' && item.completedAt"> · {{ portalTime(item.completedAt) }}</template>
+            <template v-else-if="item.dueAt"> · 应还 {{ portalTime(item.dueAt) }}</template>
+          </small>
           <small v-else
             >{{
               portalTime(
@@ -345,6 +369,34 @@ function switchFilter(value: string) {
       </div>
     </footer>
   </section>
+  <dialog
+    v-if="paperDetail"
+    ref="paperDialog"
+    class="form-dialog flow-dialog flow-dialog-compact"
+    aria-labelledby="paper-followup-title"
+    @close="paperDetail = undefined; if (inbox) load(true)"
+  >
+    <div class="flow-dialog-shell">
+      <header class="flow-dialog-header">
+        <h2 id="paper-followup-title">离职纸质档案归还跟进</h2>
+        <button type="button" class="icon-button" aria-label="关闭归还跟进" @click="paperDialog?.close()">×</button>
+      </header>
+      <div class="flow-dialog-body">
+        <div class="flow-dialog-section">
+          <p><strong>{{ paperDetail.employeeName }}</strong> · {{ paperDetail.employeeNo }}</p>
+          <p>档案所属部门 · {{ paperDetail.archiveDepartment }}</p>
+          <p>借阅编号 · {{ paperDetail.loanId }}</p>
+          <p>应还时间 · {{ portalTime(paperDetail.dueAt) }}</p>
+          <p v-if="paperDetail.state === 'RETURNED'">已确认归还 · {{ portalTime(paperDetail.returnedAt) }}</p>
+          <p v-else>请联系档案所属部门的档案员，核对借阅单并跟进纸质原件归还。</p>
+        </div>
+      </div>
+      <footer class="flow-dialog-footer">
+        <a v-if="paperEntry" :href="paperEntry" class="secondary" @click="paperDialog?.close()">查看借阅详情</a>
+        <button type="button" class="primary" @click="paperDialog?.close()">关闭</button>
+      </footer>
+    </div>
+  </dialog>
   <EmployeeTodoDialog
     v-if="editor"
     v-bind="editor"

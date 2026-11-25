@@ -83,7 +83,9 @@ CREATE FUNCTION iam.capture_departure_records(departure uuid, person uuid) RETUR
   SELECT 'APPROVAL',d.id,d.recorded_at,jsonb_build_object('stepId',d.step_id,'operatorId',d.operator_id,'result',d.result,'mode',d.decision_mode)
   FROM workflow.decision d WHERE d.operator_id=person OR d.original_approver_id=person
   UNION ALL
-  SELECT 'PHYSICAL_LOAN',l.id,l.actual_delivery_at,jsonb_build_object('requestId',l.request_id,'state',l.state,'dueAt',l.due_at,'returnedAt',l.returned_at)
+  -- 新版纸质借阅在实际交付前已有占用记录，最早可追溯至取件或预约。
+  SELECT 'PHYSICAL_LOAN',l.id,COALESCE(l.actual_delivery_at,l.pickup_at,l.reserved_at),
+         jsonb_build_object('requestId',l.request_id,'state',l.state,'dueAt',l.due_at,'returnedAt',l.returned_at)
   FROM archive.physical_loan l WHERE l.borrower_id=person OR l.delivered_by=person
   UNION ALL
   SELECT 'ARCHIVE_RECORD',r.id,r.created_at,jsonb_build_object('boxId',r.box_id,'state',r.state)
