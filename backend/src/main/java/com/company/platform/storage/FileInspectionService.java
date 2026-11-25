@@ -1,6 +1,7 @@
 package com.company.platform.storage;
 
 import com.company.platform.*;
+import com.company.platform.operations.DeploymentSettings;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -8,7 +9,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 import java.nio.file.Path;
 import java.util.*;
 
-/** 将真实检测结果与租约、固定摘要和当前业务授权绑定，检测通过后仍不自动发布文档。 */
+/** 将文件校验结果与租约、固定摘要和当前业务授权绑定，校验完成后仍需业务发布。 */
 @Service
 public class FileInspectionService {
     private final Sql db; private final IdentityService identity; private final StorageBoundaries boundaries;
@@ -19,20 +20,22 @@ public class FileInspectionService {
     /** 平台台账检测独立身份，不能复用公盘或档案范围。 */
     private final String platformIdentity;
     private final ServiceIdentities services;
+    private final DeploymentSettings settings;
     public FileInspectionService(Sql db,IdentityService identity,StorageBoundaries boundaries,StorageFiles files,FileScanEngine scanner,
-        PlatformTransactionManager manager,@Value("${platform.scanner.service-id:}") String serviceIdentity,@Value("${platform.scanner.archive-service-id:}") String archiveIdentity,@Value("${platform.scanner.platform-service-id:}") String platformIdentity,ServiceIdentities services) {
-        this.db=db;this.identity=identity;this.boundaries=boundaries;this.files=files;this.scanner=scanner;this.transaction=new TransactionTemplate(manager);this.serviceIdentity=serviceIdentity;this.archiveIdentity=archiveIdentity;this.platformIdentity=platformIdentity;this.services=services;
+        PlatformTransactionManager manager,@Value("${platform.scanner.service-id:}") String serviceIdentity,@Value("${platform.scanner.archive-service-id:}") String archiveIdentity,@Value("${platform.scanner.platform-service-id:}") String platformIdentity,ServiceIdentities services,DeploymentSettings settings) {
+        this.db=db;this.identity=identity;this.boundaries=boundaries;this.files=files;this.scanner=scanner;this.transaction=new TransactionTemplate(manager);this.serviceIdentity=serviceIdentity;this.archiveIdentity=archiveIdentity;this.platformIdentity=platformIdentity;this.services=services;this.settings=settings;
     }
-    /** 所有字段来自已锁定的原任务和文件对象，不接受浏览器提供检测结论。 */
+    /** 作业来源取自原任务，病毒检测按领取时的管理配置执行。 */
     private record Work(UUID job,UUID upload,UUID object,UUID attempt,UUID service,String lease,String module,String purpose,UUID context,
-                        String key,String sha,long size,String name,String media,int inputVersion) { }
+                        String key,String sha,long size,String name,String media,int inputVersion,boolean scanRequired) { }
     /** 只由可信调度器调用，文件扫描与类型检查都在数据库事务之外执行。 */
     public void inspect(Actor actor,UUID jobId,UUID request) {
         Work work=transaction.execute(status->claim(actor,jobId)); if(work==null) throw SystemFailure.FILE_CHECK_FAILED.fault();
         try {
             QuarantineFiles store=files.get(); Path source=store.verifiedPrimary(work.key(),work.size(),work.sha());
-            ClamFileScanner.Verdict verdict=scanner.scan(source);
-            String media=verdict==ClamFileScanner.Verdict.CLEAN?FileMediaCheck.detect(source,work.name(),work.media()):null;
+            ClamFileScanner.Verdict verdict=work.scanRequired()?scanner.scan(source):null;
+            String media=!work.scanRequired()||verdict==ClamFileScanner.Verdict.CLEAN
+                ?FileMediaCheck.detect(source,work.name(),work.media()):null;
             // 台账导入仍执行专门的受限工作簿规则，不能因公盘允许普通Office而放宽导入解析。
             if(media!=null&&Set.of("IMPORT_XLSX","ARCHIVE_CHECKLIST","ARCHIVE_REGISTRATION_CHECKLIST").contains(work.purpose())&&!com.company.platform.intake.ImportWorkbook.validContainer(source))media=null;
             if(!store.verified(work.key(),work.size(),work.sha())) throw SystemFailure.FILE_CHECK_FAILED.fault();
@@ -63,7 +66,10 @@ public class FileInspectionService {
         db.update("UPDATE ops.job_attempt SET state='ABANDONED',ended_at=CURRENT_TIMESTAMP,sanitized_error='LEASE_EXPIRED' WHERE job_id=? AND state='RUNNING'",id);
         db.update("UPDATE ops.job SET state='RUNNING',lease_owner=?,lease_until=CURRENT_TIMESTAMP+interval '11 minutes',attempt_count=?,error_code=NULL WHERE id=?",lease,attempt,id);
         db.update("INSERT INTO ops.job_attempt(id,job_id,attempt_no,worker_identity_id,lease_token) VALUES(?,?,?,?,?)",attemptId,id,attempt,service,Crypto.hash(lease));
-        return new Work(id,upload,(UUID)object.get("id"),attemptId,service,lease,module,purpose,context,(String)object.get("storage_key"),(String)object.get("sha256"),((Number)object.get("byte_size")).longValue(),(String)object.get("original_name"),(String)session.get("expected_media_type"),((Number)job.get("input_version")).intValue());
+        // 仅公盘新文件和从本地上传的新版本采用此开关，其余用途继续执行病毒检测。
+        boolean paused=module.equals("DRIVE")&&Set.of("DRIVE_FILE","DRIVE_VERSION").contains(purpose)
+            &&"false".equals(settings.effective(DeploymentSettings.DRIVE_UPLOAD_VIRUS_SCAN));
+        return new Work(id,upload,(UUID)object.get("id"),attemptId,service,lease,module,purpose,context,(String)object.get("storage_key"),(String)object.get("sha256"),((Number)object.get("byte_size")).longValue(),(String)object.get("original_name"),(String)session.get("expected_media_type"),((Number)job.get("input_version")).intValue(),!paused);
     }
     /** 服务身份只允许明确模块和部门，不能作为全公司上传或正文读取通行证。 */
     private UUID worker(String module,String purpose,UUID context) {
@@ -82,18 +88,21 @@ public class FileInspectionService {
         var job=db.required("SELECT *,lease_until>CURRENT_TIMESTAMP AS valid FROM ops.job WHERE id=? FOR UPDATE",work.job());
         var session=db.required("SELECT * FROM storage.upload_session WHERE id=? FOR UPDATE",work.upload());
         if(!"RUNNING".equals(job.get("state")) || !work.lease().equals(job.get("lease_owner")) || !Boolean.TRUE.equals(job.get("valid")) || ((Number)job.get("input_version")).intValue()!=work.inputVersion() || !work.object().equals(session.get("object_id")) || !"CHECK_PENDING".equals(session.get("state"))) throw ApiFault.conflict("检测结果已失效");
-        boolean clean=verdict==ClamFileScanner.Verdict.CLEAN && media!=null;
-        String error=clean?null:verdict==ClamFileScanner.Verdict.UNAVAILABLE?"SCANNER_UNAVAILABLE":verdict==ClamFileScanner.Verdict.SUSPICIOUS?"FILE_SUSPICIOUS":"MEDIA_TYPE_NOT_ALLOWED";
-        if(clean) {
+        boolean accepted=media!=null;
+        String error=accepted?null:verdict==ClamFileScanner.Verdict.UNAVAILABLE?"SCANNER_UNAVAILABLE":verdict==ClamFileScanner.Verdict.SUSPICIOUS?"FILE_SUSPICIOUS":"MEDIA_TYPE_NOT_ALLOWED";
+        if(accepted) {
             db.update("UPDATE storage.object SET state='READY',media_type=?,check_result_ref=? WHERE id=? AND state='CHECK_PENDING'",media,work.attempt().toString(),work.object());
-            db.update("UPDATE storage.upload_session SET state='COMPLETE',result_code='CLEAN' WHERE id=?",work.upload());
+            db.update("UPDATE storage.upload_session SET state='COMPLETE',result_code=? WHERE id=?",
+                work.scanRequired()?"CLEAN":"VIRUS_SCAN_SKIPPED",work.upload());
         } else if(verdict!=ClamFileScanner.Verdict.UNAVAILABLE) {
             db.update("UPDATE storage.object SET state='QUARANTINED',check_result_ref=? WHERE id=? AND state='CHECK_PENDING'",work.attempt().toString(),work.object());
             db.update("UPDATE storage.upload_session SET state='REJECTED',result_code=? WHERE id=?",error,work.upload());
         }
-        db.update("UPDATE ops.job SET state=?,error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=?",clean?"SUCCEEDED":"FAILED",error,work.job());
-        db.update("UPDATE ops.job_attempt SET state=?,ended_at=CURRENT_TIMESTAMP,result_ref=?,sanitized_error=? WHERE id=?",clean?"SUCCEEDED":"FAILED",work.object().toString(),error,work.attempt());
-        // 与人工审计共用真实入库时点，较早启动的检查事务不能越过已有查询截点。
-        db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,module,resource_type,resource_id,action,result,request_id,record_kind,severity,actor_service_id,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,'OBJECT',?,'FILE_CHECK',?,?,'BUSINESS_EVENT',?,?,clock_timestamp())",UUID.randomUUID(),UUID.randomUUID(),work.module(),work.object(),clean?"SUCCEEDED":"DENIED",request,clean?"INFO":"WARN",work.service());
+        db.update("UPDATE ops.job SET state=?,error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=?",accepted?"SUCCEEDED":"FAILED",error,work.job());
+        db.update("UPDATE ops.job_attempt SET state=?,ended_at=CURRENT_TIMESTAMP,result_ref=?,sanitized_error=? WHERE id=?",accepted?"SUCCEEDED":"FAILED",work.object().toString(),error,work.attempt());
+        // 暂停检测的校验单独留痕。入库时点沿用审计查询截点。
+        db.update("INSERT INTO ops.audit_event(id,event_id,occurred_at,module,resource_type,resource_id,action,result,request_id,record_kind,severity,actor_service_id,ingested_at) VALUES(?,?,CURRENT_TIMESTAMP,?,'OBJECT',?,?,?,?,'BUSINESS_EVENT',?,?,clock_timestamp())",
+            UUID.randomUUID(),UUID.randomUUID(),work.module(),work.object(),work.scanRequired()?"FILE_CHECK":"FILE_VALIDATION_SCAN_SKIPPED",
+            accepted?"SUCCEEDED":"DENIED",request,accepted?"INFO":"WARN",work.service());
     }
 }

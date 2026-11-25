@@ -209,7 +209,7 @@ async function newVersion(event: Event) {
         abort.signal,
       );
     if (!alive) return;
-    const password = await ask("将检测通过的文件发布为新版本");
+    const password = await ask("将校验完成的文件发布为新版本");
     if (!password) return;
     await mutate(
       `/drive/documents/${current.id}/versions`,

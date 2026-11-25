@@ -351,7 +351,7 @@ async function upload(event: Event) {
         name: file.name,
       }),
     });
-    notice.value = "文件已通过检测并发布。";
+    notice.value = "文件校验完成并已发布。";
     await load();
   } catch (failure) {
     error.value = (failure as Error).message;

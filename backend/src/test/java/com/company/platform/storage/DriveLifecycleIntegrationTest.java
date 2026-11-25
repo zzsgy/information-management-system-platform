@@ -1,6 +1,7 @@
 package com.company.platform.storage;
 
 import com.company.platform.*;
+import com.company.platform.operations.DeploymentSettings;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -66,6 +67,8 @@ class DriveLifecycleIntegrationTest {
     @Autowired DriveLifecycle lifecycle;
     @Autowired OfficeSessions office;@Autowired OfficeGateway gateway;@Autowired OfficeReview officeReview;
     @Autowired DriveFolders folderLifecycle;
+    @Autowired DeploymentSettings deployment;
+    @Autowired Commands commands;
     /** 每项测试创建独立部门、员工、委托、对象和阅读会话，不回收历史测试数据。 */
     private Actor admin,leader,staff;private UUID department,folder,delegation;private String leaderNo,staffNo,password;
     /** 合成命中样本不包含病毒或EICAR，只匹配测试目录内自定义完整摘要。 */
@@ -246,6 +249,45 @@ class DriveLifecycleIntegrationTest {
         UUID doc=officeDocument(),session=openOffice(leader,doc);NativeScanner.DOWN.set(true);assertEquals(0,callback(session,2,null));assertEquals(1,db.count("SELECT count(*) FROM drive.document_version WHERE document_id=?",doc));var receipt=db.required("SELECT * FROM drive.save_receipt WHERE session_id=?",session);assertEquals("UNKNOWN",receipt.get("state"));assertThrows(ApiFault.class,()->officeReview.candidate(leader,(UUID)receipt.get("id")));
         int version=((Number)documents.detail(leader,doc).get("rowVersion")).intValue();officeReview.resolve(context(leader,"SAVE_RECEIPT",(UUID)receipt.get("id"),"RESOLVE",version),(UUID)receipt.get("id"),Sql.map("resolution","DISCARD","reason","检测失败舍弃"));
     }
+    @Test void driveUploadPauseReleasesValidFilesAndResumesVirusChecks() throws Exception {
+        UUID scannerGroup=(UUID)db.required("SELECT id FROM ops.deployment_settings WHERE section='SCANNER'").get("id");
+        byte[] pdf=Files.readAllBytes(Path.of(System.getenv("IMS_DRIVE_TEST_PDF")));
+        NativeScanner.DOWN.set(true);
+        UUID blocked=upload(leader,pdf);
+        assertEquals("SCANNER_UNAVAILABLE",db.required("SELECT j.error_code FROM ops.job j JOIN storage.upload_session s ON j.id=s.job_id WHERE s.id=?",blocked).get("error_code"));
+
+        configureDriveScan(scannerGroup,false);
+        try {
+            UUID valid=upload(leader,pdf);
+            var checked=db.required("SELECT state,result_code,object_id FROM storage.upload_session WHERE id=?",valid);
+            assertEquals("COMPLETE",checked.get("state"));
+            assertEquals("VIRUS_SCAN_SKIPPED",checked.get("result_code"));
+            assertEquals(1,db.count("SELECT count(*) FROM ops.audit_event WHERE resource_id=? AND action='FILE_VALIDATION_SCAN_SKIPPED' AND result='SUCCEEDED'",checked.get("object_id")));
+            assertNotNull(documents.publish(leader,Sql.map("folderId",folder.toString(),"uploadSessionId",valid.toString(),"name","暂停期间上传.pdf"),UUID.randomUUID(),UUID.randomUUID()).get("id"));
+
+            UUID invalid=upload(leader,"ordinary text".getBytes(StandardCharsets.UTF_8));
+            assertEquals(Sql.map("state","REJECTED","result_code","MEDIA_TYPE_NOT_ALLOWED"),
+                db.required("SELECT state,result_code FROM storage.upload_session WHERE id=?",invalid));
+        } finally {
+            configureDriveScan(scannerGroup,true);
+        }
+
+        UUID blockedAgain=upload(leader,pdf);
+        assertEquals("SCANNER_UNAVAILABLE",db.required("SELECT j.error_code FROM ops.job j JOIN storage.upload_session s ON j.id=s.job_id WHERE s.id=?",blockedAgain).get("error_code"));
+        NativeScanner.DOWN.set(false);
+        UUID scanned=upload(leader,pdf);
+        assertEquals("CLEAN",db.required("SELECT result_code FROM storage.upload_session WHERE id=?",scanned).get("result_code"));
+    }
+
+    private void configureDriveScan(UUID id,boolean enabled) {
+        var group=deployment.get(admin,id);
+        var update=new LinkedHashMap<Object,Object>((Map<?,?>)group.get("values"));
+        update.put(DeploymentSettings.DRIVE_UPLOAD_VIRUS_SCAN,Boolean.toString(enabled));
+        var body=Sql.map("values",update,"reason","隔离验收切换公盘上传病毒检测");
+        var ctx=context(admin,"DEPLOYMENT_SETTINGS",id,"CONFIGURE_DEPLOYMENT",((Number)group.get("rowVersion")).intValue());
+        commands.run(ctx,body,"DEPLOYMENT_SETTINGS",id,"CONFIGURE_DEPLOYMENT",()->deployment.get(admin,id),()->deployment.save(ctx,id,body),key->deployment.get(admin,key));
+    }
+
     @Test void versionUploadBindsEditPermissionAndDocument()throws Exception {
         UUID doc=published();byte[] content=Files.readAllBytes(Path.of(System.getenv("IMS_DRIVE_TEST_PDF")));String hash=digest(content,"SHA-256");var body=Sql.map("module","DRIVE","purpose","DRIVE_VERSION","businessContextId",doc.toString(),"originalName","新版本.pdf","expectedSize",content.length,"expectedSha256",hash,"expectedMediaType","application/pdf");
         assertEquals(403,assertThrows(ApiFault.class,()->uploads.create(staff,body,UUID.randomUUID(),UUID.randomUUID())).status);

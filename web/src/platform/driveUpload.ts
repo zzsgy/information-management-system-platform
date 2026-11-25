@@ -125,8 +125,8 @@ export async function uploadDrive(
           ? "文件已上传，正在合并校验"
           : "文件已上传，等待合并校验"
         : job.state === "RUNNING"
-          ? "文件已上传，正在检测"
-          : "文件已上传，等待检测服务处理",
+          ? "文件已上传，正在校验文件"
+          : "文件已上传，等待文件校验",
       null,
     );
     await new Promise((resolve) => setTimeout(resolve, 2000));
