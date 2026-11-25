@@ -24,6 +24,7 @@ class EmployeeProfileIntegrationTest {
     @Autowired DirectoryService directory;
     @Autowired Commands commands;
     @Autowired AccountRecovery recovery;
+    @Autowired AccountController accounts;
     @Autowired ImportService imports;
     @Autowired EmployeeDeparture departures;
     @Autowired Audit audit;
@@ -217,6 +218,71 @@ class EmployeeProfileIntegrationTest {
         assertEquals(3,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD'",user));assertTrue(login(no,no).setupRequired());
         assertEquals(1,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD' AND consumed_at IS NULL",user));
     }
+    /** 真正执行批量入口，覆盖多页、过滤、在用状态、单次凭据和幂等重试。 */
+    @Test void batchResetsOnlyPendingAccountsAcrossPages() {
+        String keyword = "批量隔离-" + UUID.randomUUID();
+        var issued = createWithEmployeePassword();
+        UUID pending = Inputs.uuid(issued.get("id"));
+        String pendingNo = issued.get("employeeNo").toString();
+        Actor oldPending = login(pendingNo,pendingNo);
+        Actor normal = login(employee.toString(),PASSWORD);
+        UUID disabled = person(), departed = person(), outside = person(), otherEmail = person();
+        String emailFilter = keyword.substring(5);
+        String matchingEmail = emailFilter + "@biolink.com";
+        db.update("UPDATE iam.user_account SET name=?,company_email=? WHERE id=?",keyword,matchingEmail,pending);
+        db.update("UPDATE iam.user_account SET name=?,company_email=? WHERE id=?",keyword,"normal-"+matchingEmail,employee);
+        db.update("UPDATE iam.user_account SET name=?,company_email=?,password_setup_required=true,status='DISABLED' WHERE id=?",keyword,"disabled-"+matchingEmail,disabled);
+        db.update("UPDATE iam.user_account SET name=?,company_email=?,password_setup_required=true,status='DEPARTED' WHERE id=?",keyword,"departed-"+matchingEmail,departed);
+        db.update("UPDATE iam.user_account SET name=?,company_email=?,password_setup_required=true WHERE id=?","其他人员","other-"+matchingEmail,outside);
+        db.update("UPDATE iam.user_account SET name=?,password_setup_required=true WHERE id=?",keyword,otherEmail);
+        String oldHash = Crypto.password(PASSWORD);
+        var crossPage = new ArrayList<UUID>();
+        for(int i=0;i<20;i++){
+            UUID id=UUID.randomUUID();
+            db.update("""
+                    INSERT INTO iam.user_account(id,employee_no,name,department_id,company_email,password_hash,password_setup_required)
+                    VALUES(?,?,?,?,?,?,true)
+                    """,id,id.toString(),keyword,admin.user().get("departmentId"),i+"-"+matchingEmail,oldHash);
+            crossPage.add(id);
+        }
+        var filters=Map.of("keyword",keyword,"departmentId",admin.user().get("departmentId").toString(),"email",emailFilter);
+        assertEquals(20,((List<?>)directory.users(admin,filters).get("items")).size());
+        var incorrect=batchPasswordRequest(credentialContext("COLLECTION",ApiController.COLLECTION,"CREATE_USER",null),admin);
+        assertEquals(403,assertThrows(ApiFault.class,()->accounts.resetPending(filters,incorrect)).status);
+        var ctx=credentialContext("COLLECTION",ApiController.COLLECTION,AccountRecovery.RESET_PENDING_PASSWORDS,null);
+        assertEquals(403,assertThrows(ApiFault.class,()->accounts.resetPending(filters,batchPasswordRequest(ctx,normal))).status);
+        var request=batchPasswordRequest(ctx,admin);
+        var first=(Map<?,?>)accounts.resetPending(filters,request).get("data");
+        var replay=(Map<?,?>)accounts.resetPending(filters,request).get("data");
+        assertEquals(21,((Number)first.get("resetCount")).intValue());
+        assertEquals(21,((Number)replay.get("resetCount")).intValue());
+        assertEquals(first.get("objectId"),replay.get("objectId"));
+        assertEquals(409,assertThrows(ApiFault.class,()->accounts.resetPending(Map.of("keyword","改动筛选"),request)).status);
+        assertThrows(ApiFault.class,()->identity.background(oldPending.sessionId()));
+        assertTrue(login(pendingNo,pendingNo).setupRequired());
+        assertTrue(login(crossPage.getLast().toString(),crossPage.getLast().toString()).setupRequired());
+        assertEquals(normal.sessionId(),identity.background(normal.sessionId()).sessionId());
+        for(UUID id:List.of(employee,disabled,departed,outside,otherEmail)){
+            var saved=db.required("SELECT row_version,password_hash FROM iam.user_account WHERE id=?",id);
+            assertEquals(1,saved.get("row_version"));
+            assertTrue(Crypto.matches(PASSWORD,saved.get("password_hash")));
+        }
+        assertEquals(1,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD' AND consumed_at IS NULL AND expires_at>CURRENT_TIMESTAMP+interval '23 hours'",pending));
+        assertEquals(2,db.count("SELECT count(*) FROM iam.credential_challenge WHERE user_id=? AND purpose='TEMP_PASSWORD'",pending));
+        var empty=(Map<?,?>)accounts.resetPending(Map.of("keyword",UUID.randomUUID().toString()),
+            batchPasswordRequest(credentialContext("COLLECTION",ApiController.COLLECTION,AccountRecovery.RESET_PENDING_PASSWORDS,null),admin)).get("data");
+        assertEquals(0,((Number)empty.get("resetCount")).intValue());
+    }
+
+    private org.springframework.mock.web.MockHttpServletRequest batchPasswordRequest(Commands.Context ctx,Actor actor) {
+        var request=new org.springframework.mock.web.MockHttpServletRequest("POST","/api/v1/admin/users/pending-password-reset");
+        request.setAttribute(HttpBoundary.ACTOR,actor);
+        request.setAttribute(HttpBoundary.REQUEST,ctx.request());
+        request.addHeader("X-Operation-Id",ctx.operation().toString());
+        request.addHeader("X-Reauth-Token",ctx.reauth());
+        return request;
+    }
+
     @Test void expiredInitialPasswordAndDisabledAccountAreRejected(){
         var result=createWithEmployeePassword();UUID user=Inputs.uuid(result.get("id"));String no=result.get("employeeNo").toString();
         db.update("UPDATE iam.credential_challenge SET issued_at=CURRENT_TIMESTAMP-interval '2 days',expires_at=CURRENT_TIMESTAMP-interval '1 day' WHERE user_id=?",user);

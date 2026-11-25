@@ -16,6 +16,17 @@ public class AccountController {
     @PostMapping("/auth/password-recovery/complete") public Map<String,Object> complete(@RequestBody Map<String,Object> body,HttpServletRequest r){return ok(recovery.complete(body,r.getRemoteAddr(),ApiController.requestId(r)),r);}
     /** 管理重置复用既有权限、再验证、版本与幂等事务，不直接返回临时密码。 */
     @PostMapping("/admin/users/{id}/password-reset") public Map<String,Object> reset(@PathVariable String id,@RequestBody Map<String,Object> body,HttpServletRequest r){UUID target=Inputs.uuid(id);var ctx=context(r);return ok(commands.run(ctx,body,"USER",target,"RESET_PASSWORD",()->ctx.actor().require("PLATFORM.USERS_MANAGE"),()->recovery.reset(ctx,target,body),key->Sql.map("objectId",key,"state","SUCCEEDED")),r);}
+    /** 仅平台 IT 可操作；接收人员列表筛选，返回重置数量，失败沿用管理事务回滚。 */
+    @PostMapping("/admin/users/pending-password-reset")
+    public Map<String,Object> resetPending(@RequestBody Map<String,String> filters, HttpServletRequest r) {
+        var ctx=context(r);
+        return ok(commands.run(ctx,new LinkedHashMap<>(filters),"COLLECTION",ApiController.COLLECTION,
+            AccountRecovery.RESET_PENDING_PASSWORDS,()->{
+                ctx.actor().require("PLATFORM.USERS_MANAGE");
+                if(!ctx.actor().systemAdministrator())throw ApiFault.denied();
+            },()->recovery.resetPending(ctx,filters),recovery::pendingResetReceipt),r);
+    }
+
     /** 本人中心返回真实部门和当前角色，基础身份仍由IT维护。 */
     @GetMapping("/auth/profile") public Map<String,Object> profile(HttpServletRequest r){Actor actor=actor(r);var result=new LinkedHashMap<>(actor.profile());result.put("departmentName",db.required("SELECT name FROM iam.department WHERE id=?",actor.user().get("departmentId")).get("name"));return ok(result,r);}
     /** IT查看受限技术状态，禁止读取凭据明文或邮箱服务秘密。 */

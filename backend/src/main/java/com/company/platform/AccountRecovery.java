@@ -11,8 +11,11 @@ import java.util.*;
 @Service
 public class AccountRecovery {
     private final Sql db;private final IdentityService identity;private final SecurityLedger ledger;private final Audit audit;private final CredentialDelivery delivery;private final AccountMessages messages;
+    /** 批次权限令牌与审计记录共用动作名。 */
+    static final String RESET_PENDING_PASSWORDS = "RESET_PENDING_PASSWORDS";
+    private final DirectoryService directory;
     private final SecureRandom random=new SecureRandom();
-    public AccountRecovery(Sql db,IdentityService identity,SecurityLedger ledger,Audit audit,CredentialDelivery delivery,AccountMessages messages){this.db=db;this.identity=identity;this.ledger=ledger;this.audit=audit;this.delivery=delivery;this.messages=messages;}
+    public AccountRecovery(Sql db,IdentityService identity,SecurityLedger ledger,Audit audit,CredentialDelivery delivery,AccountMessages messages,DirectoryService directory){this.db=db;this.identity=identity;this.ledger=ledger;this.audit=audit;this.delivery=delivery;this.messages=messages;this.directory=directory;}
     /** 匿名发码/重发；数据库串行化同账号限额，累计失败次数保留在同一找回流程。 */
     @Transactional(noRollbackFor=CredentialFault.class)
     public Map<String,Object> request(Map<String,Object> body,String source,UUID request){
@@ -56,11 +59,42 @@ public class AccountRecovery {
     public Map<String,Object> reset(Commands.Context ctx,UUID target,Map<String,Object> body){
         Inputs.only(body,"reason");Inputs.text(body,"reason",1000);if(target.equals(ctx.actor().userId()))throw ApiFault.invalid("本人请使用修改密码或邮箱找回");
         var user=db.required("SELECT * FROM iam.user_account WHERE id=? FOR UPDATE",target);Commands.version(ctx,user);if(!"ACTIVE".equals(user.get("status")))throw ApiFault.conflict("停用账号不能重置密码");
-        ledger.check(target,((Number)user.get("auth_version")).intValue());closeCredentials(target);String temporary=user.get("employee_no").toString();
-        db.update("UPDATE iam.user_account SET password_hash=?,password_setup_required=true,row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",Crypto.password(temporary),target);
-        delivery.issue(target,temporary,user.get("company_email").toString());identity.invalidate(target,"PASSWORD_RESET",ctx.operation());
-        db.update("DELETE FROM ops.auth_throttle WHERE bucket=?",ledger.bucket("account:"+user.get("employee_no")));return Commands.result(ctx,target,((Number)user.get("row_version")).intValue()+1);
+        prepareEmployeeNumberPassword(user);
+        identity.invalidate(target,"PASSWORD_RESET",ctx.operation());
+        return Commands.result(ctx,target,((Number)user.get("row_version")).intValue()+1);
     }
+    /** 一次管理验证覆盖当前筛选的全部待设密员工；共用单人重置的临时凭据规则。 */
+    Map<String,Object> resetPending(Commands.Context ctx, Map<String,String> filters) {
+        var users = directory.pendingPasswordUsers(ctx.actor(), filters);
+        UUID batch = UUID.randomUUID();
+        // 先准备全部口令和投递，再推进独立账本，避免某个账号的投递失败留下已撤销的旧代次。
+        for (var user : users) {
+            prepareEmployeeNumberPassword(user);
+            audit.event(ctx.actor().userId(),"PLATFORM","USER",(UUID)user.get("id"),"RESET_PASSWORD","SUCCEEDED",batch);
+        }
+        for (var user : users) identity.invalidate((UUID)user.get("id"),"PASSWORD_RESET",ctx.operation());
+        return Sql.map("objectId",batch,"resetCount",users.size());
+    }
+
+    /** 批次审计关联 HTTP 请求，逐人审计以批次号关联；重试回读原数量。 */
+    Map<String,Object> pendingResetReceipt(UUID batch) {
+        return Sql.map("objectId",batch,"resetCount",db.count("""
+                SELECT count(*) FROM ops.audit_event
+                WHERE request_id=? AND action='RESET_PASSWORD' AND record_kind='BUSINESS_EVENT'
+                """,batch));
+    }
+
+    /** 更新工号密码和临时凭据，保留单人及批量重置一致的生命周期。 */
+    private void prepareEmployeeNumberPassword(Map<String,Object> user) {
+        UUID target=(UUID)user.get("id");
+        String employeeNo=user.get("employee_no").toString();
+        ledger.check(target,((Number)user.get("auth_version")).intValue());
+        closeCredentials(target);
+        db.update("UPDATE iam.user_account SET password_hash=?,password_setup_required=true,row_version=row_version+1,updated_at=CURRENT_TIMESTAMP WHERE id=?",Crypto.password(employeeNo),target);
+        delivery.issue(target,employeeNo,user.get("company_email").toString());
+        db.update("DELETE FROM ops.auth_throttle WHERE bucket=?",ledger.bucket("account:"+employeeNo));
+    }
+
     private void closeCredentials(UUID user){db.update("UPDATE iam.credential_challenge SET consumed_at=CURRENT_TIMESTAMP WHERE user_id=? AND consumed_at IS NULL",user);db.update("UPDATE iam.password_recovery SET closed_at=CURRENT_TIMESTAMP,code_hash=NULL WHERE user_id=? AND closed_at IS NULL",user);}
     /** 来源每小时最多100次请求，既包含发码也包含验证；不以账号存在性决定限流响应。 */
     private void sourceLimit(String source){String bucket=ledger.bucket("recovery-source:"+source);db.update("INSERT INTO ops.auth_throttle(bucket) VALUES(?) ON CONFLICT DO NOTHING",bucket);var row=db.required("SELECT *,window_start>CURRENT_TIMESTAMP-interval '1 hour' AS current FROM ops.auth_throttle WHERE bucket=? FOR UPDATE",bucket);if(Boolean.TRUE.equals(row.get("current"))&&((Number)row.get("attempts")).intValue()>=100)throw new CredentialFault(429,"RECOVERY_RATE_LIMIT","请求过于频繁，请稍后再试");db.update("UPDATE ops.auth_throttle SET attempts=CASE WHEN window_start>CURRENT_TIMESTAMP-interval '1 hour' THEN attempts+1 ELSE 1 END,window_start=CASE WHEN window_start>CURRENT_TIMESTAMP-interval '1 hour' THEN window_start ELSE CURRENT_TIMESTAMP END WHERE bucket=?",bucket);}

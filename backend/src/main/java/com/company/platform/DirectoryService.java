@@ -41,8 +41,30 @@ public class DirectoryService {
             actor.require("PLATFORM.USERS_MANAGE");
         else
             selector(actor, query.get("purpose"));
-        StringBuilder where = new StringBuilder(" WHERE true");
         List<Object> args = new ArrayList<>();
+        StringBuilder where = userFilters(query, args, full);
+        if (!full)
+            where.append(" AND status='ACTIVE'");
+        return page("iam.user_account", where.toString(), args, query, "id",
+                row -> full ? Sql.map("representation", "FULL", "user", Sql.view(row, DIRECTORY_USER_FIELDS))
+                        : Sql.map("representation", "SELECTOR", "selector",
+                                Sql.view(row, "id,employee_no,name,department_id")));
+    }
+
+    /** 仅选中与列表筛选一致的在用待设密员工，锁定时由数据库重查账号状态。 */
+    List<Map<String,Object>> pendingPasswordUsers(Actor actor, Map<String,String> filters) {
+        Inputs.only(filters, "keyword", "departmentId", "status", "email");
+        List<Object> args = new ArrayList<>();
+        StringBuilder where = userFilters(filters, args, true);
+        args.add(actor.userId());
+        return db.rows("SELECT id,employee_no,company_email,auth_version FROM iam.user_account" + where
+                + " AND status='ACTIVE' AND password_setup_required AND id<>?"
+                + " ORDER BY id FOR UPDATE", args.toArray());
+    }
+
+    /** 人员列表、选择器与管理批处理共享姓名、工号、部门和账号状态匹配。 */
+    private StringBuilder userFilters(Map<String,String> query, List<Object> args, boolean full) {
+        StringBuilder where = new StringBuilder(" WHERE true");
         keyword(query, where, args, "name", "employee_no");
         if (query.containsKey("departmentId")) {
             where.append(" AND department_id=?");
@@ -53,12 +75,7 @@ public class DirectoryService {
             args.add(Inputs.choice(query.get("status"), "ACTIVE", "DISABLED", "DEPARTED"));
         }
         if (full) where.append(new ListConditions(query,args).contains("email","company_email").sql());
-        if (!full)
-            where.append(" AND status='ACTIVE'");
-        return page("iam.user_account", where.toString(), args, query, "id",
-                row -> full ? Sql.map("representation", "FULL", "user", Sql.view(row, DIRECTORY_USER_FIELDS))
-                        : Sql.map("representation", "SELECTOR", "selector",
-                                Sql.view(row, "id,employee_no,name,department_id")));
+        return where;
     }
 
     /** 部门树由有界分页结果构建；父级关系与详情不额外泄露人员信息。 */

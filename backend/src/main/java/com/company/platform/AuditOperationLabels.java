@@ -154,6 +154,7 @@ final class AuditOperationLabels {
         Map.entry("POST /admin/users", "新增员工账号"),
         Map.entry("POST /admin/departments", "新增部门"),
         Map.entry("POST /admin/users/{id}/password-reset", "重置员工密码"),
+        Map.entry("POST /admin/users/pending-password-reset", "批量重置待设密账号密码"),
         Map.entry("DELETE /admin/users/{id}/session", "结束员工登录会话"),
         Map.entry("POST /admin/audit-exports/{id}", "申请导出操作记录"),
         Map.entry("GET /admin/audit-exports/{id}/file", "下载操作记录"),

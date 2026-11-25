@@ -19,12 +19,13 @@ import {
   query,
   type Department,
   type Page,
+  type PasswordPromptOptions,
   type User,
 } from "./api";
 const Imports = defineAsyncComponent(() => import("./Imports.vue"));
 /** 复用全局验证和提示；取消验证直接中止提交。 */
 const askPassword =
-  inject<(title: string) => Promise<string | null>>("askPassword")!;
+  inject<(title: string, options?: PasswordPromptOptions) => Promise<string | null>>("askPassword")!;
 const inform = inject<(message: string) => void>("inform")!;
 /** 名片字段仅在人员管理返回。 */
 interface DirectoryUser extends User {
@@ -55,6 +56,9 @@ const users = ref<DirectoryUser[]>([]),
   departments = ref<Department[]>([]),
   departmentOptions = ref<Department[]>([]);
 let queryVersion = 0;
+/** 批量重置使用屏幕上已经应用的筛选，未提交的输入不改变作用范围。 */
+const appliedUserFilters = ref<Record<string, string> | null>(null);
+const resettingPending = ref(false);
 /** 编辑只复制当前记录；保存之前不修改表格中的服务端结果。 */
 const dialog = ref<HTMLDialogElement | null>(null),
   editUser = ref<DirectoryUser | null>(null),
@@ -196,6 +200,38 @@ async function resetPassword() {
     saving.value = false;
   }
 }
+/** 交给服务端按筛选跨页处理，只需验证一次 IT 本人密码。 */
+async function resetPendingPasswords() {
+  if (!appliedUserFilters.value || resettingPending.value) return;
+  const filters = appliedUserFilters.value;
+  resettingPending.value = true;
+  error.value = "";
+  try {
+    const password = await askPassword(
+      "将当前筛选结果中所有页的待设密账号密码重置为各自工号，24 小时内首次登录须修改密码。请输入本人密码。",
+      { heading: "一键重置待设密密码", confirmLabel: "确认批量重置", danger: true },
+    );
+    if (password === null) return;
+    const result = await mutate<{ resetCount: number }>(
+      "/admin/users/pending-password-reset",
+      "POST",
+      Object.fromEntries(new URLSearchParams(query(filters))),
+      COLLECTION,
+      "COLLECTION",
+      "RESET_PENDING_PASSWORDS",
+      password,
+    );
+    if (tab.value === "users") await load(filters);
+    inform(result.resetCount
+      ? `已将 ${result.resetCount} 个待设密账号的密码重置为各自工号`
+      : "当前筛选结果中没有可重置的待设密账号");
+  } catch (failure) {
+    error.value = (failure as Error).message;
+  } finally {
+    resettingPending.value = false;
+  }
+}
+
 const departmentNames = computed(
   () =>
     new Map(
@@ -222,15 +258,25 @@ async function loadDepartments() {
   departmentOptions.value = rows;
 }
 /** 只在提交搜索或翻页时请求，避免每次按键触发数据库查询。 */
-async function load() {
+async function load(selectedFilters?: Record<string, string>) {
   const version = ++queryVersion;
+  const userFilters = selectedFilters ?? {
+    keyword: keyword.value, status: status.value,
+    departmentId: departmentFilter.value, email: emailFilter.value,
+  };
   loading.value = true;
   error.value = "";
   try {
     const result = await api<Page<{ user?: DirectoryUser; department?: Department }>>(
-      `/admin/${tab.value}?${query({ page: page.value, pageSize: 20, keyword: keyword.value, status: status.value, departmentId: tab.value === "users" ? departmentFilter.value : undefined, parentId: tab.value === "departments" ? parentFilter.value : undefined, email: tab.value === "users" ? emailFilter.value : undefined })}`,
+      `/admin/${tab.value}?${query({
+        page: page.value, pageSize: 20,
+        ...(tab.value === "users" ? userFilters : {
+          keyword: keyword.value, status: status.value, parentId: parentFilter.value,
+        }),
+      })}`,
     );
     if (version !== queryVersion) return;
+    appliedUserFilters.value = tab.value === "users" ? userFilters : null;
     users.value = result.items.flatMap((row) => (row.user ? [row.user] : []));
     departments.value = result.items.flatMap((row) =>
       row.department ? [row.department] : [],
@@ -501,6 +547,15 @@ onMounted(async () => {
         >公司邮箱<input v-model="emailFilter" type="search" maxlength="200"
       /></label>
       <button class="secondary" :disabled="loading">搜索</button>
+      <button
+        v-if="tab === 'users' && canEditIdentity"
+        type="button"
+        class="secondary people-bulk-reset"
+        :disabled="loading || resettingPending || !appliedUserFilters"
+        @click="resetPendingPasswords"
+      >
+        {{ resettingPending ? "正在重置…" : "一键重置待设密密码" }}
+      </button>
     </form>
     <p v-if="error" class="form-error inset" role="alert">{{ error }}</p>
     <div v-if="loading" class="loading-line" role="status">正在读取…</div>
@@ -1014,6 +1069,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.people-bulk-reset {
+  margin-inline-start: auto;
+}
+
 .people-import {
   width: min(780px, calc(100vw - 32px));
 }
