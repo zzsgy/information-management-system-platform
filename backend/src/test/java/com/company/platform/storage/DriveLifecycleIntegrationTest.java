@@ -2,6 +2,7 @@ package com.company.platform.storage;
 
 import com.company.platform.*;
 import com.company.platform.operations.DeploymentSettings;
+import com.company.platform.intake.ImportWorkbook;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -111,10 +112,21 @@ class DriveLifecycleIntegrationTest {
     }
     /** 按真实分片、合并与扫描步骤进入检测，不直接改对象READY状态。 */
     private UUID upload(Actor actor,byte[] content) {
-        String hash=digest(content,"SHA-256");UUID request=UUID.randomUUID();
-        UUID id=(UUID)uploads.create(actor,Sql.map("module","DRIVE","businessContextId",folder.toString(),"originalName","合成验收.pdf","expectedSize",content.length,"expectedSha256",hash,"expectedMediaType","application/pdf","purpose","DRIVE_FILE"),UUID.randomUUID(),request).get("uploadId");
-        uploads.part(actor,id,1,"bytes 0-"+(content.length-1)+"/"+content.length,content.length,hash,new ByteArrayInputStream(content),request);
-        UUID job=(UUID)uploads.complete(actor,id,Sql.map("partCount",1,"finalSha256",hash),UUID.randomUUID(),request).get("jobId");assembly.assemble(actor,job,request);inspection.inspect(actor,job,request);return id;
+        var submitted=queueUpload(actor,"合成验收.pdf","application/pdf",content);
+        UUID job=(UUID)submitted.get("jobId"), request=UUID.randomUUID();
+        assembly.assemble(actor,job,request);
+        inspection.inspect(actor,job,request);
+        return (UUID)submitted.get("uploadId");
+    }
+
+    private Map<String,Object> queueUpload(Actor actor,String name,String media,byte[] content) {
+        String hash=digest(content,"SHA-256");
+        UUID request=UUID.randomUUID();
+        UUID upload=(UUID)uploads.create(actor,Sql.map("module","DRIVE","businessContextId",folder.toString(),"originalName",name,
+            "expectedSize",content.length,"expectedSha256",hash,"expectedMediaType",media,"purpose","DRIVE_FILE"),UUID.randomUUID(),request).get("uploadId");
+        uploads.part(actor,upload,1,"bytes 0-"+(content.length-1)+"/"+content.length,content.length,hash,new ByteArrayInputStream(content),request);
+        UUID job=(UUID)uploads.complete(actor,upload,Sql.map("partCount",1,"finalSha256",hash),UUID.randomUUID(),request).get("jobId");
+        return Sql.map("uploadId",upload,"jobId",job);
     }
     private UUID published() throws Exception {UUID upload=upload(leader,Files.readAllBytes(Path.of(System.getenv("IMS_DRIVE_TEST_PDF"))));return (UUID)documents.publish(leader,Sql.map("folderId",folder.toString(),"uploadSessionId",upload.toString(),"name","已发布验收.pdf"),UUID.randomUUID(),UUID.randomUUID()).get("id");}
     private UUID preview(Actor actor,UUID document) {UUID job=(UUID)reading.create(actor,document,Map.of(),UUID.randomUUID(),UUID.randomUUID()).get("jobId");reading.prepare(actor,job,UUID.randomUUID());return Inputs.uuid(db.required("SELECT business_ref FROM ops.job WHERE id=?",job).get("business_ref"));}
@@ -256,7 +268,7 @@ class DriveLifecycleIntegrationTest {
         UUID blocked=upload(leader,pdf);
         assertEquals("SCANNER_UNAVAILABLE",db.required("SELECT j.error_code FROM ops.job j JOIN storage.upload_session s ON j.id=s.job_id WHERE s.id=?",blocked).get("error_code"));
 
-        configureDriveScan(scannerGroup,false);
+        configureDriveFileProcessing(scannerGroup,false,false);
         try {
             UUID valid=upload(leader,pdf);
             var checked=db.required("SELECT state,result_code,object_id FROM storage.upload_session WHERE id=?",valid);
@@ -269,7 +281,7 @@ class DriveLifecycleIntegrationTest {
             assertEquals(Sql.map("state","REJECTED","result_code","MEDIA_TYPE_NOT_ALLOWED"),
                 db.required("SELECT state,result_code FROM storage.upload_session WHERE id=?",invalid));
         } finally {
-            configureDriveScan(scannerGroup,true);
+            configureDriveFileProcessing(scannerGroup,true,false);
         }
 
         UUID blockedAgain=upload(leader,pdf);
@@ -279,13 +291,66 @@ class DriveLifecycleIntegrationTest {
         assertEquals("CLEAN",db.required("SELECT result_code FROM storage.upload_session WHERE id=?",scanned).get("result_code"));
     }
 
-    private void configureDriveScan(UUID id,boolean enabled) {
+    private void configureDriveFileProcessing(UUID id,boolean scan,boolean worker) {
         var group=deployment.get(admin,id);
         var update=new LinkedHashMap<Object,Object>((Map<?,?>)group.get("values"));
-        update.put(DeploymentSettings.DRIVE_UPLOAD_VIRUS_SCAN,Boolean.toString(enabled));
+        update.put(DeploymentSettings.DRIVE_UPLOAD_VIRUS_SCAN,Boolean.toString(scan));
+        update.put(DeploymentSettings.FILE_WORKER_ENABLED,Boolean.toString(worker));
         var body=Sql.map("values",update,"reason","隔离验收切换公盘上传病毒检测");
         var ctx=context(admin,"DEPLOYMENT_SETTINGS",id,"CONFIGURE_DEPLOYMENT",((Number)group.get("rowVersion")).intValue());
         commands.run(ctx,body,"DEPLOYMENT_SETTINGS",id,"CONFIGURE_DEPLOYMENT",()->deployment.get(admin,id),()->deployment.save(ctx,id,body),key->deployment.get(admin,key));
+    }
+
+    @Test void scheduledWorkerPublishesDriveFilesWithVirusScanPaused() throws Exception {
+        UUID scannerGroup=(UUID)db.required("SELECT id FROM ops.deployment_settings WHERE section='SCANNER'").get("id");
+        byte[] docx=DriveMediaAndProtocolTest.relocatedWordPackage();
+        byte[] pdf=Files.readAllBytes(Path.of(System.getenv("IMS_DRIVE_TEST_PDF")));
+        byte[] xlsx=ImportWorkbook.template("EMPLOYEE");
+        var candidates = new LinkedHashMap<>(Map.of("自定义主部件.docx",docx,"标准PDF.pdf",pdf,"工作簿.xlsx",xlsx,
+            "伪装文件.docx","非Word内容".getBytes(StandardCharsets.UTF_8)));
+        String wpsFixture=System.getenv("IMS_DRIVE_TEST_DOCX");
+        if(wpsFixture!=null) candidates.put("WPS文档.docx",Files.readAllBytes(Path.of(wpsFixture)));
+        String presentation=System.getenv("IMS_DRIVE_TEST_PPTX");
+        if(presentation!=null) candidates.put("演示文稿.pptx",Files.readAllBytes(Path.of(presentation)));
+        var submitted=new LinkedHashMap<String,Map<String,Object>>();
+        for(var candidate : candidates.entrySet()) {
+            submitted.put(candidate.getKey(),queueUpload(leader,candidate.getKey(),"application/octet-stream",candidate.getValue()));
+        }
+        UUID first=(UUID)submitted.get("自定义主部件.docx").get("jobId");
+        var waiting=uploads.job(leader,first);
+        assertEquals("FILE_ASSEMBLY_CHECK",waiting.get("jobType"));
+        assertEquals("PENDING",waiting.get("state"));
+        assertEquals("FILE_WORKER_DISABLED",waiting.get("errorCode"));
+        assertEquals(0,waiting.get("attemptCount"));
+
+        NativeScanner.DOWN.set(true);
+        configureDriveFileProcessing(scannerGroup,false,true);
+        try {
+            Instant deadline=Instant.now().plusSeconds(45);
+            for(var entry : submitted.entrySet()) {
+                UUID id=(UUID)entry.getValue().get("uploadId"), job=(UUID)entry.getValue().get("jobId");
+                var status=uploads.job(leader,job);
+                while(Set.of("PENDING","RUNNING").contains(status.get("state")) && Instant.now().isBefore(deadline)) {
+                    Thread.sleep(100);
+                    status=uploads.job(leader,job);
+                }
+                if(entry.getKey().equals("伪装文件.docx")) {
+                    assertEquals("FAILED",status.get("state"),status.toString());
+                    assertEquals("MEDIA_TYPE_NOT_ALLOWED",status.get("errorCode"));
+                    continue;
+                }
+                assertEquals("SUCCEEDED",status.get("state"),status.toString());
+                assertEquals("VIRUS_SCAN_SKIPPED",db.required("SELECT result_code FROM storage.upload_session WHERE id=?",id).get("result_code"));
+                UUID document=(UUID)documents.publish(leader,Sql.map("folderId",folder.toString(),"uploadSessionId",id.toString(),
+                    "name",entry.getKey()),UUID.randomUUID(),UUID.randomUUID()).get("id");
+                byte[] expected=candidates.get(entry.getKey());
+                var delivered=new ByteArrayOutputStream();
+                lifecycle.stream(leader,document,null,0,expected.length,delivered,UUID.randomUUID());
+                assertArrayEquals(expected,delivered.toByteArray());
+            }
+        } finally {
+            configureDriveFileProcessing(scannerGroup,true,false);
+        }
     }
 
     @Test void versionUploadBindsEditPermissionAndDocument()throws Exception {

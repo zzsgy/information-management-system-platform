@@ -19,10 +19,12 @@ public class DeploymentSettings {
     public record Field(String key,String label,String type,String fallback) {}
     /** 默认开启，仅控制公盘网页上传的 ClamAV 检测。 */
     public static final String DRIVE_UPLOAD_VIRUS_SCAN="platform.scanner.drive-upload-virus-scan";
+    /** 控制队列中的文件合并、校验和预览。 */
+    public static final String FILE_WORKER_ENABLED="platform.file-worker.enabled";
     private static Field f(String key,String label,String type,String fallback){return new Field("platform."+key,label,type,fallback);}
     public static final Map<String,List<Field>> FIELDS=new LinkedHashMap<>();
     static {
-        FIELDS.put("SCANNER",List.of(f("scanner.executable","ClamAV检测程序 clamscan.exe","file",""),f("scanner.database","官方病毒库目录（main、daily）","directory",""),f("scanner.temporary","检测临时目录","directory",""),f("scanner.timeout-seconds","检测超时（秒）","number","300"),f("file-worker.enabled","启用后台文件处理","boolean","false"),new Field(DRIVE_UPLOAD_VIRUS_SCAN,"公盘上传病毒检测","boolean","true"),f("scan-intake.worker-enabled","启用扫描件检测处理","boolean","true")));
+        FIELDS.put("SCANNER",List.of(f("scanner.executable","ClamAV检测程序 clamscan.exe","file",""),f("scanner.database","官方病毒库目录（main、daily）","directory",""),f("scanner.temporary","检测临时目录","directory",""),f("scanner.timeout-seconds","检测超时（秒）","number","300"),new Field(FILE_WORKER_ENABLED,"启用后台文件处理","boolean","false"),new Field(DRIVE_UPLOAD_VIRUS_SCAN,"公盘上传病毒检测","boolean","true"),f("scan-intake.worker-enabled","启用扫描件检测处理","boolean","true")));
         FIELDS.put("STORAGE",List.of(f("storage.primary","原件主目录","directory",""),f("storage.secondary","原件副本目录","directory","")));
         FIELDS.put("READING",List.of(f("reading.java","Java程序 java.exe","file",""),f("reading.worker-jar","PDF隔离处理程序 JAR","file",""),f("reading.temporary","阅读临时目录","directory",""),f("reading.audit-root","阅读与交付回执目录","directory",""),f("export.primary","导出副本主目录","directory",""),f("export.secondary","导出副本次目录","directory",""),f("export.temporary","导出临时目录","directory","")));
         FIELDS.put("OFFICE",List.of(f("office.enabled","启用Office文档服务","boolean","false"),f("office.browser-origin","浏览器访问Office的地址","origin",""),f("office.server-origin","服务器访问Office的地址","origin",""),f("office.callback-origin","本平台回调地址","origin",""),f("office.expected-version","已验收的Office版本","text",""),f("office.inbox-key-file","请求签名密钥文件","file",""),f("office.outbox-key-file","回调签名密钥文件","file",""),f("office.temporary","Office候选文件临时目录","directory","")));

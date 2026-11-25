@@ -6,7 +6,7 @@ interface Group { id: string; section: string; rowVersion: number; fields: Field
 const groups = ref<Group[]>([]), selected = ref("SCANNER"), busy = ref(false), error = ref(""), notice = ref(""), reason = ref("");
 const titles: Record<string,string> = {SCANNER: "文件检测", STORAGE: "原件存储", READING: "阅读与导出", OFFICE: "Office连接", PROTECTION: "存储保护", MAINTENANCE: "备份与维护"};
 const descriptions: Record<string,string> = {
- SCANNER: "安装ClamAV并准备有效的官方病毒库后，在这里填写部署电脑上的路径。保存时固定检测程序摘要，检查时实际扫描无害文件。公盘上传病毒检测默认启用，停用期间仍校验文件完整性和类型。",
+ SCANNER: "安装ClamAV并准备有效的官方病毒库后，在这里填写部署电脑上的路径。保存时固定检测程序摘要，检查时实际扫描无害文件。公盘上传病毒检测默认启用。仅暂停病毒检测时，请保持后台文件处理启用，以完成上传分片合并和文件类型校验。",
  STORAGE: "两个原件目录必须分开。已有文件时需先停机迁移并核验；这里不会移动或删除原文件。",
  READING: "配置Java、PDF处理程序、阅读回执和导出目录。目录不能与原件、账本、邮箱或其他临时目录互相包含。",
  OFFICE: "Office为可选服务。需要先部署文档服务器；这里维护连接地址和部署机上的密钥文件位置，不上传密钥内容。",

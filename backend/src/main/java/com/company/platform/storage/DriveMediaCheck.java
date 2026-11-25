@@ -1,6 +1,7 @@
 package com.company.platform.storage;
 
 import java.io.*;
+import java.net.URI;
 import java.nio.*;
 import java.nio.charset.*;
 import java.nio.file.*;
@@ -11,7 +12,7 @@ import javax.xml.stream.*;
 /** 公盘格式识别采用有界结构检查；压缩包和CAD仅存储下载，不解包或执行内容。 */
 public final class DriveMediaCheck {
     private DriveMediaCheck() { }
-    /** OOXML需要内容类型与主部件同时匹配，不能只凭PK文件头放行。 */
+    /** OOXML需要内容类型与主部件同时匹配。 */
     public static String detect(Path source,String ext) throws IOException {
         if(Set.of("docx","xlsx","pptx").contains(ext))return office(source,ext);
         byte[] header;try(var input=Files.newInputStream(source)){header=input.readNBytes(1024);}
@@ -25,20 +26,102 @@ public final class DriveMediaCheck {
         if(ext.equals("dxf")&&(prefix.startsWith("AutoCAD Binary DXF\r\n\u001a\0")||prefix.matches("(?s)^\\s*0\\s+SECTION\\s+2\\s+.*")))return "image/vnd.dxf";
         return null;
     }
-    /** ZIP只读取有界清单；禁用DTD和外部实体，拒绝宏与加密包作为普通OOXML。 */
-    private static String office(Path source,String ext) throws IOException {
-        String part=switch(ext){case "docx"->"word/document.xml";case "xlsx"->"xl/workbook.xml";default->"ppt/presentation.xml";};
-        String type=switch(ext){case "docx"->"application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml";case "xlsx"->"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml";default->"application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml";};
-        try(var zip=new ZipFile(source.toFile())) {
-            if(zip.size()>50000||zip.getEntry(part)==null||zip.getEntry("_rels/.rels")==null)return null;
-            Set<String> names=new HashSet<>();var entries=zip.entries();while(entries.hasMoreElements()){var entry=entries.nextElement();String name=entry.getName();if(!names.add(name)||name.contains("\\")||name.startsWith("/")||Arrays.asList(name.split("/")).contains("..")||name.toLowerCase(Locale.ROOT).endsWith("vbaproject.bin"))return null;}
-            var entry=zip.getEntry("[Content_Types].xml");if(entry==null||entry.getSize()<1||entry.getSize()>1048576)return null;
-            byte[] xml;try(var input=zip.getInputStream(entry)){xml=input.readNBytes(1048577);}if(xml.length>1048576)return null;
-            var factory=XMLInputFactory.newFactory();factory.setProperty(XMLInputFactory.SUPPORT_DTD,false);factory.setProperty("javax.xml.stream.isSupportingExternalEntities",false);
-            var reader=factory.createXMLStreamReader(new ByteArrayInputStream(xml));boolean found=false;
-            try{while(reader.hasNext()){int event=reader.next();if(event==XMLStreamConstants.DTD)return null;if(event==XMLStreamConstants.START_ELEMENT&&reader.getLocalName().equals("Override")&&("/"+part).equals(reader.getAttributeValue(null,"PartName"))&&type.equals(reader.getAttributeValue(null,"ContentType")))found=true;}}finally{reader.close();}
-            return found?switch(ext){case "docx"->"application/vnd.openxmlformats-officedocument.wordprocessingml.document";case "xlsx"->"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";default->"application/vnd.openxmlformats-officedocument.presentationml.presentation";}:null;
-        }catch(ZipException|XMLStreamException|IllegalArgumentException invalid){return null;}
+    private static final int MAX_OFFICE_MANIFEST = 1024 * 1024;
+    private static final String OFFICE_RELATION = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument";
+    private static final String STRICT_OFFICE_RELATION = "http://purl.oclc.org/ooxml/officeDocument/relationships/officeDocument";
+
+    /** 主部件位置由根关系声明，按 OPC 规则忽略部件路径中的大小写。 */
+    private static String office(Path source, String ext) throws IOException {
+        String conventionalPart = switch (ext) {
+            case "docx" -> "word/document.xml";
+            case "xlsx" -> "xl/workbook.xml";
+            default -> "ppt/presentation.xml";
+        };
+        String media = switch (ext) {
+            case "docx" -> "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+            case "xlsx" -> "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet";
+            default -> "application/vnd.openxmlformats-officedocument.presentationml.presentation";
+        };
+        try (var zip = new ZipFile(source.toFile())) {
+            if (zip.size() > 50000) return null;
+            Map<String, ZipEntry> entries = new HashMap<>();
+            for (var item = zip.entries(); item.hasMoreElements();) {
+                ZipEntry entry = item.nextElement();
+                String name = entry.getName().toLowerCase(Locale.ROOT);
+                if (entries.putIfAbsent(name, entry) != null || name.contains("\\") || name.startsWith("/")
+                    || Arrays.asList(name.split("/")).contains("..") || name.endsWith("vbaproject.bin")) return null;
+            }
+            var factory = XMLInputFactory.newFactory();
+            factory.setProperty(XMLInputFactory.SUPPORT_DTD, false);
+            factory.setProperty("javax.xml.stream.isSupportingExternalEntities", false);
+
+            String part = officePart(manifest(zip, entries.get("_rels/.rels"), factory), conventionalPart);
+            ZipEntry main = entries.get(part);
+            if (main == null || main.isDirectory() || main.getSize() <= 0) return null;
+            String type = officeContentType(manifest(zip, entries.get("[content_types].xml"), factory), part);
+            return (media + ".main+xml").equalsIgnoreCase(type) ? media : null;
+        } catch (ZipException | XMLStreamException | IllegalArgumentException invalid) {
+            return null;
+        }
+    }
+
+    /** 清单只在内存中读取有限的 XML 字节，不展开原件或跟随外部链接。 */
+    private static XMLStreamReader manifest(ZipFile zip, ZipEntry entry, XMLInputFactory factory)
+        throws IOException, XMLStreamException {
+        if (entry == null || entry.getSize() < 1 || entry.getSize() > MAX_OFFICE_MANIFEST) throw new XMLStreamException();
+        try (var input = zip.getInputStream(entry)) {
+            byte[] xml = input.readNBytes(MAX_OFFICE_MANIFEST + 1);
+            if (xml.length > MAX_OFFICE_MANIFEST) throw new XMLStreamException();
+            return factory.createXMLStreamReader(new ByteArrayInputStream(xml));
+        }
+    }
+
+    /** 旧生成器未声明主关系时，沿用已支持的标准路径。 */
+    private static String officePart(XMLStreamReader reader, String conventionalPart) throws XMLStreamException {
+        String part = null;
+        try {
+            while (reader.hasNext()) {
+                int event = reader.next();
+                if (event == XMLStreamConstants.DTD) throw new XMLStreamException();
+                if (event != XMLStreamConstants.START_ELEMENT || !reader.getLocalName().equals("Relationship")) continue;
+                String kind = reader.getAttributeValue(null, "Type");
+                if (!OFFICE_RELATION.equals(kind) && !STRICT_OFFICE_RELATION.equals(kind)) continue;
+                String mode = reader.getAttributeValue(null, "TargetMode");
+                String target = reader.getAttributeValue(null, "Target");
+                if (part != null || (mode != null && !mode.equals("Internal")) || target == null) throw new XMLStreamException();
+                URI uri = URI.create(target).normalize();
+                String path = uri.getRawPath();
+                if (uri.isAbsolute() || uri.getRawAuthority() != null || uri.getRawQuery() != null || uri.getRawFragment() != null
+                    || path == null || path.isEmpty()) throw new XMLStreamException();
+                part = (path.startsWith("/") ? path.substring(1) : path).toLowerCase(Locale.ROOT);
+            }
+        } finally {
+            reader.close();
+        }
+        return part == null ? conventionalPart : part;
+    }
+
+    /** 主部件的专用类型优先。未声明专用类型时读取同扩展名的默认类型。 */
+    private static String officeContentType(XMLStreamReader reader, String part) throws XMLStreamException {
+        String override = null;
+        String defaultType = null;
+        int dot = part.lastIndexOf('.');
+        String extension = dot > part.lastIndexOf('/') ? part.substring(dot + 1) : "";
+        try {
+            while (reader.hasNext()) {
+                int event = reader.next();
+                if (event == XMLStreamConstants.DTD) throw new XMLStreamException();
+                if (event != XMLStreamConstants.START_ELEMENT) continue;
+                String element = reader.getLocalName();
+                if (element.equals("Override") && ("/" + part).equalsIgnoreCase(reader.getAttributeValue(null, "PartName")))
+                    override = reader.getAttributeValue(null, "ContentType");
+                if (element.equals("Default") && extension.equalsIgnoreCase(reader.getAttributeValue(null, "Extension")))
+                    defaultType = reader.getAttributeValue(null, "ContentType");
+            }
+        } finally {
+            reader.close();
+        }
+        return override == null ? defaultType : override;
     }
     /** 旧Office检查复合文档头和目录流；大于目录检查上界或不完整FAT链保持拒绝。 */
     private static boolean compound(Path source,String ext) throws IOException {

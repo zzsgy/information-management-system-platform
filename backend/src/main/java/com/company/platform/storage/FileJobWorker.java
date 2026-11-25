@@ -1,7 +1,7 @@
 package com.company.platform.storage;
 
 import com.company.platform.*;
-import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import com.company.platform.operations.DeploymentSettings;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.beans.factory.ObjectProvider;
@@ -20,7 +20,7 @@ public class FileJobWorker {
     @org.springframework.beans.factory.annotation.Autowired private org.springframework.core.env.Environment environment;
     @Scheduled(fixedDelayString="${platform.file-worker.delay-ms:3000}")
     public void tick() {
-        if(!environment.getProperty("platform.file-worker.enabled",Boolean.class,false))return;
+        if(!environment.getProperty(DeploymentSettings.FILE_WORKER_ENABLED,Boolean.class,false))return;
         for(var job:db.rows("SELECT id,job_type,requester_session_id FROM ops.job WHERE job_type IN ('FILE_ASSEMBLY_CHECK','FILE_CHECK','PREVIEW_METADATA','ARCHIVE_PREVIEW','ARCHIVE_EXPORT') AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) AND requester_session_id IS NOT NULL AND (next_run_at IS NULL OR next_run_at<=CURRENT_TIMESTAMP) ORDER BY id LIMIT 2")) {
             UUID request=UUID.randomUUID();
             try {

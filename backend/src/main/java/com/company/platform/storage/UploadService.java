@@ -1,6 +1,8 @@
 package com.company.platform.storage;
 
 import com.company.platform.*;
+import com.company.platform.operations.DeploymentSettings;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.*;
@@ -18,8 +20,9 @@ public class UploadService {
     /** 预览任务按固定阅读会话重新授权，不能套用上传权限。 */
     private final ControlledReadService reading;
     private final ObjectProvider<FileDomainJobs> domainJobs;
-    public UploadService(Sql db,IdentityService identity,StorageBoundaries boundaries,StorageFiles files,Audit audit,PlatformTransactionManager manager,ControlledReadService reading,ObjectProvider<FileDomainJobs> domainJobs) {
-        this.db=db; this.identity=identity; this.boundaries=boundaries; this.files=files; this.audit=audit; this.transaction=new TransactionTemplate(manager);this.reading=reading;this.domainJobs=domainJobs;
+    private final Environment environment;
+    public UploadService(Sql db,IdentityService identity,StorageBoundaries boundaries,StorageFiles files,Audit audit,PlatformTransactionManager manager,ControlledReadService reading,ObjectProvider<FileDomainJobs> domainJobs,Environment environment) {
+        this.db=db; this.identity=identity; this.boundaries=boundaries; this.files=files; this.audit=audit; this.transaction=new TransactionTemplate(manager);this.reading=reading;this.domainJobs=domainJobs;this.environment=environment;
     }
     /** API-STORAGE-001：按操作号去重，任何重放都重新检查上下文授权。 */
     @Transactional
@@ -127,7 +130,13 @@ public class UploadService {
         if(handlers.size()==1) return handlers.getFirst().status(actor,job);if(handlers.size()>1) throw SystemFailure.JOB_RESULT_INVALID.fault();
         if(!Set.of("FILE_ASSEMBLY_CHECK","FILE_CHECK").contains(job.get("job_type"))) throw ApiFault.hidden();
         var row=session(actor,Inputs.uuid(job.get("business_ref")),false); authorize(actor,row,"UPLOAD_READ",false);
-        return Sql.map("id",id,"jobType",job.get("job_type"),"module",job.get("module"),"businessRef",job.get("business_ref"),"state",job.get("state"),"attemptCount",job.get("attempt_count"),"nextRunAt",job.get("next_run_at"),"errorCode",job.get("error_code"),"result",null);
+        Object error=job.get("error_code");
+        // 只在读取时报告停用原因，开启后同一排队任务仍可被领取。
+        if(error==null && "DRIVE".equals(row.get("module")) && "PENDING".equals(job.get("state"))
+            && !environment.getProperty(DeploymentSettings.FILE_WORKER_ENABLED,Boolean.class,false)) {
+            error=SystemFailure.FILE_WORKER_DISABLED.name();
+        }
+        return Sql.map("id",id,"jobType",job.get("job_type"),"module",job.get("module"),"businessRef",job.get("business_ref"),"state",job.get("state"),"attemptCount",job.get("attempt_count"),"nextRunAt",job.get("next_run_at"),"errorCode",error,"result",null);
     }
     /** 检测器恢复后由本人明确重试技术失败；可疑文件和类型拒绝不允许重试洗白。 */
     @Transactional

@@ -9,12 +9,13 @@ export async function uploadDrive(
   progress: (label: string, value: number | null) => void,
   signal: AbortSignal,
 ) {
+  const extension = file.name.split(".").at(-1)?.toLowerCase();
   if (
     file.size < 1 ||
     file.size > 5 * 1024 ** 3 ||
     !driveAccept
       .split(",")
-      .includes("." + file.name.split(".").at(-1)?.toLowerCase())
+      .includes("." + extension)
   )
     throw Error("请选择允许格式的文件，单件上限为5 GB。");
   const hash = await new Promise<string>((resolve, reject) => {
@@ -114,10 +115,16 @@ export async function uploadDrive(
       await new Promise((resolve) => setTimeout(resolve, 2000));
       continue;
     }
-    if (["FAILED", "CANCELLED", "UNKNOWN"].includes(job.state))
-      throw new ApiError(job.errorCode || "FILE_PROCESSING_FAILED",
-        `${job.errorMessage || "文件检测未完成，请联系 IT 管理员核查任务"}\n任务编号：${task.jobId}`,
-        job.requestId);
+    if (["FAILED", "CANCELLED", "UNKNOWN"].includes(job.state)) {
+      const message = job.errorCode === "MEDIA_TYPE_NOT_ALLOWED" && extension === "docx"
+        ? `无法将「${file.name}」读取为标准 Word 文档。请用 Word 或 WPS 打开原件，另存为未加密的 .docx 后重试。`
+        : job.errorMessage || "文件检测未完成，请联系 IT 管理员核查任务";
+      throw new ApiError(
+        job.errorCode || "FILE_PROCESSING_FAILED",
+        `${message}\n任务编号：${task.jobId}`,
+        job.requestId,
+      );
+    }
 
     progress(
       job.jobType === "FILE_ASSEMBLY_CHECK"

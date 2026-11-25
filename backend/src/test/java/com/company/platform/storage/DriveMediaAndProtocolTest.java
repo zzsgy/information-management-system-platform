@@ -3,6 +3,7 @@ package com.company.platform.storage;
 import com.company.platform.*;
 import org.junit.jupiter.api.*;
 import org.junit.jupiter.api.io.TempDir;
+import java.io.ByteArrayOutputStream;
 import java.nio.file.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -18,6 +19,43 @@ class DriveMediaAndProtocolTest {
         assertEquals("application/vnd.openxmlformats-officedocument.wordprocessingml.document",FileMediaCheck.detect(valid,"合同.docx","application/octet-stream"));
         assertNull(FileMediaCheck.detect(valid,"合同.xlsx","application/octet-stream"));
         Path macro=temporary.resolve("macro.docx");writeOffice(macro,true);assertNull(FileMediaCheck.detect(macro,"合同.docx","application/octet-stream"));
+    }
+    @Test void recognizesRelocatedWordMainPartAndMatchesPackageUris() throws Exception {
+        Path file=temporary.resolve("非默认路径.docx");
+        Files.write(file,relocatedWordPackage());
+        assertEquals("application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            FileMediaCheck.detect(file,"非默认路径.docx","application/octet-stream"));
+        assertNull(FileMediaCheck.detect(file,"伪装为工作簿.xlsx","application/octet-stream"));
+    }
+
+    /** 用包关系定位主部件，覆盖不同路径、大小写及默认内容类型。 */
+    static byte[] relocatedWordPackage() throws Exception {
+        var bytes=new ByteArrayOutputStream();
+        try(var zip=new ZipOutputStream(bytes)) {
+            var entries=Map.of(
+                "[Content_Types].xml","""
+                    <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+                      <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+                      <Default Extension="xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+                    </Types>
+                    """,
+                "_rels/.rels","""
+                    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+                      <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="/content/main.xml"/>
+                    </Relationships>
+                    """,
+                "Content/Main.xml","""
+                    <w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+                      <w:body><w:p><w:r><w:t>合成验收文本</w:t></w:r></w:p></w:body>
+                    </w:document>
+                    """);
+            for (var entry : entries.entrySet()) {
+                zip.putNextEntry(new ZipEntry(entry.getKey()));
+                zip.write(entry.getValue().getBytes(StandardCharsets.UTF_8));
+                zip.closeEntry();
+            }
+        }
+        return bytes.toByteArray();
     }
     @Test void renamedZipAndBinaryTextAreRejected() throws Exception {
         Path file=temporary.resolve("plain.zip");try(var out=new ZipOutputStream(Files.newOutputStream(file))){out.putNextEntry(new ZipEntry("text.txt"));out.write("测试".getBytes(StandardCharsets.UTF_8));out.closeEntry();}

@@ -39,6 +39,7 @@ public enum SystemFailure {
     RECEIPT_STORAGE_UNAVAILABLE("文件交付回执目录不可用，请联系 IT 管理员检查目录配置和权限"),
     RECEIPT_WRITE_FAILED("文件交付回执保存失败，已停止交付，请联系 IT 管理员"),
     UPLOAD_ASSEMBLY_FAILED("上传分片合并失败，文件尚未发布，请联系 IT 管理员核查处理日志"),
+    FILE_WORKER_DISABLED("后台文件处理已停用，请联系 IT 管理员启用后台文件处理"),
     FILE_CHECK_FAILED("文件检查执行失败，文件尚未发布，请联系 IT 管理员核查检测任务"),
     SCANNER_UNAVAILABLE("文件检测程序或病毒库不可用，文件尚未发布，请联系 IT 管理员"),
     SCANNER_NOT_CONFIGURED("文件检测程序、病毒库、临时目录或程序摘要尚未配置完整，请联系 IT 管理员"),
