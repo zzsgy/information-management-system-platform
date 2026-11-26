@@ -28,10 +28,26 @@ class DriveMediaAndProtocolTest {
         assertNull(FileMediaCheck.detect(file,"伪装为工作簿.xlsx","application/octet-stream"));
     }
 
+    @Test void acceptsWindowsSeparatorsOnlyInEmptyOfficeDirectoryEntries() throws Exception {
+        Path file = temporary.resolve("目录记录兼容.docx");
+        String document = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+        Files.write(file, relocatedWordPackage("Content\\theme/", "Content\\_rels/"));
+        assertEquals(document, FileMediaCheck.detect(file, "目录记录兼容.docx", "application/octet-stream"));
+
+        for (String invalidEntry : List.of("Content\\bad.xml", "Content\\..\\escape/")) {
+            Files.write(file, relocatedWordPackage(invalidEntry));
+            assertNull(FileMediaCheck.detect(file, "目录记录兼容.docx", "application/octet-stream"));
+        }
+    }
+
     /** 用包关系定位主部件，覆盖不同路径、大小写及默认内容类型。 */
-    static byte[] relocatedWordPackage() throws Exception {
+    static byte[] relocatedWordPackage(String... emptyEntries) throws Exception {
         var bytes=new ByteArrayOutputStream();
         try(var zip=new ZipOutputStream(bytes)) {
+            for (String name : emptyEntries) {
+                zip.putNextEntry(new ZipEntry(name));
+                zip.closeEntry();
+            }
             var entries=Map.of(
                 "[Content_Types].xml","""
                     <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">

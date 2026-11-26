@@ -308,8 +308,11 @@ class DriveLifecycleIntegrationTest {
         byte[] xlsx=ImportWorkbook.template("EMPLOYEE");
         var candidates = new LinkedHashMap<>(Map.of("自定义主部件.docx",docx,"标准PDF.pdf",pdf,"工作簿.xlsx",xlsx,
             "伪装文件.docx","非Word内容".getBytes(StandardCharsets.UTF_8)));
-        String wpsFixture=System.getenv("IMS_DRIVE_TEST_DOCX");
-        if(wpsFixture!=null) candidates.put("WPS文档.docx",Files.readAllBytes(Path.of(wpsFixture)));
+        String docxFixture=System.getenv("IMS_DRIVE_TEST_DOCX");
+        if(docxFixture!=null) {
+            Path input=Path.of(docxFixture);
+            candidates.put(input.getFileName().toString(),Files.readAllBytes(input));
+        }
         String presentation=System.getenv("IMS_DRIVE_TEST_PPTX");
         if(presentation!=null) candidates.put("演示文稿.pptx",Files.readAllBytes(Path.of(presentation)));
         var submitted=new LinkedHashMap<String,Map<String,Object>>();

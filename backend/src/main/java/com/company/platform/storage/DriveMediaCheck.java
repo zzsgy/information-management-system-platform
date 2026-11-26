@@ -48,6 +48,8 @@ public final class DriveMediaCheck {
             for (var item = zip.entries(); item.hasMoreElements();) {
                 ZipEntry entry = item.nextElement();
                 String name = entry.getName().toLowerCase(Locale.ROOT);
+                // 部分 Windows 生成器会为合法部件额外写入带反斜杠的空目录记录。
+                if (entry.isDirectory() && entry.getSize() == 0) name = name.replace('\\', '/');
                 if (entries.putIfAbsent(name, entry) != null || name.contains("\\") || name.startsWith("/")
                     || Arrays.asList(name.split("/")).contains("..") || name.endsWith("vbaproject.bin")) return null;
             }
