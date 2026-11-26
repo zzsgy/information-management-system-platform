@@ -20,8 +20,18 @@ public class FileJobWorker {
     @org.springframework.beans.factory.annotation.Autowired private org.springframework.core.env.Environment environment;
     @Scheduled(fixedDelayString="${platform.file-worker.delay-ms:3000}")
     public void tick() {
+        run("job_type IN ('FILE_ASSEMBLY_CHECK','FILE_CHECK','ARCHIVE_PREVIEW','ARCHIVE_EXPORT')",2);
+    }
+    /** 公盘阅读单独领取，上传合并和文件检测繁忙时也能及时开始预览。 */
+    @Scheduled(fixedDelayString="${platform.file-worker.preview-delay-ms:500}")
+    public void previewTick() {
+        run("job_type='PREVIEW_METADATA'",1);
+    }
+    private void run(String jobFilter,int limit) {
         if(!environment.getProperty(DeploymentSettings.FILE_WORKER_ENABLED,Boolean.class,false))return;
-        for(var job:db.rows("SELECT id,job_type,requester_session_id FROM ops.job WHERE job_type IN ('FILE_ASSEMBLY_CHECK','FILE_CHECK','PREVIEW_METADATA','ARCHIVE_PREVIEW','ARCHIVE_EXPORT') AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) AND requester_session_id IS NOT NULL AND (next_run_at IS NULL OR next_run_at<=CURRENT_TIMESTAMP) ORDER BY id LIMIT 2")) {
+        for(var job:db.rows("SELECT id,job_type,requester_session_id FROM ops.job WHERE "+jobFilter
+            +" AND (state='PENDING' OR (state='RUNNING' AND lease_until<CURRENT_TIMESTAMP)) AND requester_session_id IS NOT NULL"
+            +" AND (next_run_at IS NULL OR next_run_at<=CURRENT_TIMESTAMP) ORDER BY id LIMIT ?",limit)) {
             UUID request=UUID.randomUUID();
             try {
                 Actor actor=identity.background((UUID)job.get("requester_session_id"));

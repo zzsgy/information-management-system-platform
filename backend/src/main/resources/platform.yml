@@ -177,6 +177,8 @@ platform:
     # 可信Java与PDF工作器绝对路径，工作器须携带同目录lib依赖。
     java: ${IMS_PLATFORM_READING_JAVA:}
     worker-jar: ${IMS_PLATFORM_READING_WORKER:}
+    # 公盘在本机生成 Office 预览 PDF，可填写 soffice 的绝对路径。
+    office-executable: ${IMS_PLATFORM_READING_OFFICE_EXECUTABLE:}
     # 已建立且仅服务账号可写的处理临时目录，不能配置到公开网页目录。
     temporary: ${IMS_PLATFORM_READING_TEMP:}
     # 库外逐页交付回执根目录；写入失败即停止页面交付。

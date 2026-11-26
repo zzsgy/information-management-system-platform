@@ -120,7 +120,8 @@ const uploadAbort = new AbortController();
 /** 阅读会话元数据与连续阅读器分开，正文由阅读器按可见范围加载。 */
 const reading = ref<Document | null>(null),
   preview = ref<Preview | null>(null),
-  readingBusy = ref(false);
+  readingBusy = ref(false),
+  readingMessage = ref("正在准备文档…");
 /** 导航序号阻止较慢的旧请求覆盖新目录或已关闭的阅读窗口。 */
 let generation = 0,
   readerGeneration = 0,
@@ -306,13 +307,17 @@ async function waitJob(id: string, current: number) {
       requestId?: string;
       result: { previewId: string } | null;
     }>(`/jobs/${id}`, {}, false);
+    if (!alive || current !== readerGeneration) return null;
     if (task.state === "SUCCEEDED") return task.result;
-    if (["FAILED", "CANCELLED", "UNKNOWN"].includes(task.state))
+    if (task.errorCode === "FILE_WORKER_DISABLED" || ["FAILED", "CANCELLED", "UNKNOWN"].includes(task.state))
       throw new ApiError(task.errorCode || "PREVIEW_FAILED",
         `${task.errorMessage || "文档预览生成失败，请联系 IT 管理员"}。文件已发布，无需重新上传。\n任务编号：${id}`,
         task.requestId);
 
-    await new Promise((resolve) => setTimeout(resolve, 2000));
+    readingMessage.value = task.state === "RUNNING" ? "正在生成文档预览…" : "正在排队准备预览…";
+    // 首次排队时间较短，快速确认就绪。长任务逐步降低查询频率。
+    const delay = attempt < 6 ? 300 : attempt < 20 ? 750 : 2000;
+    await new Promise((resolve) => setTimeout(resolve, delay));
   }
   if (!alive || current !== readerGeneration) return null;
   throw new Error(
@@ -372,10 +377,11 @@ async function read(document: Document) {
   const current = readerGeneration;
   reading.value = document;
   readingBusy.value = true;
+  readingMessage.value = "正在准备文档…";
   error.value = "";
   notice.value = "";
   try {
-    const task = await api<{ jobId: string }>(
+    const task = await api<{ jobId: string; previewId?: string }>(
       `/drive/documents/${document.id}/previews`,
       {
         method: "POST",
@@ -383,7 +389,7 @@ async function read(document: Document) {
         body: JSON.stringify({ versionId: document.currentVersion.id }),
       },
     );
-    const result = await waitJob(task.jobId, current);
+    const result = task.previewId ? { previewId: task.previewId } : await waitJob(task.jobId, current);
     if (
       current !== readerGeneration ||
       reading.value?.id !== document.id ||
@@ -784,11 +790,14 @@ onUnmounted(() => {
   />
   <DocumentReader
     v-if="reading"
+    :key="readerGeneration"
     :title="reading.name"
     :version="reading.currentVersion.versionNo"
     :page-count="preview?.pageCount || 0"
     :page-path="`/drive/documents/${reading.id}/previews/${preview?.previewId}/pages`"
     :loading="readingBusy"
+    :loading-message="readingMessage"
+    retry-page-errors
     @close="closeReader"
     @error="
       (message) => {

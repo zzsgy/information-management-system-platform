@@ -6,6 +6,10 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.*;
 import org.springframework.context.annotation.*;
+import org.springframework.core.env.ConfigurableEnvironment;
+import org.springframework.core.env.MapPropertySource;
+import com.company.platform.operations.DeploymentDiagnostics;
+import com.company.platform.operations.DeploymentSettings;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import java.io.*;
@@ -43,6 +47,9 @@ class DriveReadIntegrationTest {
     @Autowired Sql db;@Autowired IdentityService identity;@Autowired UploadService uploads;@Autowired UploadAssembly assembly;
     @Autowired FileInspectionService inspection;@Autowired DriveDocumentService documents;@Autowired ControlledReadService reading;
     @Autowired DriveAccessService access;@Autowired DriveFilePolicy policy;@Autowired PlatformTransactionManager manager;
+    @Autowired ConfigurableEnvironment environment;
+    @Autowired OfficeGateway office;
+    @Autowired DeploymentDiagnostics diagnostics;
     /** 每项测试创建独立部门、员工、委托、对象和阅读会话，不回收历史测试数据。 */
     private Actor admin,leader,staff;private UUID department,folder,delegation;private String leaderNo,staffNo,password;
     /** 合成命中样本不包含病毒或EICAR，只匹配测试目录内自定义完整摘要。 */
@@ -108,6 +115,75 @@ class DriveReadIntegrationTest {
         Path fixture=Path.of(System.getenv("IMS_DRIVE_TEST_ROOT")).resolve("read-fixture.private.json");
         Files.writeString(fixture,Crypto.json(Sql.map("folderId",folder.toString(),"documentId",doc.toString(),"employeeNo",leaderNo,"password",password)));PrivateFiles.restrict(fixture);
     }
+    /** 同一版本的真实文档转成 PDF 后可直接重开，旧会话在撤权后停止交付。 */
+    @Test
+    @EnabledIfEnvironmentVariable(named="IMS_PLATFORM_READING_OFFICE_EXECUTABLE",matches=".+")
+    void localOfficeReaderPublishesAndReopensOriginalSamples() throws Exception {
+        assertEquals(false,office.status().get("enabled"));
+        var check=diagnostics.check(UUID.randomUUID()).stream()
+            .filter(item->"公盘 Office 文档预览".equals(item.get("name"))).findFirst().orElseThrow();
+        assertEquals(true,check.get("ready"),check.toString());
+
+        UUID lastDocument=null,lastPreview=null;
+        for (String input : List.of("DOCX","XLSX","PPTX")) {
+            evidence("NORMAL",false);
+            Path sample=Path.of(System.getenv("IMS_DRIVE_TEST_"+input));
+            byte[] original=Files.readAllBytes(sample);
+            String name=sample.getFileName().toString();
+            UUID uploadId=upload(leader,original,name,"application/octet-stream");
+            UUID document=(UUID)documents.publish(leader,Sql.map("folderId",folder.toString(),
+                "uploadSessionId",uploadId.toString(),"name",name),UUID.randomUUID(),UUID.randomUUID()).get("id");
+            access.grant(context(leader,"FOLDER",folder,"CREATE_GRANT",null),Sql.map("subjectId",staff.userId().toString(),
+                "resourceType","DOCUMENT","resourceId",document.toString(),"action","DOWNLOAD","effect","DENY",
+                "delegationId",delegation.toString(),"reason","验收仅有网页阅读权"));
+            staff=login(staffNo,password);
+            assertEquals(403,assertThrows(ApiFault.class,()->policy.requireDocument(staff,document,"DOWNLOAD")).status);
+
+            long started=System.nanoTime();
+            var pending=reading.create(staff,document,Map.of(),UUID.randomUUID(),UUID.randomUUID());
+            UUID job=(UUID)pending.get("jobId");
+            assertEquals("PENDING",pending.get("state"));
+            UUID preview=Inputs.uuid(db.required("SELECT business_ref FROM ops.job WHERE id=?",job).get("business_ref"));
+            environment.getPropertySources().addFirst(new MapPropertySource("drive-office-worker-test",
+                Map.of(DeploymentSettings.FILE_WORKER_ENABLED,true)));
+            try {
+                Instant deadline=Instant.now().plusSeconds(105);
+                Map<String,Object> jobRow;
+                do {
+                    Thread.sleep(100);
+                    jobRow=db.required("SELECT state,error_code FROM ops.job WHERE id=?",job);
+                } while(Set.of("PENDING","RUNNING").contains(jobRow.get("state")) && Instant.now().isBefore(deadline));
+                assertEquals("SUCCEEDED",jobRow.get("state"),jobRow.toString());
+            } finally {
+                environment.getPropertySources().remove("drive-office-worker-test");
+            }
+            var manifest=reading.manifest(staff,preview);
+            assertTrue(((Number)manifest.get("pageCount")).intValue()>0);
+            byte[] page=reading.page(staff,preview,1,UUID.randomUUID());
+            assertArrayEquals(new byte[]{(byte)137,80,78,71},Arrays.copyOf(page,4));
+            long cold=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+
+            started=System.nanoTime();
+            var reopen=reading.create(staff,document,Map.of(),UUID.randomUUID(),UUID.randomUUID());
+            assertEquals("SUCCEEDED",reopen.get("state"));
+            assertEquals(job,reopen.get("jobId"));
+            assertEquals(preview,reopen.get("previewId"));
+            assertTrue(reading.page(staff,preview,1,UUID.randomUUID()).length>0);
+            long warm=java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime()-started);
+            assertEquals(1,db.count("SELECT count(*) FROM drive.office_conversion WHERE document_id=? AND state='READY'",document));
+            assertEquals(digest(original,"SHA-256"),db.required("SELECT sha256 FROM storage.object WHERE id=(SELECT object_id FROM storage.preview_session WHERE id=?)",preview).get("sha256"));
+            System.out.printf("Local %s first page %d ms, reopen first page %d ms%n",input,cold,warm);
+            lastDocument=document;
+            lastPreview=preview;
+        }
+        UUID revokedDocument=Objects.requireNonNull(lastDocument),revokedPreview=Objects.requireNonNull(lastPreview);
+        access.grant(context(leader,"FOLDER",folder,"CREATE_GRANT",null),Sql.map("subjectId",staff.userId().toString(),
+            "resourceType","DOCUMENT","resourceId",revokedDocument.toString(),"action","VIEW","effect","DENY",
+            "delegationId",delegation.toString(),"reason","验收撤销阅读权"));
+        Actor revoked=staff;
+        assertThrows(ApiFault.class,()->reading.page(revoked,revokedPreview,1,UUID.randomUUID()));
+    }
+
     /** 图片可以只授予VIEW；与PDF相同的撤权边界不因新的渲染路径而失效。 */
     @Test void imagePreviewDoesNotRequireDownloadAndRevocationStopsDelivery() throws Exception {
         var image=new java.awt.image.BufferedImage(60,40,java.awt.image.BufferedImage.TYPE_INT_RGB);var graphics=image.createGraphics();

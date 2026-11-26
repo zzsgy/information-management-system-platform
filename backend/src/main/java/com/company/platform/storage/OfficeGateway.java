@@ -52,7 +52,7 @@ public class OfficeGateway {
     public void requireCheckpoint(){if(!checkpointEnabled)throw new ApiFault(409,"OFFICE_CHECKPOINT_DISABLED","当前仅支持所有参与人退出后的最终保存，请关闭编辑并等待保存结果");}
     /** 启用前校验所有地址、独立密钥和空间限制；HTTP仅允许本机回环隔离演练。 */
     public void require() {
-        if(!settingEnabled())throw new ApiFault(503,"OFFICE_NOT_CONFIGURED","Office文档服务尚未配置");
+        if(!settingEnabled())throw SystemFailure.OFFICE_NOT_CONFIGURED.fault();
         origin(settingBrowserOrigin());origin(settingServerOrigin());origin(settingCallbackOrigin());
         if(settingVersion().isBlank()||maximum<1||maximum>5368709120L||Crypto.equal(secret(settingInboxPath()),secret(settingOutboxPath())))throw SystemFailure.OFFICE_CONFIGURATION_INVALID.fault();
         Inputs.uuid(managedIdentities==null?serviceId:managedIdentities.configured("platform.office.service-id"));

@@ -1,6 +1,8 @@
 package com.company.platform.storage;
 
 import com.company.platform.*;
+import com.company.platform.operations.DeploymentSettings;
+import org.springframework.core.env.Environment;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -15,13 +17,14 @@ public class ControlledReadService {
     /** 原件仅在内部路径访问；页面在内存交付，不写公开目录或缓存。 */
     private final StorageFiles files; private final ReadingRuntime runtime; private final DeliveryReceipts receipts; private final Audit audit;
     private final OfficeConversions conversions;
+    private final Environment environment;
     private static final Set<String> IMAGE_MEDIA=Set.of("image/png","image/jpeg","image/tiff");
     private static final Set<String> OFFICE_MEDIA=Set.of("application/msword","application/vnd.ms-excel","application/vnd.ms-powerpoint",
         "application/vnd.openxmlformats-officedocument.wordprocessingml.document","application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","application/vnd.openxmlformats-officedocument.presentationml.presentation");
     /** 文件IO在短事务外执行，最多两个隔离渲染进程保护主服务资源。 */
     private final TransactionTemplate transaction;
-    public ControlledReadService(Sql db,IdentityService identity,DriveFilePolicy policy,StorageBoundaries boundaries,StorageFiles files,ReadingRuntime runtime,DeliveryReceipts receipts,Audit audit,OfficeConversions conversions,PlatformTransactionManager manager) {
-        this.db=db;this.identity=identity;this.policy=policy;this.boundaries=boundaries;this.files=files;this.runtime=runtime;this.receipts=receipts;this.audit=audit;this.conversions=conversions;this.transaction=new TransactionTemplate(manager);
+    public ControlledReadService(Sql db,IdentityService identity,DriveFilePolicy policy,StorageBoundaries boundaries,StorageFiles files,ReadingRuntime runtime,DeliveryReceipts receipts,Audit audit,OfficeConversions conversions,PlatformTransactionManager manager,Environment environment) {
+        this.db=db;this.identity=identity;this.policy=policy;this.boundaries=boundaries;this.files=files;this.runtime=runtime;this.receipts=receipts;this.audit=audit;this.conversions=conversions;this.transaction=new TransactionTemplate(manager);this.environment=environment;
     }
     /** 固定已发布版本创建15分钟阅读会话；Office转换与图片解析都在后台，202不声称成功。 */
     public Map<String,Object> create(Actor actor,UUID document,Map<String,Object> body,UUID operation,UUID request) {
@@ -36,6 +39,20 @@ public class ControlledReadService {
             db.rows("SELECT pg_advisory_xact_lock(hashtextextended(?,0))",actor.userId()+":"+key);
             var prior=db.one("SELECT * FROM ops.job WHERE requester_id=? AND idempotency_key=?",actor.userId(),key);
             if(prior!=null) { bound(actor,Inputs.uuid(prior.get("business_ref")),false);return task(prior); }
+            // 同一登录会话重开同一版本时复用已授权的页数和转换结果，省去后台排队。
+            var ready=db.one("""
+                SELECT j.id,j.state,j.business_ref FROM storage.preview_session p
+                JOIN ops.job j ON j.id=p.job_id
+                WHERE p.module='DRIVE' AND p.user_id=? AND p.session_id=? AND p.document_id=?
+                  AND p.version_id=? AND p.auth_version=? AND p.document_version=?
+                  AND p.state='READY' AND p.expires_at>CURRENT_TIMESTAMP AND j.state='SUCCEEDED'
+                ORDER BY p.expires_at DESC LIMIT 1
+                """,actor.userId(),actor.sessionId(),document,version,actor.authVersion(),doc.get("row_version"));
+            if(ready!=null) {
+                db.update("UPDATE storage.preview_session SET expires_at=CURRENT_TIMESTAMP+interval '15 minutes' WHERE id=?",
+                    Inputs.uuid(ready.get("business_ref")));
+                return task(ready);
+            }
             UUID preview=UUID.randomUUID(),job=UUID.randomUUID();
             db.update("INSERT INTO storage.preview_session(id,user_id,session_id,module,document_id,version_id,object_id,auth_version,document_version,expires_at) VALUES(?,?,?,'DRIVE',?,?,?,?,?,CURRENT_TIMESTAMP+interval '15 minutes')",preview,actor.userId(),actor.sessionId(),document,version,object.get("id"),actor.authVersion(),doc.get("row_version"));
             db.update("INSERT INTO ops.job(id,job_type,module,requester_id,business_ref,input_version,authorization_version,idempotency_key,state,requester_session_id) VALUES(?,'PREVIEW_METADATA','DRIVE',?,?,?,?,?,'PENDING',?)",job,actor.userId(),preview.toString(),1,actor.authVersion(),key,actor.sessionId());
@@ -98,7 +115,12 @@ public class ControlledReadService {
     /** 任务查询复用同一授权，返回允许客户端跳转的受控预览标识。 */
     public Map<String,Object> job(Actor actor,Map<String,Object> job) {
         UUID preview=Inputs.uuid(job.get("business_ref"));bound(actor,preview,false);
-        return Sql.map("id",job.get("id"),"jobType",job.get("job_type"),"state",job.get("state"),"errorCode",job.get("error_code"),"result",Sql.map("previewId",preview));
+        Object error=job.get("error_code");
+        if(error==null && "PENDING".equals(job.get("state"))
+            && !environment.getProperty(DeploymentSettings.FILE_WORKER_ENABLED,Boolean.class,false))
+            error=SystemFailure.FILE_WORKER_DISABLED.name();
+        return Sql.map("id",job.get("id"),"jobType",job.get("job_type"),"state",job.get("state"),
+            "errorCode",error,"result",Sql.map("previewId",preview));
     }
     /** 正文不可跨人、跨会话、跨授权代次或跨版本复用；正式文档状态每次重读。 */
     private Map<String,Object> bound(Actor actor,UUID id,boolean ready) {
@@ -126,5 +148,8 @@ public class ControlledReadService {
         if(db.update("UPDATE ops.job SET state='FAILED',error_code=?,lease_owner=NULL,lease_until=NULL WHERE id=? AND lease_owner=? AND state='RUNNING'",error,job,lease)==1) db.update("UPDATE storage.preview_session SET state='FAILED' WHERE id=?",preview);
     }); }
     /** 接口回执只暴露业务任务地址，不暴露物理文件位置。 */
-    private Map<String,Object> task(Map<String,Object> job) { return Sql.map("jobId",job.get("id"),"state",job.get("state"),"statusPath","/api/v1/jobs/"+job.get("id")); }
+    private Map<String,Object> task(Map<String,Object> job) {
+        return Sql.map("jobId",job.get("id"),"state",job.get("state"),"statusPath","/api/v1/jobs/"+job.get("id"),
+            "previewId","SUCCEEDED".equals(job.get("state"))?Inputs.uuid(job.get("business_ref")):null);
+    }
 }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import Icon from "../preview/PlatformIcon.vue";
-import { pageImage } from "./api";
+import { ApiError, pageImage } from "./api";
 
 const props = defineProps<{
   title: string;
@@ -9,6 +9,8 @@ const props = defineProps<{
   pageCount: number;
   pagePath: string;
   loading: boolean;
+  loadingMessage?: string;
+  retryPageErrors?: boolean;
 }>();
 const emit = defineEmits<{ close: []; error: [message: string] }>();
 const viewport = ref<HTMLElement>(),
@@ -17,7 +19,8 @@ const currentPage = ref(1),
   scale = ref(window.matchMedia("(max-width: 760px)").matches ? "width" : "100"),
   viewportWidth = ref(1000);
 const images = ref<Record<number, string>>({}),
-  ratios = ref<Record<number, string>>({});
+  ratios = ref<Record<number, string>>({}),
+  pageErrors = ref<Record<number, string>>({});
 const width = computed(() =>
   scale.value === "width"
     ? viewportWidth.value
@@ -38,9 +41,12 @@ let previousFocus: HTMLElement | null,
 /** 按可见范围串行取页，给预览准备保留渲染名额；离开后释放正文。 */
 function drain() {
   while (active && running < 1 && pending.length) {
-    const number = pending.shift()!;
+    // 先取当前阅读页，预取页让出网络和后台渲染名额。
+    const current = pending.indexOf(currentPage.value);
+    const number = current >= 0 ? pending.splice(current, 1)[0] : pending.shift()!;
     if (!nearby.has(number) || images.value[number] || controllers.has(number))
       continue;
+    delete pageErrors.value[number];
     const controller = new AbortController();
     controllers.set(number, controller);
     running++;
@@ -50,8 +56,13 @@ function drain() {
           images.value[number] = URL.createObjectURL(blob);
       })
       .catch((failure) => {
-        if (active && !controller.signal.aborted)
-          emit("error", (failure as Error).message);
+        if (active && !controller.signal.aborted) {
+          const message = (failure as Error).message;
+          const retryable = failure instanceof ApiError &&
+            ["NETWORK_UNAVAILABLE", "READING_BUSY", "RENDER_TIMEOUT"].includes(failure.code);
+          if (props.retryPageErrors && retryable) pageErrors.value[number] = message;
+          else emit("error", message);
+        }
       })
       .finally(() => {
         controllers.delete(number);
@@ -160,6 +171,7 @@ onMounted(() => {
           pending.push(number);
         } else {
           nearby.delete(number);
+          controllers.get(number)?.abort();
           if (images.value[number]) {
             URL.revokeObjectURL(images.value[number]);
             delete images.value[number];
@@ -276,7 +288,7 @@ onUnmounted(() => {
       @scroll.passive="updatePage"
     >
       <div v-if="loading" class="reader-loading" role="status">
-        <span class="reader-spinner" />正在准备文档…
+        <span class="reader-spinner" />{{ loadingMessage ?? "正在准备文档…" }}
       </div>
       <div v-else class="reader-pages" :style="{ width: `${width}px` }">
         <figure
@@ -295,9 +307,11 @@ onUnmounted(() => {
             draggable="false"
             @load="dimensions($event, number)"
           />
-          <span v-else class="reader-page-loading"
-            >第 {{ number }} 页 · 正在加载</span
-          >
+          <div v-else-if="pageErrors[number]" class="reader-page-loading reader-page-error" role="status">
+            <span>{{ pageErrors[number] }}</span>
+            <button class="secondary" @click="pending.unshift(number); drain()">重试这一页</button>
+          </div>
+          <span v-else class="reader-page-loading">第 {{ number }} 页 · 正在加载</span>
           <figcaption>{{ number }} / {{ pageCount }}</figcaption>
         </figure>
       </div>
@@ -459,6 +473,12 @@ onUnmounted(() => {
   width: 100%;
   height: 100%;
   object-fit: contain;
+}
+.reader-page-error {
+  align-content: center;
+  gap: 12px;
+  padding: 20px;
+  text-align: center;
 }
 .reader-page-loading {
   position: absolute;

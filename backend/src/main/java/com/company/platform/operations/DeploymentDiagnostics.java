@@ -11,7 +11,9 @@ import java.util.*;
 @Service
 public class DeploymentDiagnostics {
     private final DeploymentSettings settings;private final StorageFiles files;private final ReadingRuntime reading;private final ExportFiles exports;private final OfficeGateway office;private final ManagedProtection protection;private final Sql db;private final DeliveryReceipts receipts;
-    public DeploymentDiagnostics(DeploymentSettings settings,StorageFiles files,ReadingRuntime reading,ExportFiles exports,OfficeGateway office,ManagedProtection protection,Sql db,DeliveryReceipts receipts){this.receipts=receipts;this.settings=settings;this.files=files;this.reading=reading;this.exports=exports;this.office=office;this.protection=protection;this.db=db;}
+    private final LocalOfficePreview localPreview;
+    private final FileScanEngine scanner;
+    public DeploymentDiagnostics(DeploymentSettings settings,StorageFiles files,ReadingRuntime reading,ExportFiles exports,OfficeGateway office,ManagedProtection protection,Sql db,DeliveryReceipts receipts,LocalOfficePreview localPreview,FileScanEngine scanner){this.receipts=receipts;this.settings=settings;this.files=files;this.reading=reading;this.exports=exports;this.office=office;this.protection=protection;this.db=db;this.localPreview=localPreview;this.scanner=scanner;}
     public List<Map<String,Object>> check(UUID request){
         var checks=new ArrayList<Map<String,Object>>();
         test(checks,"原件双目录","STORAGE",request,()->files.get());
@@ -24,6 +26,21 @@ public class DeploymentDiagnostics {
         });
         test(checks,"导出双目录与临时目录","READING",request,()->{exports.get();exports.temporary();return null;});
         test(checks,"Office连接","OFFICE",request,()->{if(Boolean.TRUE.equals(office.status().get("enabled")))office.verifyVersion();return null;});
+        if(!settings.effective(DeploymentSettings.LOCAL_OFFICE_EXECUTABLE).isBlank())
+            test(checks,"公盘 Office 文档预览","READING",request,()->{
+                Path pdf=localPreview.probe(localPreview.configuration());
+                try {
+                    if(!"application/pdf".equals(FileMediaCheck.detect(pdf,"probe.pdf","application/pdf")))
+                        throw SystemFailure.LOCAL_OFFICE_CONVERSION_FAILED.fault();
+                    var verdict=scanner.scan(pdf);
+                    if(verdict==ClamFileScanner.Verdict.UNAVAILABLE)throw SystemFailure.SCANNER_UNAVAILABLE.fault();
+                    if(verdict!=ClamFileScanner.Verdict.CLEAN)throw SystemFailure.FILE_CHECK_FAILED.fault();
+                    String digest=HexFormat.of().formatHex(java.security.MessageDigest.getInstance("SHA-256").digest(Files.readAllBytes(pdf)));
+                    if(reading.withClient(client->client.renderPage(pdf,digest,1,120)).length==0)
+                        throw SystemFailure.RENDER_OUTPUT_INVALID.fault();
+                    return null;
+                } finally { Files.deleteIfExists(pdf); }
+            });
         var state=protection.status();checks.add(Sql.map("name","存储保护","section","PROTECTION","ready",state.get("ready"),"message",state.get("message"),"errorCode",state.get("errorCode"),"requestId",request));
         test(checks,"独立维护执行器","MAINTENANCE",request,()->{
             if(!Boolean.parseBoolean(settings.effective("platform.operations.enabled")))throw new ApiFault(503,"OPERATIONS_DISABLED","请启用维护任务");
