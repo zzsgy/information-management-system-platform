@@ -86,3 +86,11 @@
 - `POST .../check`：实测运行环境，返回请求编号；不修改业务文件或员工权限。
 
 MAINTENANCE_AGENT_OFFLINE检查计划任务、执行账号和服务名；MAINTENANCE_TOOL_MISSING检查PostgreSQL bin；BACKUP_VOLUME_NOT_INDEPENDENT换独立备份盘；LOCAL_BACKUP_REQUIRED先做完整备份；LOCAL_BACKUP_UNAVAILABLE检查备份盘及目录；SCANNER错误检查程序、官方病毒库、摘要和权限。详细异常写入服务器日志，页面不暴露数据库密码和密钥。
+
+### Windows 服务未读到阅读配置
+
+LibreOffice 已安装，但环境检查显示阅读路径为空时，先核对网页「阅读与导出」的托管配置和 Windows 服务实际启动参数。网页已保存的配置优先于 JVM 参数。如果有空值覆盖，先按部署流程核对该组配置。已有回执时沿用实际回执目录，迁移时按停机迁移流程保留并核验原目录。
+
+使用 NSSM 以 LocalSystem 直接运行 Java 的部署，可在服务器维护窗口用管理员 PowerShell 运行 `scripts/platform/Repair-ReaderService.ps1`。填写当前服务名、端口，以及 Java、PDF 处理 JAR、soffice、阅读临时目录和回执目录的绝对路径。脚本保留其他 JVM 参数，重启后核对实际监听进程。若启动检查失败，恢复原参数并重新启动。
+
+若同时确认独立备份计划任务以 SYSTEM 运行，但对现有备份目录缺少访问权限，可传入 `-BackupDirectory`。看到 `STEP 1 READY` 后，在网页运行环境检查并打开一份已发布文档，确认正文能显示。选择可停机时间，在脚本窗口输入 `BACKUP`。脚本向 SYSTEM 补充现有目录的修改权限，已排队的任务会由独立执行器调度。服务恢复后，在「独立备份」查看新验证时间，并核对存储保护状态。
