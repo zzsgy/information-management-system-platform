@@ -40,7 +40,12 @@ public class MeetingWorkbooks {
             MeetingBookings.requireNotStarted(meeting);
             if (meeting.get("cancelled_at") != null || meeting.get("material_types") == null || columns.size() == 1)
                 throw ApiFault.invalid("本场会议当前未征集可导入的材料");
-            return MeetingReportWorkbook.template(id);
+            // 部门名称允许重复，重名时列出唯一的部门编码，导入后仍能对应到同一部门。
+            var departments = db.rows("""
+                    SELECT CASE WHEN count(*) OVER (PARTITION BY name)>1 THEN code ELSE name END AS label
+                    FROM iam.department WHERE status='ACTIVE' ORDER BY sort_order,name,code
+                    """).stream().map(row -> (String) row.get("label")).toList();
+            return MeetingReportWorkbook.template(id, departments);
         }
         columns.addAll(1, List.of("name|填报人", "departmentName|填报部门"));
         if (types(meeting).contains("COORDINATION")) {
@@ -68,7 +73,7 @@ public class MeetingWorkbooks {
         if (meeting.get("material_types") == null || columns(meeting).size() == 1)
             throw ApiFault.invalid("本场会议未开启可导入的材料征集");
         var report = MeetingReportWorkbook.read(bytes, id);
-        var author = resolveEmployee(report.author(), "「协调事宜」F2 的填报人");
+        var author = resolveEmployee(report.author(), "「协调事宜」第 2 行的填报人");
         var user = (UUID) author.get("user_id");
         if (user.equals(actor.userId())) throw ApiFault.invalid("会议发起人不能作为本场受邀员工导入");
         var invite = db.one("SELECT id,reply,removed_at FROM portal.meeting_attendee WHERE meeting_id=? AND user_id=?", id, user);
@@ -88,7 +93,8 @@ public class MeetingWorkbooks {
                 if (values.containsKey("author") && !user.equals(resolveEmployee(
                         Inputs.text(values, "author", 128), "填报人").get("user_id")))
                     throw ApiFault.invalid("同一份表只能填写一位员工");
-                if (values.containsKey("authorDepartment") && !author.get("department").equals(values.get("authorDepartment")))
+                Object department = values.get("authorDepartment");
+                if (department != null && !department.equals(author.get("department")) && !department.equals(author.get("department_code")))
                     throw ApiFault.invalid("填报部门与员工档案不一致");
                 if (values.keySet().stream().allMatch(Set.of("author", "authorDepartment")::contains)) continue;
                 if (!types(meeting).contains("COORDINATION")) throw ApiFault.invalid("本场会议未征集协调事宜");
@@ -101,7 +107,8 @@ public class MeetingWorkbooks {
         if (entries.size() > 30) errors.add("「协调事宜」最多填写 30 条");
         else if (!entries.isEmpty()) prepared.add(new Prepared("COORDINATION", lines,
                 bookings.addMaterialAuthor(Sql.map("rows", entries), author), entries));
-        if (prepared.isEmpty() && errors.isEmpty()) errors.add("请至少填写一项本场会议征集的材料");
+        if (prepared.isEmpty() && errors.isEmpty() && !types(meeting).equals(List.of("COORDINATION")))
+            errors.add("请至少填写一项本场会议征集的材料");
 
         var current = new HashMap<String, Object>();
         if (invite != null) {
@@ -122,7 +129,7 @@ public class MeetingWorkbooks {
                             "conflict", current.containsKey(group.kind()), "content", group.entries())).toList());
         }
         if (!preview.equals(Inputs.text(body, "preview", 64))) throw ApiFault.conflict("填报内容已变化，请重新预览");
-        if (!errors.isEmpty() || prepared.isEmpty()) throw ApiFault.invalid("请修正文件中的问题后重新预览");
+        if (!errors.isEmpty()) throw ApiFault.invalid("请修正文件中的问题后重新预览");
         var kinds = prepared.stream().map(Prepared::kind).toList();
         if (!(body.getOrDefault("overwrite", List.of()) instanceof List<?> overwrite) || !kinds.containsAll(overwrite))
             throw ApiFault.invalid("覆盖选项须对应预览中的材料");

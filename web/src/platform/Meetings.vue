@@ -384,13 +384,11 @@ function timeRange(start: string, end: string) {
   );
 }
 
-/** Excel 导入的员工可以只有周报正文，无须补交空的协调事宜。 */
 function missingMaterialKinds(
   types: MaterialKind[],
   submitted: MeetingMaterial[],
 ) {
-  const imported = submitted.some((entry) => entry.data.source === "EXCEL");
-  return types.filter((kind) => !(imported && kind === "COORDINATION") && !submitted.some((entry) => entry.kind === kind));
+  return types.filter((kind) => kind !== "COORDINATION" && !submitted.some((entry) => entry.kind === kind));
 }
 
 /** 受邀人员卡片展示实际缺少的材料名称。 */
@@ -965,7 +963,7 @@ function replyLabel(reply?: string) {
                       missingMaterials(formKinds, person.materials)
                     }}
                   </p>
-                  <small v-else-if="(organizer || person.userId === own?.userId) && formKinds.length
+                  <small v-else-if="(organizer || person.userId === own?.userId) && person.materials.length
                     && !person.materials.some((entry) => entry.data.source === 'EXCEL')">会前材料已提交</small>
                   <details
                     v-for="material in person.materials.filter(

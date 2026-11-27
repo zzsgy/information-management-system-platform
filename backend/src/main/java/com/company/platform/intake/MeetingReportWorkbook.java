@@ -15,13 +15,24 @@ import java.util.zip.ZipOutputStream;
 
 import static com.company.platform.intake.ImportWorkbook.*;
 
-/** 三页会议填报表。一份文件对应一位员工，协调页 F2 为固定身份入口。 */
+/** 三页会议填报表。一份文件对应一位员工，部门选项随模板下载。 */
 public final class MeetingReportWorkbook {
-    private static final List<String> SHEETS = List.of("上周工作内容", "本周工作计划", "协调事宜");
-    private static final List<String> HEADERS = List.of("序号", "具体事宜", "需协调 / 配合什么",
-            "期望结果 /验收标准", "填报部门", "填报人+工号", "配合部门", "责任人（唯一，姓名+工号）", "事项类别");
-    private static final List<String> KEYS = List.of("sequence", "subject", "support", "expected",
-            "authorDepartment", "author", "department", "assignee", "category");
+    private static final String DEPARTMENTS = "部门选项";
+    private static final String DEPARTMENT_RANGE = "_IMS_Departments";
+    private static final List<String> SHEETS = List.of("上周工作内容", "本周工作计划", "协调事宜", DEPARTMENTS);
+    /** 表头与导入字段共用一份定义，已发出的模板使用旧列序。 */
+    private enum Column {
+        SEQUENCE("序号", "sequence"), CATEGORY("事项类别", "category"), SUBJECT("具体事宜", "subject"),
+        SUPPORT("需协调 / 配合什么", "support"), EXPECTED("期望结果 /验收标准", "expected"),
+        AUTHOR_DEPARTMENT("填报部门", "authorDepartment"), AUTHOR("填报人+工号", "author"),
+        DEPARTMENT("配合部门", "department"), ASSIGNEE("责任人（唯一，姓名+工号）", "assignee");
+
+        final String title, key;
+        Column(String title, String key) { this.title = title; this.key = key; }
+    }
+    private static final List<Column> COLUMNS = List.of(Column.values());
+    private static final List<Column> OLD_COLUMNS = List.of(Column.SEQUENCE, Column.SUBJECT, Column.SUPPORT,
+            Column.EXPECTED, Column.AUTHOR_DEPARTMENT, Column.AUTHOR, Column.DEPARTMENT, Column.ASSIGNEE, Column.CATEGORY);
     private static final String NS = "http://schemas.openxmlformats.org/spreadsheetml/2006/main";
     private static final String REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private static final String PACKAGE_REL = "http://schemas.openxmlformats.org/package/2006/relationships";
@@ -34,7 +45,7 @@ public final class MeetingReportWorkbook {
     public record Report(String author, String work, String plan, List<Row> coordination) {}
 
     /** 按附件布局生成三页，会议标识存于工作簿名称，避免占用可填写单元格。 */
-    public static byte[] template(UUID meeting) {
+    public static byte[] template(UUID meeting, List<String> departments) {
         try (var bytes = new ByteArrayOutputStream(); var zip = new ZipOutputStream(bytes)) {
             StringBuilder types = new StringBuilder("""
                     <Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
@@ -48,7 +59,9 @@ public final class MeetingReportWorkbook {
             for (int i = 1; i <= SHEETS.size(); i++) {
                 types.append("<Override PartName=\"/").append(SHEET_PATH).append(i)
                         .append(".xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/>");
-                workbook.append("<sheet name=\"").append(SHEETS.get(i - 1)).append("\" sheetId=\"")
+                String name = SHEETS.get(i - 1);
+                workbook.append("<sheet ").append(name.equals(DEPARTMENTS) ? "state=\"hidden\" " : "")
+                        .append("name=\"").append(name).append("\" sheetId=\"")
                         .append(i).append("\" r:id=\"rId").append(i).append("\"/>");
                 relationships.append(relationship(i, "worksheet", "worksheets/sheet" + i + ".xml"));
             }
@@ -57,8 +70,10 @@ public final class MeetingReportWorkbook {
                     + relationship(1, "officeDocument", "xl/workbook.xml") + "</Relationships>");
             put(zip, "xl/workbook.xml", workbook.append("</sheets><definedNames><definedName name=\"")
                     .append(MARKER).append("\" hidden=\"1\">").append(meetingMarker(meeting))
+                    .append("</definedName><definedName name=\"").append(DEPARTMENT_RANGE).append("\">'")
+                    .append(DEPARTMENTS).append("'!$A$1:$A$").append(Math.max(1, departments.size()))
                     .append("</definedName></definedNames></workbook>").toString());
-            put(zip, "xl/_rels/workbook.xml.rels", relationships.append(relationship(4, "styles", "styles.xml"))
+            put(zip, "xl/_rels/workbook.xml.rels", relationships.append(relationship(SHEETS.size() + 1, "styles", "styles.xml"))
                     .append("</Relationships>").toString());
             put(zip, "xl/styles.xml", STYLES);
             for (int i = 1; i <= 2; i++)
@@ -68,20 +83,23 @@ public final class MeetingReportWorkbook {
                                 + "<row r=\"2\" ht=\"270\" customHeight=\"1\"><c r=\"A2\" s=\"2\"/></row>",
                         "<mergeCells count=\"2\"><mergeCell ref=\"A1:H1\"/><mergeCell ref=\"A2:H2\"/></mergeCells>"));
             StringBuilder coordinate = new StringBuilder();
-            appendRow(coordinate, 1, HEADERS);
+            appendRow(coordinate, 1, COLUMNS.stream().map(column -> column.title).toList());
             for (int i = 1; i <= 5; i++) appendRow(coordinate, i + 1, List.of(Integer.toString(i)));
             put(zip, SHEET_PATH + "3.xml", worksheet(
                     "<col min=\"1\" max=\"1\" width=\"8\" customWidth=\"1\"/>"
-                            + "<col min=\"2\" max=\"4\" width=\"30\" style=\"2\" customWidth=\"1\"/>"
-                            + "<col min=\"5\" max=\"7\" width=\"22\" style=\"2\" customWidth=\"1\"/>"
-                            + "<col min=\"8\" max=\"8\" width=\"30\" style=\"2\" customWidth=\"1\"/>"
-                            + "<col min=\"9\" max=\"9\" width=\"22\" style=\"2\" customWidth=\"1\"/>",
+                            + "<col min=\"2\" max=\"2\" width=\"22\" style=\"2\" customWidth=\"1\"/>"
+                            + "<col min=\"3\" max=\"5\" width=\"30\" style=\"2\" customWidth=\"1\"/>"
+                            + "<col min=\"6\" max=\"8\" width=\"22\" style=\"2\" customWidth=\"1\"/>"
+                            + "<col min=\"9\" max=\"9\" width=\"30\" style=\"2\" customWidth=\"1\"/>",
                     coordinate.toString().replaceAll("(<c r=\"[A-I]1\")", "$1 s=\"1\""),
-                    "<dataValidations count=\"3\"><dataValidation type=\"list\" allowBlank=\"1\" showErrorMessage=\"1\" sqref=\"I2:I31\">"
-                            + "<formula1>\"需公司协调,需其他部门配合\"</formula1></dataValidation>"
-                            + "<dataValidation showInputMessage=\"1\" promptTitle=\"填报人+工号\" prompt=\"请填写姓名和工号，例如 张三 BLK27001。无协调事宜时也要填此格。\" sqref=\"F2\"/>"
-                            + "<dataValidation showInputMessage=\"1\" promptTitle=\"责任人（唯一）\" prompt=\"填写一名配合部门员工的姓名和工号。\" sqref=\"H2:H31\"/>"
+                    "<dataValidations count=\"5\">" + listValidation("B2:B31", "\"需公司协调,需其他部门配合\"")
+                            + listValidation("F2:F31", DEPARTMENT_RANGE) + listValidation("H2:H31", DEPARTMENT_RANGE)
+                            + "<dataValidation showInputMessage=\"1\" promptTitle=\"填报人+工号\" prompt=\"请填写姓名和工号，例如 张三 BLK27001。无协调事宜时也要填此格。\" sqref=\"G2\"/>"
+                            + "<dataValidation showInputMessage=\"1\" promptTitle=\"责任人（唯一）\" prompt=\"填写一名配合部门员工的姓名和工号。\" sqref=\"I2:I31\"/>"
                             + "</dataValidations>"));
+            StringBuilder options = new StringBuilder();
+            for (int i = 0; i < departments.size(); i++) appendRow(options, i + 1, List.of(departments.get(i)));
+            put(zip, SHEET_PATH + "4.xml", "<worksheet xmlns=\"" + NS + "\"><sheetData>" + options + "</sheetData></worksheet>");
             zip.finish();
             return bytes.toByteArray();
         } catch (IOException failure) {
@@ -97,7 +115,7 @@ public final class MeetingReportWorkbook {
             Path temporary = Files.createTempFile("ims-meeting-report-", ".xlsx");
             try {
                 Files.write(temporary, bytes);
-                var parts = parts(temporary, SHEETS);
+                var parts = parts(temporary, Set.of(SHEETS, SHEETS.subList(0, 3)));
                 var workbook = xml(parts.get("xl/workbook.xml"));
                 if (elements(workbook, "definedName").stream().noneMatch(name ->
                         MARKER.equals(name.getAttribute("name")) && meetingMarker(meeting).equals(name.getTextContent())))
@@ -105,7 +123,7 @@ public final class MeetingReportWorkbook {
                 var relationships = elements(xml(parts.get("xl/_rels/workbook.xml.rels")), "Relationship");
                 var worksheets = elements(workbook, "sheet");
                 var paths = new ArrayList<String>();
-                for (int i = 0; i < SHEETS.size(); i++) {
+                for (int i = 0; i < worksheets.size(); i++) {
                     String id = worksheets.get(i).getAttributeNS(REL, "id");
                     String path = SHEET_PATH + (i + 1) + ".xml";
                     if (relationships.stream().noneMatch(rel -> id.equals(rel.getAttribute("Id"))
@@ -120,20 +138,22 @@ public final class MeetingReportWorkbook {
                 var work = readCells(parts.get(paths.get(0)), shared, 1001, 8, SHEETS.get(0));
                 var plan = readCells(parts.get(paths.get(1)), shared, 1001, 8, SHEETS.get(1));
                 var coordination = readCells(parts.get(paths.get(2)), shared, 1001, 9, SHEETS.get(2));
-                // 已下载的模板仍可按旧 H 列标题导入，责任人填写要求相同。
-                if ("责任人（唯一）".equals(coordination.get("H1"))) coordination.put("H1", HEADERS.get(7));
-                for (int i = 0; i < HEADERS.size(); i++) {
-                    if (!HEADERS.get(i).equals(coordination.get((char) ('A' + i) + "1")))
+                var columns = Column.CATEGORY.title.equals(coordination.get("B1")) ? COLUMNS : OLD_COLUMNS;
+                for (int i = 0; i < columns.size(); i++) {
+                    String header = coordination.get((char) ('A' + i) + "1");
+                    if (columns.get(i) == Column.ASSIGNEE && "责任人（唯一）".equals(header)) continue;
+                    if (!columns.get(i).title.equals(header))
                         throw ApiFault.invalid("「协调事宜」表头有误，请使用当前模板");
                 }
-                String author = coordination.getOrDefault("F2", "");
-                if (author.isBlank()) throw ApiFault.invalid("请填写「协调事宜」F2 的填报人+工号");
+                String authorCell = (char) ('A' + columns.indexOf(Column.AUTHOR)) + "2";
+                String author = coordination.getOrDefault(authorCell, "");
+                if (author.isBlank()) throw ApiFault.invalid("请填写「协调事宜」" + authorCell + " 的填报人+工号");
                 var rows = new ArrayList<Row>();
                 for (int row = 2; row <= 1001; row++) {
                     Map<String, Object> data = new LinkedHashMap<>();
-                    for (int col = 1; col < KEYS.size(); col++) {
+                    for (int col = 1; col < columns.size(); col++) {
                         String value = coordination.get((char) ('A' + col) + Integer.toString(row));
-                        if (value != null) data.put(KEYS.get(col), value);
+                        if (value != null) data.put(columns.get(col).key, value);
                     }
                     if (!data.isEmpty()) rows.add(new Row(row, data));
                 }
@@ -187,6 +207,12 @@ public final class MeetingReportWorkbook {
     }
 
     private static String meetingMarker(UUID meeting) { return "\"IMS-MEETING-2:" + meeting + "\""; }
+
+    /** 部门下拉引用工作簿命名区域，部门数增加时不受内联列表长度限制。 */
+    private static String listValidation(String cells, String formula) {
+        return "<dataValidation type=\"list\" allowBlank=\"1\" showErrorMessage=\"1\" sqref=\"" + cells
+                + "\"><formula1>" + formula + "</formula1></dataValidation>";
+    }
 
     private static String relationship(int id, String type, String target) {
         return "<Relationship Id=\"rId" + id + "\" Type=\"" + REL + "/" + type + "\" Target=\"" + target + "\"/>";

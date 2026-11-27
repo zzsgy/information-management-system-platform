@@ -30,7 +30,7 @@ let nextRowId = 0;
 function makeRow(values: MaterialRow = { subject: "", expected: "" }) {
   return { departmentId: null, category: "DEPARTMENT", support: "", ...values, assigneeId: values.assigneeId ?? "", rowId: nextRowId++ };
 }
-const rows = ref(props.existing?.data.rows?.map(makeRow) ?? [makeRow()]);
+const rows = ref(props.existing?.data.rows?.map(makeRow) ?? (props.kind === "TOPICS" ? [makeRow()] : []));
 function addRow() {
   rows.value.push(makeRow());
 }
@@ -54,7 +54,8 @@ const subjectLabel = computed(() => props.kind === "TOPICS" ? "议题" : "具体
 /** 先保留界面行号，再忽略空行，确保提示能对应到原表。 */
 const filledRows = computed(() => rows.value
   .map((row, index) => ({ row, number: index + 1 }))
-  .filter(({ row }) => row.subject.trim() || row.expected.trim() || row.departmentId || row.support?.trim()));
+  .filter(({ row }) => row.subject.trim() || row.expected.trim() || row.departmentId || row.support?.trim()
+    || row.assigneeId || (props.kind === "COORDINATION" && row.category === "COMPANY")));
 const rowErrors = computed(() => filledRows.value.flatMap(({ row, number }) => {
   const missing = [];
   if (!row.subject.trim()) missing.push(subjectLabel.value);
@@ -66,7 +67,6 @@ const rowErrors = computed(() => filledRows.value.flatMap(({ row, number }) => {
   return missing.length ? [`第 ${number} 行请填写「${missing.join("」和「")}」`] : [];
 }));
 
-/** 空材料保持待提交，已填写的行沿用字段校验。 */
 function collect() {
   if (props.kind === "REPORT" || props.kind === "WEEKLY_PLAN") {
     const markdown = narrative.value.trim();
@@ -81,7 +81,7 @@ function collect() {
     };
   }
   const entries = filledRows.value;
-  return entries.length
+  return entries.length || props.kind === "COORDINATION"
     ? {
         kind: props.kind,
         rows: entries.map(({ row: { subject, expected, departmentId, category, support, assigneeId } }) => ({
@@ -107,7 +107,7 @@ async function submit() {
       method: "PUT",
       body: JSON.stringify(material),
     });
-    submittedSignature.value = submittedContent;
+    submittedSignature.value = props.kind === "COORDINATION" && !filledRows.value.length ? null : submittedContent;
     emit("saved");
   } catch (e) {
     error.value = (e as Error).message;
@@ -119,7 +119,7 @@ async function submit() {
 
 <template>
   <section class="flow-dialog-section material-form">
-    <h3>{{ materialLabels[kind] }}</h3>
+    <h3>{{ materialLabels[kind] }}{{ kind === 'COORDINATION' ? '（选填）' : '' }}</h3>
     <p v-if="kind === 'REPORT'" class="material-author">
       发起人 {{ author.name }} · 发起部门 {{ author.department }}
     </p>
@@ -131,7 +131,11 @@ async function submit() {
       numbered
     />
     <template v-else>
+      <p v-if="kind === 'COORDINATION' && !rows.length" class="booking-count">
+        {{ existing ? '已移除全部事项，保存后生效。' : '没有协调事宜可直接参加会议。' }}
+      </p>
       <div
+        v-if="kind !== 'COORDINATION' || rows.length"
         class="material-table-wrap"
         tabindex="0"
         role="region"
@@ -257,15 +261,15 @@ async function submit() {
           :disabled="rows.length >= 30"
           @click="addRow"
         >
-          ＋ 新增行
+          {{ kind === 'COORDINATION' && !rows.length ? '＋ 添加协调事宜' : '＋ 新增行' }}
         </button>
       </div>
     </template>
-    <div class="meeting-actions">
+    <div v-if="kind !== 'COORDINATION' || rows.length || existing" class="meeting-actions">
       <button type="button" class="primary material-submit"
         :class="{ 'submitted-unchanged': submittedUnchanged }"
         :disabled="busy || preparing" @click="submit">
-        提交{{ materialLabels[kind] }}
+        {{ kind === 'COORDINATION' && existing && !filledRows.length ? '保存清空' : '提交' + materialLabels[kind] }}
       </button>
       <small v-if="submittedSignature !== null"
         class="material-submitted-status"

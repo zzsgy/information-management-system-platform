@@ -135,7 +135,7 @@ class MeetingIntegrationTest {
         assertEquals("MEETING_MATERIALS_PENDING", attendeeTask(employee, "#/meetings?id=" + meeting + "&action=materials").get("state"));
         bookings.materials(employee, meeting, request(), Map.of("kind", "COORDINATION", "rows",
                 List.of(ownedCoordination(Map.of("subject", "协调工位", "expected", "确认可用工位")))));
-        String file = filledWorkbook(workbook, "", "Excel 导入的本周计划", Map.of("F", employeeLabel(employee)));
+        String file = filledWorkbook(workbook, "", "Excel 导入的本周计划", Map.of("G", employeeLabel(employee)));
         var preview = workbooks.importMaterials(host, meeting, request(), Map.of("file", file));
         assertEquals(List.of(), preview.get("errors"));
         assertEquals(1, workbooks.importMaterials(host, meeting, request(),
@@ -625,8 +625,22 @@ class MeetingIntegrationTest {
         assertNotNull(attendee(organizer, id, outsider).get("readMaterialAt"));
         assertFalse(attendee(employee, id, outsider).containsKey("readMaterialAt"));
 
+        String reportingDepartment = "填报测试部-" + department;
+        String disabledDepartment = "停用测试部-" + department;
+        db.update("UPDATE iam.department SET name=? WHERE id=?", reportingDepartment, department);
+        db.update("INSERT INTO iam.department(id,code,name,status) VALUES(?,?,?,'DISABLED')",
+                request(), "OFF-" + department, disabledDepartment);
+        String partnerDepartment = (String) db.required("SELECT name FROM iam.department WHERE code='ROOT'").get("name");
         byte[] template = workbooks.download(organizer, id, true);
-        var wrongAuthor = filledWorkbook(template, "错误归属", "", Map.of("F", "姓名不符 " +
+        String options = "";
+        try (var zip = new ZipInputStream(new ByteArrayInputStream(template))) {
+            for (ZipEntry part; (part = zip.getNextEntry()) != null;)
+                if (part.getName().equals("xl/worksheets/sheet4.xml")) options = new String(zip.readAllBytes(), StandardCharsets.UTF_8);
+        }
+        assertTrue(options.contains(reportingDepartment));
+        assertTrue(options.contains(partnerDepartment));
+        assertFalse(options.contains(disabledDepartment));
+        var wrongAuthor = filledWorkbook(template, "错误归属", "", Map.of("G", "姓名不符 " +
                 attendee(organizer, id, employee).get("employeeNo")));
         assertEquals(400, assertThrows(ApiFault.class, () -> workbooks.importMaterials(organizer, id, request(),
                 Map.of("file", wrongAuthor))).status);
@@ -635,8 +649,9 @@ class MeetingIntegrationTest {
         assertEquals(400, assertThrows(ApiFault.class, () -> bookings.materials(employee, id, request(),
                 Map.of("kind", "COORDINATION", "rows", List.of(outsideDepartment)))).status);
         String file = filledWorkbook(template, "线下冲突内容", "", Map.of(
-                "B", "协调合同", "C", "确定条款", "D", "确认合同", "F", employeeLabel(employee),
-                "G", "ROOT", "H", employeeLabel(employee), "I", "需公司协调"));
+                "B", "需公司协调", "C", "协调合同", "D", "确定条款", "E", "确认合同",
+                "F", reportingDepartment, "G", employeeLabel(employee),
+                "H", partnerDepartment, "I", employeeLabel(employee)));
         assertEquals(404, assertThrows(ApiFault.class, () -> workbooks.download(employee, id, false)).status);
         var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
         assertEquals(List.of(), preview.get("errors"));
@@ -656,9 +671,9 @@ class MeetingIntegrationTest {
                 Map.of("file", file, "preview", overwrite.get("preview"), "overwrite", List.of(reportKey))).get("imported"));
         assertTrue(values(attendee(organizer, id, employee), "materials").toString().contains("线下冲突内容"));
 
-        // 只有 F2 和两段正文也能识别未受邀员工，预览阶段不写入或修改参会回复。
+        // 只有填报人和两段正文也能识别未受邀员工，预览阶段不写入或修改参会回复。
         Actor remoteEmployee = person();
-        String remoteFile = filledWorkbook(template, "外地工作", "外地计划", Map.of("F", employeeLabel(remoteEmployee)));
+        String remoteFile = filledWorkbook(template, "外地工作", "外地计划", Map.of("G", employeeLabel(remoteEmployee)));
         var remote = workbooks.importMaterials(organizer, id, request(), Map.of("file", remoteFile));
         assertEquals(true, remote.get("newInvitee"));
         assertEquals(2, values(bookings.detail(organizer, id), "attendees").size());
@@ -869,7 +884,7 @@ class MeetingIntegrationTest {
         }
         var remote = person();
         String file = filledWorkbook(workbooks.download(organizer, id, true), "外地汇报", "外地计划",
-                Map.of("F", employeeLabel(remote)));
+                Map.of("G", employeeLabel(remote)));
         var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
         workbooks.importMaterials(organizer, id, request(), Map.of("file", file, "preview", preview.get("preview")));
         try (var zip = new ZipInputStream(new ByteArrayInputStream(workbooks.download(organizer, id, false)))) {
@@ -892,6 +907,34 @@ class MeetingIntegrationTest {
     }
 
     @Test
+    void inviteeCanAttendWithoutCoordinationAndClearPreviouslySubmittedItems() throws Exception {
+        var booking = meeting(roomA, Instant.now().plusSeconds(3600), employee);
+        booking.put("materialTypes", List.of("COORDINATION"));
+        booking.put("attendeeIds", List.of(employee.userId().toString(), outsider.userId().toString()));
+        booking.put("shareAll", true);
+        UUID id = bookings.create(organizer, request(), booking);
+        bookings.reply(employee, id, request(), Map.of("decision", "ACCEPTED"));
+        assertFalse(hasPending(employee, id));
+        assertTrue(values(attendee(organizer, id, employee), "materials").isEmpty());
+
+        var item = ownedCoordination(Map.of("subject", "协调会议场地", "expected", "确认地点"));
+        bookings.materials(employee, id, request(), Map.of("kind", "COORDINATION", "rows", List.of(item)));
+        String file = filledWorkbook(workbooks.download(organizer, id, true), "", "", Map.of("G", employeeLabel(employee)));
+        var preview = workbooks.importMaterials(organizer, id, request(), Map.of("file", file));
+        assertEquals(List.of(), preview.get("errors"));
+        assertEquals(0, workbooks.importMaterials(organizer, id, request(),
+                Map.of("file", file, "preview", preview.get("preview"))).get("imported"));
+        assertNotNull(bookings.detail(outsider, id).get("readingRevision"));
+        assertEquals(1, values(attendee(organizer, id, employee), "materials").size());
+        assertEquals(400, assertThrows(ApiFault.class, () -> bookings.materials(employee, id, request(),
+                Map.of("kind", "COORDINATION", "rows", List.of(Map.of("subject", "未填完的事项"))))).status);
+        bookings.materials(employee, id, request(), Map.of("kind", "COORDINATION", "rows", List.of()));
+        assertTrue(values(attendee(organizer, id, employee), "materials").isEmpty());
+        assertNull(bookings.detail(outsider, id).get("readingRevision"));
+        assertFalse(hasPending(employee, id));
+    }
+
+    @Test
     void incompleteExportDistinguishesReplyAndOnlineOrImportedMaterial()throws Exception{
         var body=meeting(roomA,Instant.now().plusSeconds(3600),employee);
         body.put("attendeeIds",List.of(employee.userId().toString(),outsider.userId().toString()));
@@ -899,12 +942,12 @@ class MeetingIntegrationTest {
         UUID id=bookings.create(organizer,request(),body);
         bookings.reply(employee,id,request(),Map.of("decision","ACCEPTED"));
         bookings.materials(employee,id,request(),Map.of("kind","REPORT","text","无新增事项"));
-        String file=filledWorkbook(workbooks.download(organizer,id,true),"Excel已完成工作","无新增计划",Map.of("F",employeeLabel(outsider)));
+        String file=filledWorkbook(workbooks.download(organizer,id,true),"Excel已完成工作","无新增计划",Map.of("G",employeeLabel(outsider)));
         var preview=workbooks.importMaterials(organizer,id,request(),Map.of("file",file));
         workbooks.importMaterials(organizer,id,request(),Map.of("file",file,"preview",preview.get("preview")));
         var rows=incompleteRows(incomplete.download(organizer,id));
-        assertEquals(3,rows.stream().filter(row->row.get("环节").equals("会前填写")).count());
-        assertEquals(Set.of("本周工作计划","协调事宜"),rows.stream().filter(row->row.get("姓名").equals(employee.user().get("name"))).map(row->row.get("具体事项")).collect(java.util.stream.Collectors.toSet()));
+        assertEquals(1,rows.stream().filter(row->row.get("环节").equals("会前填写")).count());
+        assertEquals(Set.of("本周工作计划"),rows.stream().filter(row->row.get("姓名").equals(employee.user().get("name"))).map(row->row.get("具体事项")).collect(java.util.stream.Collectors.toSet()));
         assertTrue(rows.stream().anyMatch(row->row.get("姓名").equals(outsider.user().get("name"))&&row.get("环节").equals("参会回复")));
         assertFalse(rows.stream().anyMatch(row->row.get("具体事项").equals("上周工作内容")));
         assertTrue(rows.stream().allMatch(row->row.get("逾期情况").equals("待完成（未到期）")));

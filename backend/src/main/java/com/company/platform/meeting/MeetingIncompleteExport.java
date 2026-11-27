@@ -54,7 +54,7 @@ public class MeetingIncompleteExport {
                 if("PENDING".equals(person.get("reply")))add(result,meeting,person,"参会回复","是否参加会议",cutoff,"未回复",false,now);
                 if(MeetingBookings.eligibleForMaterials(meeting,person)){
                     if(meeting.get("material_types") instanceof List<?> kinds){
-                        for(Object kind:kinds)if(!materials.getOrDefault(user,Set.of()).contains(kind.toString()))
+                        for(Object kind:kinds)if(!"COORDINATION".equals(kind)&&!materials.getOrDefault(user,Set.of()).contains(kind.toString()))
                             add(result,meeting,person,"会前填写",MATERIALS.get(kind.toString()),cutoff,"未提交",false,now);
                     }else if(person.get("material_at")==null)add(result,meeting,person,"会前填写","会前材料（原版合并填报）",cutoff,"未提交",false,now);
                 }

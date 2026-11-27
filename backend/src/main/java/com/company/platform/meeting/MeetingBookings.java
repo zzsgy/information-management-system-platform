@@ -621,7 +621,12 @@ public class MeetingBookings {
             if (imageKeys.size() > 3) throw ApiFault.invalid("每项材料最多添加 3 张图片");
             payload.put("imageKeys", List.copyOf(imageKeys));
         }
-        storeMaterial(attendeeId, kind, payload);
+        // 清空后移除这份材料，避免给其他受邀人生成一份空的阅读任务。
+        if (kind.equals("COORDINATION") && List.of().equals(payload.get("rows"))) {
+            db.update("DELETE FROM portal.meeting_material WHERE attendee_id=? AND kind=?", attendeeId, kind);
+        } else {
+            storeMaterial(attendeeId, kind, payload);
+        }
         // 已提交的图片标识不覆盖，重复提交沿用同一张图片。
         uploaded.forEach((key, image) -> db.update("""
                 INSERT INTO portal.meeting_material_image(attendee_id,kind,image_key,media_type,image_bytes)
@@ -651,7 +656,7 @@ public class MeetingBookings {
             if(body.containsKey("html"))payload.put("html",Inputs.text(body,"html",12000));
         } else {
             var rows = Inputs.objects(body.get("rows"),30);
-            if (rows.isEmpty()) throw ApiFault.invalid("请至少填写一条");
+            if (rows.isEmpty() && !kind.equals("COORDINATION")) throw ApiFault.invalid("请至少填写一条");
             payload = Sql.map("rows", rows.stream().map(row -> structuredRow(kind, row)).toList());
         }
         return addMaterialAuthor(payload, attendee);
@@ -823,7 +828,7 @@ public class MeetingBookings {
 
     /** 只按工号匹配代填人员及责任人，姓名用于复核。 */
     Map<String, Object> workbookEmployee(String employeeNo) {
-        return db.one("SELECT u.id AS user_id,u.name,u.employee_no,d.id AS department_id,d.name AS department FROM iam.user_account u"
+        return db.one("SELECT u.id AS user_id,u.name,u.employee_no,d.id AS department_id,d.name AS department,d.code AS department_code FROM iam.user_account u"
                 + " JOIN iam.department d ON d.id=u.department_id AND d.status='ACTIVE'"
                 + " WHERE upper(u.employee_no)=upper(?) AND u.status='ACTIVE' AND NOT u.it_shared_account", employeeNo);
     }
